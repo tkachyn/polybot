@@ -36,13 +36,16 @@ export interface CompetitorDecisionModel {
   }): Promise<AgentDecision>;
 }
 
+/** Alias of `parseDecision`, the one shared competitor decision parser. */
+export { parseDecision as parseAgentDecision } from "./competitor-decision.js";
+
 export type PlaywrightCompetitorRunnerOptions = {
   task: string;
   startUrl: string;
-  /** One model for every racer. Provide this or `modelFor`. */
+  /** One model for every racer. Provide this or `modelForRacer`. */
   model?: CompetitorDecisionModel;
   /** Per-racer model. Wins over `model`. */
-  modelFor?: (racerId: string) => CompetitorDecisionModel;
+  modelForRacer?: (racerId: string) => CompetitorDecisionModel;
   maxActions?: number;
   /** Periodic capture interval while running. Default 1500 ms. */
   frameIntervalMs?: number;
@@ -69,8 +72,8 @@ export class PlaywrightCompetitorRunner implements CompetitorAgentRunner {
     this.maxActions = options.maxActions ?? 60;
     if (!options.task) throw new Error("Competitor task is required");
     if (!options.startUrl) throw new Error("Competitor start URL is required");
-    if (!options.model && !options.modelFor) {
-      throw new Error("Competitor model or modelFor is required");
+    if (!options.model && !options.modelForRacer) {
+      throw new Error("A competitor model or model resolver is required");
     }
   }
 
@@ -82,6 +85,8 @@ export class PlaywrightCompetitorRunner implements CompetitorAgentRunner {
     url.searchParams.set("raceId", context.raceId);
     url.searchParams.set("racerId", context.racerId);
     url.searchParams.set("seed", context.seed);
+    url.searchParams.set("courseId", context.courseId);
+    url.searchParams.set("checkpointCount", String(context.checkpointCount));
     await page.goto(url.toString(), { waitUntil: "domcontentloaded" });
     this.prepared.add(context.racerId);
   }
@@ -135,7 +140,7 @@ export class PlaywrightCompetitorRunner implements CompetitorAgentRunner {
   }
 
   private modelFor(racerId: string): CompetitorDecisionModel {
-    const model = this.options.modelFor?.(racerId) ?? this.options.model;
+    const model = this.options.modelForRacer?.(racerId) ?? this.options.model;
     if (!model) throw new Error(`No competitor model is configured for ${racerId}`);
     return model;
   }

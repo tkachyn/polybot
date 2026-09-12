@@ -38,6 +38,7 @@ import type {
 import {
   defaultCheckpointLabel,
   normalizeFightMetadata,
+  UNCONFIGURED_MODEL,
   type FightMetadata,
 } from "./fight-metadata.js";
 import {
@@ -60,6 +61,8 @@ export type CreateRaceInput = {
   checkpointCount: number;
   targetDurationMs?: number;
   absoluteDurationMs?: number;
+  /** Model id per racer id, reported in `snapshot().competitors`. */
+  competitorModels?: Record<string, string>;
 };
 
 export type RaceCoordinatorInput = CreateRaceInput & {
@@ -76,6 +79,8 @@ export type RaceCoordinatorDependencies = {
   obstacleProvider?: ObstacleProvider;
   /** Shared wallet. Defaults to a private per-market ledger. */
   ledger?: CreditLedger;
+  /** Per-race LLM spend, reported in `snapshot().llmUsage`. */
+  llmUsage?: () => RaceSnapshot["llmUsage"];
 };
 
 export type RaceSnapshot = {
@@ -90,6 +95,16 @@ export type RaceSnapshot = {
     status: string;
     prices: Record<string, number>;
     winnerRacerId?: string;
+  };
+  competitors: Array<{
+    racerId: string;
+    model?: string;
+  }>;
+  llmUsage?: {
+    limitUsd: number;
+    spentUsd: number;
+    remainingUsd: number;
+    requests: number;
   };
 };
 
@@ -164,12 +179,14 @@ export class RaceCoordinator {
   private persisting: Promise<void> = Promise.resolve();
   private closedAtValue: number | null = null;
   private stopped = false;
+  private readonly competitorModels: Record<string, string>;
 
   constructor(
     input: RaceCoordinatorInput,
     private readonly dependencies: RaceCoordinatorDependencies,
   ) {
     this.fightMeta = normalizeFightMetadata(input);
+    this.competitorModels = { ...input.competitorModels };
 
     let obstacleProvider: ObstacleProvider | undefined;
     if (dependencies.obstacleProvider) {
@@ -486,6 +503,11 @@ export class RaceCoordinator {
         prices: this.market.pricesSnapshot(),
         winnerRacerId: this.market.winnerRacerId,
       },
+      competitors: [...this.engine.racers.keys()].map((racerId, index) => ({
+        racerId,
+        model: this.competitorModels[racerId] ?? this.configuredAgentModel(index),
+      })),
+      llmUsage: this.dependencies.llmUsage?.(),
     };
   }
 
@@ -583,6 +605,11 @@ export class RaceCoordinator {
         }
       },
     };
+  }
+
+  private configuredAgentModel(index: number): string | undefined {
+    const model = this.fightMeta.agents[index]?.model;
+    return model && model !== UNCONFIGURED_MODEL ? model : undefined;
   }
 
   private getSession(racerId: string): RacerSessionHandle {

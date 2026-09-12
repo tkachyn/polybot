@@ -13,7 +13,7 @@ This document binds the Sabotage Markets UI (`docs/sabotage-markets-handoff.md`)
 | Duration | 30-minute cap | 180 s target, 300 s cap | Durations are per race and supplied by the backend (`freezesAt`, `closesAt`). The UI never hard-codes them. |
 | Void | Rules undefined | Cap reached → unresolved, credits returned | A voided fight refunds each open position at its average price. The history shows a `refund` entry. |
 | Capture | Undecided | Steel viewer URL | Periodic frames. Live mode stores a JPEG screenshot per racer; simulated mode renders SVG frames. The UI polls by `frame.seq`. Viewer URLs are never sent to spectators because Steel viewers can be interactive. |
-| Agents | GPT-5.2, Claude Opus 4.6, Gemini 3 Pro, Grok 4.1 | One Anthropic competitor model | Each fight has a per-race roster (`AgentIdentity` × 4). In live mode each racer is driven by its own provider: Anthropic SDK, or an OpenAI-compatible endpoint for OpenAI, Google and xAI. |
+| Agents | GPT-5.2, Claude Opus 4.6, Gemini 3 Pro, Grok 4.1 | One Anthropic competitor model | Each fight has a per-race roster (`AgentIdentity` × 4). In live mode each racer is driven by its own OpenRouter model from `COMPETITOR_LLM_MODELS`; the agent keeps its `key` and `name`, and its identity reports `provider: "openrouter"` with the OpenRouter model id. |
 | Selling | Not designed | Supported | Sell is available from the Portfolio open-positions table. |
 
 ## Modes
@@ -134,6 +134,7 @@ Clients treat `snapshot` as a full replace. They append `price` points whose `t`
 | `SHOW_SABOTAGE_UPFRONT` | `true` | Reveal sabotage before fights open |
 | `FIGHT_NUMBER_START` | `1` (simulated: `401`) | First fight number |
 | `WEB_DIST` | `web/dist` | Served with SPA fallback when present |
-| `RACER_1_MODEL` … `RACER_4_MODEL` | — | Live mode: model per racer. The optional `RACER_n_PROVIDER`, `RACER_n_NAME` and `RACER_n_KEY` override the default roster. |
-| `OPENAI_API_KEY` / `GEMINI_API_KEY` / `XAI_API_KEY` | — | Keys for OpenAI-compatible providers |
+| `COMPETITOR_LLM_MODELS` | — | Live mode: exactly four comma-separated OpenRouter model ids, in racer order |
+| `OPENROUTER_API_KEY` | — | Live mode: key for every competitor and master model call |
+| `RACE_LLM_BUDGET_USD` | `0.25` | Live mode: shared per-race software spend cap |
 | `SIM_SEED` | `sabotage-markets` | Simulated mode RNG seed |

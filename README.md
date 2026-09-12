@@ -11,6 +11,10 @@ Backend features:
 - Virtual YES/NO prediction markets over a shared virtual-credit wallet
 - Per-agent telemetry: action log, run status, ETA and browser frames
 - A spectator JSON API with server-sent events
+- OpenRouter adapters with one model per racer and a shared per-race LLM budget
+- Anthropic adapters retained for direct-provider experiments
+- Steel API key rotation across several keys
+- Persistent append-only race events
 
 The binding front-end contract is [`docs/frontend-contract.md`](docs/frontend-contract.md). The shared types are in [`src/api/dto.ts`](src/api/dto.ts).
 
@@ -26,6 +30,9 @@ npm run web:dev
 
 # Or build the SPA once and serve everything from the simulated backend
 npm run demo            # http://127.0.0.1:3001
+
+# Live backend on :3001 plus the deterministic test course on :4000
+npm run dev:all
 ```
 
 Other scripts:
@@ -37,27 +44,62 @@ Other scripts:
 | `npm run build:all` | Backend build, then `web` build |
 | `npm run web:test` | Front-end tests |
 | `npm run dev` | Backend in `RACE_MODE` (default `live`) |
-| `npm run smoke:steel` | Steel smoke test (needs `STEEL_API_KEY`) |
+| `npm run dev:course` | Only the deterministic test course (`COURSE_PORT`, default 4000) |
+| `npm run dev:all` | Live backend and the test course together |
+| `npm run smoke:steel` | Steel smoke test (needs `STEEL_API_KEYS` or `STEEL_API_KEY`) |
 
 ## Modes
 
-- **`RACE_MODE=live`** (default) uses Steel sessions, Playwright over CDP, the course verifier and real models. The operator creates fights with `POST /races`. Copy `.env.example` to `.env`, fill in the keys and load them before starting.
-- **`RACE_MODE=simulated`** runs the real coordinator, engine, market, ledger, telemetry and SSE. Only browser sessions, competitor agents, the course verifier and the obstacle executor are simulated, deterministically from `SIM_SEED`. An autopilot keeps the lobby populated, seeds resolved history at boot and runs bot traders. `GET /api/meta` reports the mode.
+- **`RACE_MODE=live`** (default) uses Steel sessions, Playwright over CDP, the course verifier and OpenRouter models. The operator creates fights with `POST /races`. Copy `.env.example` to `.env` and populate `OPENROUTER_API_KEY` plus either `STEEL_API_KEYS` or `STEEL_API_KEY`; the server loads `.env` automatically.
+- **`RACE_MODE=simulated`** runs the real coordinator, engine, market, ledger, telemetry and SSE. Only browser sessions, competitor agents, the course verifier and the obstacle executor are simulated, deterministically from `SIM_SEED`. An autopilot keeps the lobby populated, seeds resolved history at boot and runs bot traders. `GET /api/meta` reports the mode. No keys are needed.
+
+### Live mode models
+
+`COMPETITOR_LLM_MODELS` holds exactly four comma-separated OpenRouter model ids, one per racer in order. Each fight agent keeps its `key` and `name`; its identity reports `provider: "openrouter"` and that model id. The default roster in `.env.example` is:
+
+```text
+racer-1: openai/gpt-5.6-luna
+racer-2: anthropic/claude-haiku-4.5
+racer-3: google/gemma-3-27b-it
+racer-4: deepseek/deepseek-v4.1-flash
+```
+
+`RACE_LLM_BUDGET_USD` is a shared software stop for all model calls in one race; `GET /races/:raceId` reports it as `llmUsage` and the per-racer models as `competitors`. Keep a separate hard credit limit on the OpenRouter API key because a few concurrent in-flight calls can finish after the software limit is reached.
+
+`STEEL_API_KEYS` accepts a comma-separated list. New sessions rotate to the next key when Steel rejects the current key for authentication, credits, quota or rate limits. Live sessions retain the key that created them.
+
+### Local course
+
+`npm run dev:all` starts the arena API on port 3001 and the deterministic test course on port 4000. Open a specific course run at:
+
+```text
+http://127.0.0.1:4000/?raceId=demo&racerId=racer-1&courseId=course-1&checkpointCount=3
+```
+
+Steel sessions run remotely and cannot access your machine's localhost. A live Steel race must use a public deployment or tunnel URL for `startUrl`; the local backend can continue using `COURSE_BASE_URL=http://127.0.0.1:4000` for verification.
 
 ## Configuration
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `RACE_MODE` | `live` | `live` or `simulated` |
-| `PORT` / `HOST` | `3001` / `127.0.0.1` | Listen address |
+| `PORT` / `HOST` | `3001` / `127.0.0.1` | API listen address |
+| `COURSE_PORT` / `COURSE_HOST` | `4000` / `127.0.0.1` | Test course listen address (`dev:course`, `dev:all`) |
 | `STARTING_BALANCE` | `1000` | Credits granted to new users |
 | `SHOW_SABOTAGE_UPFRONT` | `true` | Reveal sabotage text before fights open |
 | `FIGHT_NUMBER_START` | `1` (simulated: `401`) | First fight number |
 | `WEB_DIST` | `web/dist` | Built SPA, served with an SPA fallback when the directory exists |
 | `SIM_SEED` | `sabotage-markets` | Simulated mode RNG seed |
 | `SIM_TIME_SCALE` | `1` | Simulated mode speed multiplier |
-| `RACER_1_MODEL` … `RACER_4_MODEL` | none | Live mode: model per racer (`RACER_n_PROVIDER`, `RACER_n_NAME`, `RACER_n_KEY` override the roster) |
-| `OPENAI_API_KEY` / `GEMINI_API_KEY` / `XAI_API_KEY` | none | Keys for OpenAI-compatible providers |
+| `STEEL_API_KEYS` / `STEEL_API_KEY` | none | Live mode: Steel keys (comma-separated list, or a single fallback key) |
+| `OPENROUTER_API_KEY` | none | Live mode: key for all competitor and master model calls |
+| `OPENROUTER_APP_URL` / `OPENROUTER_APP_NAME` | `http://localhost:3001` / `Browser Agent Arena` | OpenRouter attribution headers |
+| `COMPETITOR_LLM_MODELS` | none | Live mode: four comma-separated OpenRouter model ids |
+| `MASTER_LLM_MODEL` | none | Live mode: OpenRouter model for the sabotage director (needed when `obstaclesEnabled`) |
+| `COMPETITOR_MAX_ACTIONS` | `20` | Live mode: action cap per racer |
+| `RACE_LLM_BUDGET_USD` | `0.25` | Live mode: shared per-race LLM spend cap |
+| `COURSE_BASE_URL` / `COURSE_VERIFIER_TOKEN` | none | Live mode: course verifier endpoint and token |
+| `RACE_EVENT_FILE` | `data/race-events.jsonl` | Live mode: append-only event log |
 
 `SIGINT` and `SIGTERM` close the server gracefully: open event streams are ended and every race is shut down.
 

@@ -1,14 +1,15 @@
 import { resolve } from "node:path";
-import { AnthropicMasterPolicyModel } from "../agents/anthropic-models.js";
-import {
-  createRosterModels,
-  resolveCompetitorRoster,
-} from "../agents/competitor-roster.js";
 import {
   MasterObstacleProvider,
   type RaceObservationSource,
 } from "../agents/master-obstacle-provider.js";
+import {
+  OpenRouterCompetitorDecisionModel,
+  OpenRouterMasterPolicyModel,
+  OpenRouterUsageBudget,
+} from "../agents/openrouter-models.js";
 import { PlaywrightCompetitorRunner } from "../agents/playwright-competitor-runner.js";
+import type { AgentIdentity } from "../api/dto.js";
 import type { ApiCreateRaceInput } from "../api/race-registry.js";
 import {
   DeterministicCourseVerifier,
@@ -19,16 +20,22 @@ import { CdpObstacleProvider } from "../infra/cdp-obstacle-provider.js";
 import { SteelSessionManager } from "../infra/steel-session-manager.js";
 import { JsonlRaceEventStore } from "../persistence/jsonl-event-store.js";
 import type { CreditLedger } from "../wallet/credit-ledger.js";
-import type { FightMetadata } from "./fight-metadata.js";
+import { DEFAULT_AGENT_ROSTER, type FightMetadata } from "./fight-metadata.js";
 import { RaceCoordinator } from "./race-coordinator.js";
 
 /** What the registry supplies alongside the operator's input. */
 export type ProductionRaceContext = {
   /** The shared wallet every market settles into. */
   ledger: CreditLedger;
-  /** Fight metadata; `agents` is overridden by the resolved live roster. */
+  /**
+   * Fight metadata. Each agent keeps its key and name; its provider and
+   * model are replaced by the OpenRouter roster from COMPETITOR_LLM_MODELS.
+   */
   fight: Partial<FightMetadata>;
 };
+
+export const OPENROUTER_PROVIDER = "openrouter";
+export const COMPETITOR_ROSTER_SIZE = 4;
 
 function requiredEnv(name: string): string {
   const value = process.env[name];
@@ -36,23 +43,73 @@ function requiredEnv(name: string): string {
   return value;
 }
 
+function positiveNumberEnv(name: string, fallback: number): number {
+  const value = process.env[name];
+  if (!value) return fallback;
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    throw new Error(`${name} must be a positive number`);
+  }
+  return parsed;
+}
+
+/** OpenRouter model id per racer id, from COMPETITOR_LLM_MODELS. */
+export function competitorRoster(
+  value = requiredEnv("COMPETITOR_LLM_MODELS"),
+): Map<string, string> {
+  const models = value
+    .split(",")
+    .map((model) => model.trim())
+    .filter(Boolean);
+  if (models.length !== COMPETITOR_ROSTER_SIZE) {
+    throw new Error("COMPETITOR_LLM_MODELS must contain exactly four comma-separated models");
+  }
+  return new Map(models.map((model, index) => [`racer-${index + 1}`, model]));
+}
+
+/** The fight's agents (or the default roster) driven by the OpenRouter roster. */
+export function openRouterAgents(
+  agents: readonly AgentIdentity[] | undefined,
+  roster: ReadonlyMap<string, string>,
+): AgentIdentity[] {
+  const base = agents ?? DEFAULT_AGENT_ROSTER;
+  if (base.length !== COMPETITOR_ROSTER_SIZE) {
+    throw new Error(`A live fight needs exactly ${COMPETITOR_ROSTER_SIZE} agents, got ${base.length}`);
+  }
+  return base.map((agent, index) => {
+    const model = roster.get(`racer-${index + 1}`);
+    if (!model) throw new Error(`No OpenRouter model configured for racer-${index + 1}`);
+    return { key: agent.key, name: agent.name, provider: OPENROUTER_PROVIDER, model };
+  });
+}
+
 export function createProductionRaceCoordinator(
   input: ApiCreateRaceInput,
   context: ProductionRaceContext,
 ): RaceCoordinator {
   // Resolve models first so misconfiguration fails before any session exists.
-  const roster = resolveCompetitorRoster(context.fight.agents);
-  const models = createRosterModels(roster);
+  const roster = competitorRoster();
+  const agents = openRouterAgents(context.fight.agents, roster);
+  const budget = new OpenRouterUsageBudget(
+    positiveNumberEnv("RACE_LLM_BUDGET_USD", 0.25),
+  );
+  const competitorModels = new Map(
+    [...roster].map(([racerId, model]) => [
+      racerId,
+      new OpenRouterCompetitorDecisionModel({ model, budget }),
+    ]),
+  );
 
   const sessionManager = new SteelSessionManager();
   const agentRunner = new PlaywrightCompetitorRunner({
     task: context.fight.task ?? input.task,
     startUrl: input.startUrl,
-    modelFor: (racerId) => {
-      const model = models.get(racerId);
-      if (!model) throw new Error(`No competitor model is configured for ${racerId}`);
+    modelForRacer(racerId) {
+      const model = competitorModels.get(racerId);
+      if (!model) throw new Error(`No OpenRouter model configured for ${racerId}`);
       return model;
     },
+    maxActions: positiveNumberEnv("COMPETITOR_MAX_ACTIONS", 20),
   });
   const courseVerifier = new DeterministicCourseVerifier(
     new HttpCourseStateGateway(
@@ -104,7 +161,10 @@ export function createProductionRaceCoordinator(
   const cdpExecutor = new CdpObstacleProvider(sessionManager);
   const obstacleProvider = input.obstaclesEnabled
     ? new MasterObstacleProvider(
-        new AnthropicMasterPolicyModel({ model: requiredEnv("MASTER_LLM_MODEL") }),
+        new OpenRouterMasterPolicyModel({
+          model: requiredEnv("MASTER_LLM_MODEL"),
+          budget,
+        }),
         observationSource,
         cdpExecutor,
         fallbackPolicies,
@@ -112,7 +172,11 @@ export function createProductionRaceCoordinator(
     : undefined;
 
   coordinator = new RaceCoordinator(
-    { ...input, fight: { ...context.fight, agents: roster } },
+    {
+      ...input,
+      competitorModels: Object.fromEntries(roster),
+      fight: { ...context.fight, agents },
+    },
     {
       sessionManager,
       agentRunner,
@@ -120,6 +184,7 @@ export function createProductionRaceCoordinator(
       eventStore,
       obstacleProvider,
       ledger: context.ledger,
+      llmUsage: () => budget.snapshot(),
     },
   );
   return coordinator;

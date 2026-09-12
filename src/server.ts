@@ -1,23 +1,8 @@
-import { resolve } from "node:path";
+import "dotenv/config";
 import type { CoordinatorFactory, RaceRegistry } from "./api/race-registry.js";
 import { buildApi } from "./api/server.js";
 import { createProductionRaceCoordinator } from "./application/production-race-factory.js";
-
-function envNumber(name: string, fallback: number): number {
-  const raw = process.env[name];
-  if (raw === undefined || raw.trim() === "") return fallback;
-  const value = Number(raw);
-  if (!Number.isFinite(value)) throw new Error(`${name} must be a number`);
-  return value;
-}
-
-function envBoolean(name: string, fallback: boolean): boolean {
-  const raw = process.env[name]?.trim().toLowerCase();
-  if (raw === undefined || raw === "") return fallback;
-  if (["1", "true", "yes", "on"].includes(raw)) return true;
-  if (["0", "false", "no", "off"].includes(raw)) return false;
-  throw new Error(`${name} must be true or false`);
-}
+import { envApiOptions, envNumber } from "./env.js";
 
 const mode = process.env.RACE_MODE?.trim() || "live";
 if (mode !== "live" && mode !== "simulated") {
@@ -40,11 +25,7 @@ if (mode === "simulated") {
 
 const app = buildApi({
   coordinatorFactory,
-  mode,
-  showSabotageUpfront: envBoolean("SHOW_SABOTAGE_UPFRONT", true),
-  startingBalance: envNumber("STARTING_BALANCE", 1_000),
-  fightNumberStart: envNumber("FIGHT_NUMBER_START", mode === "simulated" ? 401 : 1),
-  webDist: resolve(process.env.WEB_DIST ?? "web/dist"),
+  ...envApiOptions(mode),
   onRegistryReady,
 });
 
