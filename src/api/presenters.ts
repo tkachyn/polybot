@@ -735,12 +735,13 @@ export function presentLeaderboard(
 }
 
 export function presentMeta(
-  options: { mode: ServerMode; showSabotageUpfront: boolean; startingBalance: number },
+  options: { mode: ServerMode; demoMode: boolean; showSabotageUpfront: boolean; startingBalance: number },
   now: number,
 ): ServerMeta {
   return {
     serverTime: now,
     mode: options.mode,
+    demoMode: options.demoMode,
     showSabotageUpfront: options.showSabotageUpfront,
     startingBalance: options.startingBalance,
   };

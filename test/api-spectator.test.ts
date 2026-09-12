@@ -30,6 +30,7 @@ test("meta, users and wallet transfers", async () => {
   const meta = await app.inject({ method: "GET", url: "/api/meta" });
   assert.equal(meta.statusCode, 200);
   assert.equal(meta.json().mode, "simulated");
+  assert.equal(meta.json().demoMode, false);
   assert.equal(meta.json().startingBalance, 500);
   assert.equal(meta.json().showSabotageUpfront, true);
   assert.equal(typeof meta.json().serverTime, "number");
@@ -87,6 +88,36 @@ test("meta, users and wallet transfers", async () => {
   assert.deepEqual([malformed.statusCode, malformed.json().code], [400, "invalid"]);
   const unknownRoute = await app.inject({ method: "GET", url: "/api/nope" });
   assert.deepEqual([unknownRoute.statusCode, unknownRoute.json().code], [404, "not_found"]);
+  await app.close();
+});
+
+test("demo mode locks equal bankrolls and ranks judges in one fight", async () => {
+  const app = build({ demoMode: true, startingBalance: 100 });
+  await app.inject({ method: "POST", url: "/races", payload: { ...raceInput("race-demo"), obstaclesEnabled: false } });
+  for (const [userId, displayName] of [["judge-01", "Ada"], ["judge-02", "Grace"]]) {
+    const created = await app.inject({ method: "POST", url: "/api/users", payload: { userId, displayName } });
+    assert.equal(created.json().account.balance, 100);
+  }
+
+  const locked = await app.inject({
+    method: "POST", url: "/api/users/judge-01/deposit", payload: { amount: 10, method: "virtual" },
+  });
+  assert.deepEqual([locked.statusCode, locked.json().code], [400, "invalid"]);
+
+  await app.inject({
+    method: "POST", url: "/api/fights/race-demo/orders",
+    payload: { userId: "judge-01", racerId: "racer-1", side: "yes", action: "buy", quantity: 8 },
+  });
+  await app.inject({
+    method: "POST", url: "/api/fights/race-demo/orders",
+    payload: { userId: "judge-02", racerId: "racer-2", side: "yes", action: "buy", quantity: 4 },
+  });
+
+  const board = await app.inject({ method: "GET", url: "/api/fights/race-demo/traders" });
+  assert.equal(board.statusCode, 200);
+  assert.equal(board.json().raceId, "race-demo");
+  assert.deepEqual(board.json().rows.map((row: { displayName: string }) => row.displayName).sort(), ["Ada", "Grace"]);
+  assert.deepEqual(board.json().rows.map((row: { rank: number }) => row.rank), [1, 2]);
   await app.close();
 });
 

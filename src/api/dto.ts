@@ -481,9 +481,30 @@ export type LeaderboardResponse = {
   rows: LeaderboardRow[];
 };
 
+/** One judge's mark-to-market result in a single fight. */
+export type TraderLeaderboardRow = {
+  rank: number;
+  userId: string;
+  displayName: string;
+  /** Current fight P/L, including the value of open positions. */
+  pnl: number;
+  /** pnl / buy cost. Null until the judge places a buy. */
+  returnPct: number | null;
+  wagered: number;
+  openPositions: number;
+};
+
+export type TraderLeaderboardResponse = {
+  serverTime: number;
+  raceId: string;
+  rows: TraderLeaderboardRow[];
+};
+
 export type ServerMeta = {
   serverTime: number;
   mode: ServerMode;
+  /** Audience-demo safeguards, including locked equal bankrolls. */
+  demoMode: boolean;
   showSabotageUpfront: boolean;
   startingBalance: number;
 };

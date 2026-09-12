@@ -91,6 +91,10 @@
   margin: 0;
 }
 
+.invite {
+  align-self: center;
+}
+
 .stat {
   display: flex;
   flex-direction: column;

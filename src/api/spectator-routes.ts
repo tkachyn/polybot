@@ -18,6 +18,7 @@ import type {
   PortfolioResponse,
   RobustnessMatrixResponse,
   ServerMode,
+  TraderLeaderboardResponse,
   WalletTransferRequest,
   WalletTransferResponse,
 } from "./dto.js";
@@ -58,6 +59,7 @@ export type SpectatorContext = {
   hub: SseHub;
   now: () => number;
   mode: ServerMode;
+  demoMode: boolean;
   showSabotageUpfront: boolean;
   throttles: StreamThrottles;
 };
@@ -134,6 +136,7 @@ export function registerSpectatorRoutes(app: FastifyInstance, context: Spectator
     presentMeta(
       {
         mode: context.mode,
+        demoMode: context.demoMode,
         showSabotageUpfront: context.showSabotageUpfront,
         startingBalance: users.startingBalance,
       },
@@ -206,6 +209,42 @@ export function registerSpectatorRoutes(app: FastifyInstance, context: Spectator
     },
   );
 
+  app.get<{ Params: { raceId: string } }>(
+    "/api/fights/:raceId/traders",
+    async (request): Promise<TraderLeaderboardResponse> => {
+      const race = registry.get(request.params.raceId);
+      const rows = users.list().flatMap((user) => {
+        const entries = registry.ledger.entries(user.userId)
+          .filter((entry) => entry.raceId === race.raceId);
+        const buys = entries.filter((entry) => entry.type === "buy");
+        if (buys.length === 0) return [];
+        const cost = buys.reduce((sum, entry) => sum - entry.amount, 0);
+        const returned = entries.reduce((sum, entry) =>
+          entry.type === "sell" || entry.type === "payout" || entry.type === "refund"
+            ? sum + entry.amount
+            : sum, 0);
+        const open = race.market.positionsFor(user.userId);
+        const openValue = open.reduce(
+          (sum, position) => sum + position.quantity * race.market.sidePrice(position.racerId, position.side),
+          0,
+        );
+        const pnl = Math.round((returned + openValue - cost) * 1_000_000) / 1_000_000;
+        return [{
+          rank: 0,
+          userId: user.userId,
+          displayName: user.displayName,
+          pnl,
+          returnPct: cost > 0 ? Math.round((pnl / cost) * 1_000_000) / 1_000_000 : null,
+          wagered: Math.round(cost * 1_000_000) / 1_000_000,
+          openPositions: open.length,
+        }];
+      }).sort((left, right) =>
+        right.pnl - left.pnl || right.wagered - left.wagered || left.displayName.localeCompare(right.displayName))
+        .map((row, index) => ({ ...row, rank: index + 1 }));
+      return { serverTime: now(), raceId: race.raceId, rows };
+    },
+  );
+
   app.get<{ Params: { raceId: string; racerId: string }; Querystring: { seq?: string } }>(
     "/api/fights/:raceId/agents/:racerId/frame",
     async (request, reply) => {
@@ -273,6 +312,9 @@ export function registerSpectatorRoutes(app: FastifyInstance, context: Spectator
     app.post<{ Params: { userId: string }; Body: WalletTransferRequest }>(
       `/api/users/:userId/${direction}`,
       async (request): Promise<WalletTransferResponse> => {
+        if (context.demoMode) {
+          throw new DomainError("invalid", "Wallet transfers are disabled in demo mode");
+        }
         const userId = request.params.userId;
         const body = bodyObject<WalletTransferRequest>(request.body);
         const at = now();

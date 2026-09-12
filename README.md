@@ -128,6 +128,7 @@ The script sends `POST /races` with `courseId: "arena-shop"`, three checkpoints,
 | `PORT` / `HOST` | `3001` / `127.0.0.1` | API listen address |
 | `COURSE_PORT` / `COURSE_HOST` | `4000` / `127.0.0.1` | Test course listen address (`dev:course`, `dev:all`) |
 | `STARTING_BALANCE` | `1000` | Credits granted to new users |
+| `DEMO_MODE` | `false` | Lock equal bankrolls, block wallet transfers and enable QR judge onboarding |
 | `SHOW_SABOTAGE_UPFRONT` | `true` | Reveal sabotage text before fights open |
 | `FIGHT_NUMBER_START` | `1` (simulated: `401`) | First fight number |
 | `WEB_DIST` | `web/dist` | Built SPA, served with an SPA fallback when the directory exists |

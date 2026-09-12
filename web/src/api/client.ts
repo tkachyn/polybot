@@ -23,6 +23,7 @@ import type {
   RobustnessMatrixResponse,
   ServerMeta,
   ServerMode,
+  TraderLeaderboardResponse,
   WalletTransferRequest,
   WalletTransferResponse,
 } from "@contract";
@@ -188,6 +189,11 @@ export function getFight(raceId: string, signal?: AbortSignal): Promise<FightDet
 /** GET /api/fights/:raceId/me?userId= */
 export function getMyFight(raceId: string, userId: string, signal?: AbortSignal): Promise<MyFightResponse> {
   return request<MyFightResponse>(`/api/fights/${seg(raceId)}/me`, { query: { userId }, signal });
+}
+
+/** GET /api/fights/:raceId/traders */
+export function getFightTraders(raceId: string, signal?: AbortSignal): Promise<TraderLeaderboardResponse> {
+  return request<TraderLeaderboardResponse>(`/api/fights/${seg(raceId)}/traders`, { signal });
 }
 
 /**

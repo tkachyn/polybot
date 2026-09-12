@@ -21,6 +21,7 @@ import { Money } from "./Figures";
 import { IconClose, IconFights, IconLeaderboard, IconPortfolio, IconResolved, IconSearch, IconWallet, LogoMark, type IconProps } from "./icons";
 import { ErrorBoundary } from "../app/ErrorBoundary";
 import { Tag } from "./Tag";
+import { DemoJoinDialog } from "../features/demo/DemoJoinDialog";
 import styles from "./AppShell.module.css";
 
 export { Page, PageHeader } from "./Page";
@@ -69,6 +70,8 @@ export const NAV_ITEMS: readonly NavItem[] = [
 
 function Sidebar() {
   const { pathname } = useLocation();
+  const { meta } = useSession();
+  const items = meta?.demoMode ? NAV_ITEMS.filter((item) => item.to !== "/wallet") : NAV_ITEMS;
   return (
     <nav className={styles.sidebar} aria-label="Primary">
       <Link to="/" className={styles.brand} aria-label="Sabotage Markets home">
@@ -76,7 +79,7 @@ function Sidebar() {
         <span className={styles.brandText}>Sabotage Markets</span>
       </Link>
       <ul className={styles.nav}>
-        {NAV_ITEMS.map(({ to, label, Icon, match }) => (
+        {items.map(({ to, label, Icon, match }) => (
           <li key={to}>
             <NavLink
               to={to}
@@ -175,9 +178,11 @@ function TopBar() {
           <span className={cx("label", styles.balanceLabel)}>Balance</span>
           {account ? <Money value={account.balance} size="md" /> : <Skeleton width={64} height={14} />}
         </Link>
-        <ButtonLink to="/wallet?tab=deposit" variant="action" size="sm">
-          Deposit
-        </ButtonLink>
+        {!meta?.demoMode && (
+          <ButtonLink to="/wallet?tab=deposit" variant="action" size="sm">
+            Deposit
+          </ButtonLink>
+        )}
         <Link to="/portfolio" className={styles.avatar} title={account?.displayName ?? "Your account"} aria-label="Your portfolio">
           {account ? formatInitials(account.displayName) : ""}
         </Link>
@@ -191,6 +196,7 @@ export function AppShell() {
   const { pathname } = useLocation();
   return (
     <div className={styles.shell}>
+      <DemoJoinDialog />
       <a className="skip-link" href="#main">
         Skip to content
       </a>
