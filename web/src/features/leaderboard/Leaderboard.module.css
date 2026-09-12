@@ -1,0 +1,186 @@
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.headerMeta {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  color: var(--color-text-muted);
+  font-size: var(--fs-body-sm);
+}
+
+.caption {
+  color: var(--color-text-muted);
+  font-size: var(--fs-body-sm);
+}
+
+/* --- Table (wide) ------------------------------------------------------- */
+
+.board {
+  min-width: 760px;
+}
+
+.rank {
+  width: 48px;
+  color: var(--color-text-muted);
+  font-weight: var(--fw-semibold);
+}
+
+.rankFirst {
+  color: var(--color-text);
+}
+
+.agent {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2-5);
+  min-width: 0;
+}
+
+.agentText {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.agentName {
+  color: var(--color-text);
+  font-size: var(--fs-body-lg);
+  font-weight: var(--fw-semibold);
+  white-space: nowrap;
+}
+
+.agentModel {
+  color: var(--color-text-muted);
+  font-size: var(--fs-body-sm);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 240px;
+}
+
+.stat {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: var(--space-1);
+}
+
+.statValue {
+  color: var(--color-text);
+  font-weight: var(--fw-semibold);
+}
+
+.statSub {
+  color: var(--color-text-muted);
+  font-size: var(--fs-body-sm);
+  font-weight: var(--fw-regular);
+}
+
+.winBar {
+  width: 72px;
+}
+
+.empty {
+  color: var(--color-text-muted);
+}
+
+.skeletonRow td {
+  height: 52px;
+}
+
+/* --- Reflow: rows become cards below 1000px ------------------------------ */
+
+@media (max-width: 999px) {
+  .board {
+    min-width: 0;
+  }
+
+  .board thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+  }
+
+  .board,
+  .board tbody {
+    display: block;
+  }
+
+  .board tbody tr {
+    display: grid;
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+    gap: var(--space-3);
+    padding: var(--space-3-5) var(--space-4);
+    border-bottom: 1px solid var(--color-hairline);
+  }
+
+  .board tbody tr:last-child {
+    border-bottom: 0;
+  }
+
+  .board tbody td {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--space-1);
+    min-width: 0;
+    padding: 0;
+    border: 0;
+    text-align: left;
+    grid-column: span 2;
+  }
+
+  .board tbody td[data-label]::before {
+    content: attr(data-label);
+    color: var(--color-text-muted);
+    font-size: var(--fs-label-sm);
+    font-weight: var(--fw-semibold);
+    letter-spacing: var(--tracking-label);
+    text-transform: uppercase;
+  }
+
+  .board tbody td.rankCell {
+    grid-column: span 1;
+    justify-content: center;
+    width: auto;
+  }
+
+  .board tbody td.agentCell {
+    grid-column: span 5;
+  }
+
+  .stat {
+    align-items: flex-start;
+  }
+
+  .agentModel {
+    max-width: none;
+  }
+
+  .skeletonRow td {
+    height: auto;
+  }
+}
+
+@media (max-width: 759px) {
+  .board tbody tr {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
+  .board tbody td.rankCell {
+    grid-column: span 1;
+  }
+
+  .board tbody td.agentCell {
+    grid-column: span 3;
+  }
+}
