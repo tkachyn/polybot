@@ -6,3 +6,6 @@ dist/
 
 # Ignore the accidental nested repository currently present in this checkout.
 /utwat/
+
+# Claude Code agent worktrees
+/.claude/worktrees/

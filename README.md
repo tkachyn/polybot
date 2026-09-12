@@ -56,8 +56,17 @@ Other scripts:
 | `WEB_DIST` | `web/dist` | Built SPA, served with an SPA fallback when the directory exists |
 | `SIM_SEED` | `sabotage-markets` | Simulated mode RNG seed |
 | `SIM_TIME_SCALE` | `1` | Simulated mode speed multiplier |
+| `RACE_EVENT_FILE` | `data/race-events.jsonl` | Live mode event log |
+| `STEEL_API_KEY` | none | Live mode: Steel browser sessions |
+| `COURSE_BASE_URL` / `COURSE_VERIFIER_TOKEN` | none | Live mode: course verifier |
+| `MASTER_LLM_MODEL` | none | Live mode: master (sabotage) model, needed when `obstaclesEnabled` |
+| `COMPETITOR_LLM_MODEL` | none | Live mode: fallback model for Anthropic racers |
 | `RACER_1_MODEL` … `RACER_4_MODEL` | none | Live mode: model per racer (`RACER_n_PROVIDER`, `RACER_n_NAME`, `RACER_n_KEY` override the roster) |
-| `OPENAI_API_KEY` / `GEMINI_API_KEY` / `XAI_API_KEY` | none | Keys for OpenAI-compatible providers |
+| `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / `GEMINI_API_KEY` / `XAI_API_KEY` | none | Provider keys, needed only for providers in the roster |
+| `VITE_API_TARGET` | `http://127.0.0.1:3001` | Web dev server: where `/api` is proxied |
+| `VITE_DEFAULT_LAYOUT` | `grid` | Web: default arena layout (`grid` or `lanes`) |
+
+All of these are listed with their defaults in `.env.example`.
 
 `SIGINT` and `SIGTERM` close the server gracefully: open event streams are ended and every race is shut down.
 
