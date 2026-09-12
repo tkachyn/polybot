@@ -236,7 +236,7 @@ Competitors act on semantic hooks (`data-arena-role`), so every hazard changes w
 
 | Hazard | Effect |
 | --- | --- |
-| `insert_decoy` | A clone with the same role, `data-arena-decoy="true"`, `id="arena-decoy-…"` and a different plausible label, inserted just before the target. Clicking it does nothing. An agent must read labels (the `text` field on click decisions) to avoid it. |
+| `insert_decoy` | A clone with the same role, `data-arena-decoy="true"`, `id="arena-decoy-…"` and a different plausible label, inserted just before the target. Clicking it does nothing. An agent must read labels (the optional `label` field on click and type decisions) to avoid it. |
 | `blocking_modal` | A full-page overlay that intercepts clicks, with a `Close` control (`data-arena-role="dismiss-overlay"`). The control is available immediately at intensity 1–2, and after half the duration at intensity 3. |
 | `temporary_disable` | The target gets `disabled` and `aria-disabled="true"`. |
 | `move_primary_action` | The target is hidden behind a "More options" disclosure (`data-arena-role="more-actions"`); clicking the disclosure reveals it. |
