@@ -4,6 +4,10 @@ import { Button, ButtonLink } from "../../components";
 import { Dialog } from "../evaluation/Dialog";
 import styles from "./FightInvite.module.css";
 
+/** Kept in step with .qrWrap in FightInvite.module.css. */
+const QR_DARK = "#08090a";
+const QR_LIGHT = "#f4f2ef";
+
 export function FightInvite({ raceId }: { raceId: string }) {
   const [open, setOpen] = useState(false);
   const [qr, setQr] = useState<string | null>(null);
@@ -16,7 +20,9 @@ export function FightInvite({ raceId }: { raceId: string }) {
   useEffect(() => {
     if (!open || !url) return;
     let active = true;
-    QRCode.toDataURL(url, { width: 320, margin: 2, errorCorrectionLevel: "M", color: { dark: "#0d151d", light: "#ffffff" } })
+    // Matches .qrWrap: our ground on our off-white, rather than pure black on
+    // pure white, so the code sits in the palette without losing contrast.
+    QRCode.toDataURL(url, { width: 320, margin: 2, errorCorrectionLevel: "M", color: { dark: QR_DARK, light: QR_LIGHT } })
       .then((value) => { if (active) setQr(value); })
       .catch(() => { if (active) setQr(null); });
     return () => { active = false; };

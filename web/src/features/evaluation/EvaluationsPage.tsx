@@ -135,8 +135,10 @@ export function EvaluationsPage() {
     </div>
   );
 
+  // Default width: the shared content column, so this page lines up with the
+  // navbar and every other screen.
   return (
-    <Page title="Evaluations" width="wide">
+    <Page title="Evaluations">
       <PageHeader title="Evaluations" subtitle={subtitle} actions={actions} />
       <div className={styles.stack}>
         <ErrorBanner
