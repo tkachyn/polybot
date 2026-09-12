@@ -69,7 +69,7 @@ export class SteelSessionManager {
         timeout: this.sessionTimeoutSeconds * 1000,
         debugConfig: {
           interactive: false,
-          systemCursor: false,
+          systemCursor: true,
         },
       }),
     );

@@ -1,5 +1,5 @@
 import type { Page } from "playwright";
-import type { BlockedBy } from "../api/dto.js";
+import type { BlockedBy, CursorPosition } from "../api/dto.js";
 import type { RaceEvent } from "../domain/types.js";
 
 export type RacerSessionHandle = {
@@ -56,6 +56,8 @@ export type ActionEvidence = {
   };
   /** Why the action could not complete, classified from the browser error. */
   blockedBy?: BlockedBy;
+  /** The browser pointer position used for a click or text input. */
+  cursor?: CursorPosition;
   /** The page URL changed as a result of the action. */
   navigated?: boolean;
 };
@@ -76,6 +78,8 @@ export type CompetitorContext = {
   session: RacerSessionHandle;
   reportCheckpoint(checkpoint: number): Promise<void>;
   reportFinish(): Promise<void>;
+  /** Ends the racer's current persistent sabotage recovery state. */
+  reportRecovery?(): Promise<void>;
   /** Verifier-backed completion check after a browser action. */
   checkFinish?(): Promise<boolean>;
   /**

@@ -360,6 +360,7 @@ export class RaceCoordinator {
           reportCheckpoint: (checkpoint) =>
             this.recordCheckpoint(session.racerId, checkpoint),
           reportFinish: () => this.recordFinish(session.racerId),
+          reportRecovery: () => this.recordRecovery(session.racerId),
           syncProgress: () => this.syncProgress(session.racerId),
           checkFinish: () => this.checkFinish(session.racerId),
         };
@@ -438,6 +439,13 @@ export class RaceCoordinator {
 
   async recordFinish(racerId: string, now = Date.now()): Promise<void> {
     return this.enqueueLifecycle(() => this.recordFinishInternal(racerId, now));
+  }
+
+  async recordRecovery(racerId: string, now = Date.now()): Promise<void> {
+    return this.enqueueLifecycle(async () => {
+      this.engine.markRecovered(racerId, now, "manual");
+      await this.afterEngineMutation(now);
+    });
   }
 
   /**
@@ -530,11 +538,10 @@ export class RaceCoordinator {
     }
   }
 
-  /** Progress is claimable while running, or once an elapsed recovery is due. */
-  private canClaimProgress(racer: Racer, now: number): boolean {
+  /** Progress is claimable only after persistent sabotage was cleared. */
+  private canClaimProgress(racer: Racer, _now: number): boolean {
     if (this.stopped || !this.isLive()) return false;
-    if (racer.status === "running") return true;
-    return racer.status === "recovering" && racer.recoverAt !== undefined && now >= racer.recoverAt;
+    return racer.status === "running";
   }
 
   private async recordFinishInternal(racerId: string, now: number): Promise<void> {

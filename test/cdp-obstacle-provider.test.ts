@@ -36,6 +36,8 @@ test("builds a bounded disruption script without executing it", () => {
   assert.match(script, /checkout-submit/);
   assert.match(script, /disruption-1/);
   assert.match(script, /durationMs = 12000/);
+  assert.match(script, /__arenaRecoverDisruptions/);
+  assert.doesNotMatch(script, /setTimeout\(revert/);
 });
 
 test("every hazard script parses and carries the contract's roles and labels", () => {

@@ -66,10 +66,12 @@ test("ordered sabotage steps trigger independently and wait for recovery", async
     /cannot reach a checkpoint while recovering/,
   );
 
-  await race.reachCheckpoint("racer-1", 3, 102);
-  await race.reachCheckpoint("racer-1", 4, 202);
-  await race.reachCheckpoint("racer-2", 1, 203);
-  await race.reachCheckpoint("racer-2", 2, 204);
+  race.markRecovered("racer-1", 102);
+  await race.reachCheckpoint("racer-1", 3, 103);
+  race.markRecovered("racer-1", 202);
+  await race.reachCheckpoint("racer-1", 4, 203);
+  await race.reachCheckpoint("racer-2", 1, 204);
+  await race.reachCheckpoint("racer-2", 2, 205);
 
   assert.deepEqual(
     provider.applied.map(({ racerId, policy }) => [racerId, policy.disruptionId]),

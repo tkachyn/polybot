@@ -281,7 +281,7 @@ test("sabotage hits drive telemetry, run status, signals and sabotage state", as
   assert.equal(coordinator.runStatus("racer-1"), "bad");
   assert.equal(coordinator.market.pricesSnapshot()["racer-1"], round(145 / 445));
 
-  await coordinator.tick(7_000);
+  await coordinator.recordRecovery("racer-1", 7_000);
   assert.equal(coordinator.engine.racers.get("racer-1")?.status, "running");
   assert.equal(coordinator.runStatus("racer-1"), "run");
   assert.equal(coordinator.market.pricesSnapshot()["racer-1"], round(155 / 455));

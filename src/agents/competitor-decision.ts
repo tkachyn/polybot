@@ -8,17 +8,19 @@ export type CompetitorDecisionInput = Parameters<CompetitorDecisionModel["decide
 
 export const COMPETITOR_TOOL_NAME = "take_browser_action";
 export const COMPETITOR_TOOL_DESCRIPTION =
-  "Take one browser action or report verified progress.";
+  "Take one browser action or report verified progress. Persistent challenges must be actively cleared, not waited out.";
 export const COMPETITOR_SYSTEM_PROMPT =
-  "You control one browser racer. Choose exactly one bounded action. Use data-arena-role values when clicking or typing, plus the visible label when several controls share a role. Report checkpoints and completion only when the visible task state supports the claim.";
+  "You control one browser racer. Choose exactly one bounded action. Use data-arena-role values when clicking or typing, plus the visible label when several controls share a role. Sabotage and challenges persist until you actively clear them; never wait for one to disappear. First use visible recovery controls, and when necessary use the bounded same-page evaluate action to inspect or repair the DOM. For arena sabotage, window.__arenaRecoverDisruptions?.() is an allowed recovery helper. Do not use evaluate for network access, navigation, storage, secrets, or task completion shortcuts. Report checkpoints and completion only when the visible task state supports the claim.";
 
 /** Longest accepted `label`; longer labels are truncated, which still matches by substring. */
 export const LABEL_MAX_LENGTH = 120;
+export const EVALUATE_SCRIPT_MAX_LENGTH = 2_000;
 
 export const DECISION_TYPES = [
   "inspect",
   "click",
   "type",
+  "evaluate",
   "navigate",
   "wait",
   "checkpoint",
@@ -48,6 +50,12 @@ export const COMPETITOR_TOOL_SCHEMA: ToolJsonSchema = {
         "Optional, for click and type: the visible label of the control to act on, as shown in the observation's controls. Matched case-insensitively as a substring. Use it when several controls share the same targetRole; without it the first control with that role is used.",
     },
     text: { type: "string", maxLength: 2_000 },
+    script: {
+      type: "string",
+      maxLength: EVALUATE_SCRIPT_MAX_LENGTH,
+      description:
+        "A same-page DOM-only JavaScript expression or IIFE. Use only to inspect or repair the current page; network, navigation, storage, secrets, and arbitrary task shortcuts are forbidden.",
+    },
     url: { type: "string", maxLength: 2_000 },
     durationMs: { type: "integer", minimum: 0, maximum: 2_000 },
     checkpoint: { type: "integer", minimum: 1 },
@@ -86,6 +94,15 @@ export function parseDecision(value: unknown): AgentDecision {
         text: input.text,
         ...(label === undefined ? {} : { label }),
       };
+    }
+    case "evaluate": {
+      if (typeof input.script !== "string" || input.script.trim().length === 0) {
+        throw new Error("evaluate requires script");
+      }
+      if (input.script.length > EVALUATE_SCRIPT_MAX_LENGTH) {
+        throw new Error(`evaluate script cannot exceed ${EVALUATE_SCRIPT_MAX_LENGTH} characters`);
+      }
+      return { type: "evaluate", script: input.script };
     }
     case "navigate":
       if (typeof input.url !== "string") throw new Error("navigate requires url");
@@ -145,6 +162,8 @@ export function describeDecision(decision: AgentDecision): string {
         ? `${typed} ${decision.targetRole}`
         : `${typed} "${clip(decision.label, LABEL_TEXT_MAX)}" (${decision.targetRole})`;
     }
+    case "evaluate":
+      return "Evaluated a bounded same-page DOM recovery script";
     case "navigate":
       return `Navigated to ${describeUrl(decision.url)}`;
     case "wait":

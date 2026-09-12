@@ -50,7 +50,7 @@ export type ScriptHazard = {
   intensity: number;
   /** Identifies the hit: a new value is a new hit. */
   appliedAt: number;
-  /** When the hazard reverts. */
+  /** Legacy timestamp retained for offline/evaluation compatibility. */
   until: number;
   /** Decoy text, new label or modal title. */
   effectLabel: string;
@@ -62,6 +62,8 @@ export type ScriptStep = {
   text: string;
   error?: string;
   signature?: string;
+  /** The step actively cleared the persistent hazard. */
+  recovered?: boolean;
   evidence?: ActionEvidence;
   /** The hazard on screen while acting, for the frame; null when none. */
   disruption: { hazardType: HazardType; effectLabel: string } | null;
@@ -328,9 +330,9 @@ export class SimRacerScript {
       : -1;
   }
 
-  /** What the page shows while the hazard is on; a dismissed modal is gone. */
+  /** What the page shows while its hazard is on; a manually cleared hazard is gone. */
   private shown(hit: HitState, hazard: ScriptHazard): ScriptStep["disruption"] {
-    if (hazard.hazardType === "blocking_modal" && hit.workedAround) return null;
+    if (hit.workedAround) return null;
     return { hazardType: hazard.hazardType, effectLabel: hazard.effectLabel };
   }
 
@@ -339,6 +341,7 @@ export class SimRacerScript {
     if (move.error) step.error = move.error;
     if (move.signature) step.signature = move.signature;
     if (move.evidence) step.evidence = move.evidence;
+    if (move.resolves) step.recovered = true;
     return step;
   }
 
@@ -436,6 +439,7 @@ export class SimRacerScript {
     page: SimPage,
   ): (Move & { productive: boolean }) | null {
     const target = page.target;
+    if (hit.workedAround) return null;
     const effect = hazard.effectLabel;
     switch (hazard.hazardType) {
       case "temporary_disable":
@@ -472,7 +476,7 @@ export class SimRacerScript {
    * A step spent on the hazard itself, by response and attempt. Null when the
    * agent carries on with the page (careful, or already past the hazard).
    */
-  private hazardMove(hit: HitState, hazard: ScriptHazard, page: SimPage, now: number): Move | null {
+  private hazardMove(hit: HitState, hazard: ScriptHazard, page: SimPage, _now: number): Move | null {
     if (hit.workedAround) return null;
     const n = hit.attempts;
     const response = hit.response;
@@ -480,9 +484,6 @@ export class SimRacerScript {
     const effect = hazard.effectLabel;
     switch (hazard.hazardType) {
       case "blocking_modal": {
-        // Close is offered at once at intensity 1-2, after half the duration at 3.
-        const closeReady = hazard.intensity < 3 ||
-          now >= hazard.appliedAt + (hazard.until - hazard.appliedAt) / 2;
         const blocked: Move = {
           kind: "error",
           text: `click "${target}"`,
@@ -491,11 +492,6 @@ export class SimRacerScript {
         };
         const look: Move = { kind: "action", text: `look for a close button on the "${effect}" overlay` };
         const escape: Move = { kind: "action", text: "press Escape to dismiss the overlay" };
-        const wait: Move = {
-          kind: "action",
-          text: `wait for the "${effect}" overlay to offer a Close button`,
-          signature: "wait:overlay-close",
-        };
         const dismiss: Move = {
           kind: "action",
           text: `click "${CLOSE_LABEL}" on the "${effect}" overlay`,
@@ -504,17 +500,17 @@ export class SimRacerScript {
         };
         switch (response) {
           case "careful":
-            return closeReady ? dismiss : wait;
+            return dismiss;
           case "adaptive":
             if (n === 0) return blocked;
             if (n === 1) return look;
-            return closeReady ? dismiss : n % 2 === 0 ? escape : look;
+            return n % 2 === 0 ? dismiss : look;
           case "hasty":
             if (n < 2) return blocked;
             if (n === 2) return look;
-            return closeReady ? dismiss : n % 2 === 1 ? escape : blocked;
+            return n % 2 === 1 ? dismiss : blocked;
           default:
-            return [blocked, blocked, escape, blocked][n % 4];
+            return [blocked, blocked, escape, dismiss][n % 4];
         }
       }
       case "insert_decoy": {
@@ -569,7 +565,7 @@ export class SimRacerScript {
         const recheck: Move = { kind: "action", text: "re-check the form for validation errors" };
         switch (response) {
           case "careful":
-            return null;
+            return fillFirst;
           case "adaptive":
             return n === 0 ? disabledClick : fillFirst;
           case "hasty":
@@ -595,7 +591,7 @@ export class SimRacerScript {
         const readCopy: Move = { kind: "action", text: "read the surrounding page copy" };
         switch (response) {
           case "careful":
-            return null;
+            return renamedClick;
           case "adaptive":
             return n === 0 ? missingClick : renamedClick;
           case "hasty":
@@ -689,7 +685,7 @@ export type OfflineRunOptions = {
 /**
  * Runs the script against a virtual clock, applying the engine's rules: the
  * racer claims each sabotage step at its checkpoint while hazards are live,
- * and cannot report progress until the hazard's duration has elapsed.
+ * and cannot report progress until the hazard has been actively cleared.
  */
 export function runScriptOffline(options: OfflineRunOptions): OfflineRun {
   const { plan, template, sabotage, freezeAtMs, horizonMs, maxSteps } = options;
@@ -701,7 +697,6 @@ export function runScriptOffline(options: OfflineRunOptions): OfflineRun {
   const pageRef = (): PageRef => ({ page: script.page, stageNumber: script.stageNumber });
   let t = 0;
   let hazard: ScriptHazard | null = null;
-  let recoverAt: number | null = null;
   let nextSabotage = 0;
   const result = (finishAt: number | null, failAt: number | null): OfflineRun =>
     ({ events, checkpointAt, finishAt, failAt, hitAt, steps: script.steps });
@@ -709,7 +704,7 @@ export function runScriptOffline(options: OfflineRunOptions): OfflineRun {
   events.push({ t: 0, kind: "note", step: 0, text: `open ${script.page.url}`, idle: false, ...pageRef() });
   for (;;) {
     if (script.pageDone) {
-      const at = Math.max(t + verifyMs, recoverAt ?? 0);
+      const at = t + verifyMs;
       if (at >= horizonMs) return result(null, null);
       if (script.onFinishPage) {
         events.push({ t: at, kind: "finish" });
@@ -719,8 +714,6 @@ export function runScriptOffline(options: OfflineRunOptions): OfflineRun {
       events.push({ t: at, kind: "checkpoint", checkpoint });
       checkpointAt.push(at);
       t = at;
-      hazard = null;
-      recoverAt = null;
       script.advance();
       const step = sabotage[nextSabotage];
       if (step && step.checkpoint === checkpoint && at < freezeAtMs) {
@@ -732,7 +725,6 @@ export function runScriptOffline(options: OfflineRunOptions): OfflineRun {
           until: at + step.durationMs,
           effectLabel: effectLabelFor(template, step.hazardType, script.page),
         };
-        recoverAt = hazard.until;
         hitAt.push(at);
       }
       continue;
@@ -758,8 +750,9 @@ export function runScriptOffline(options: OfflineRunOptions): OfflineRun {
       return result(null, t);
     }
     const ref = pageRef();
-    const entry = script.next(hazard && t < hazard.until ? hazard : null, t);
+    const entry = script.next(hazard, t);
     events.push({ t, kind: "step", step: script.steps, entry, ...ref });
+    if (entry.recovered) hazard = null;
   }
 }
 

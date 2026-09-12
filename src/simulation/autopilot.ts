@@ -209,8 +209,8 @@ export class SimulationAutopilot {
         checkpoint: template.sabotage.checkpoint,
         summary: template.sabotage.summary,
         detail: template.sabotage.detail,
-        // Scaled like the race durations so the engine's recoverAt matches
-        // the simulated world at any time scale.
+        // Retained as scaled policy metadata for comparable evaluation timing;
+        // recovery itself is explicit and manual.
         policy: {
           ...template.sabotage.policy,
           durationMs: scaleDurationMs(template.sabotage.policy.durationMs, scale),
@@ -318,7 +318,7 @@ export class SimulationAutopilot {
           break;
         case "crash":
           lastAt = Math.max(lastAt, at);
-          this.recordHistoryStep(coordinator, course, fight.agents, event, at);
+          await this.recordHistoryStep(coordinator, course, fight.agents, event, at);
           coordinator.engine.failRacer(event.racerId, "simulated agent crashed: browser context lost", at);
           await coordinator.tick(at);
           break;
@@ -328,7 +328,7 @@ export class SimulationAutopilot {
           break;
         default:
           lastAt = Math.max(lastAt, at);
-          this.recordHistoryStep(coordinator, course, fight.agents, event, at);
+          await this.recordHistoryStep(coordinator, course, fight.agents, event, at);
           break;
       }
     }
@@ -341,13 +341,13 @@ export class SimulationAutopilot {
   }
 
   /** Records one scripted step, with its browser evidence and frame, at `at`. */
-  private recordHistoryStep(
+  private async recordHistoryStep(
     coordinator: RaceCoordinator,
     course: SimTemplate,
     agents: readonly AgentIdentity[],
     event: HistoryStepEvent,
     at: number,
-  ): void {
+  ): Promise<void> {
     const racer = coordinator.engine.racers.get(event.racerId);
     if (!racer || (racer.status !== "running" && racer.status !== "recovering")) return;
     let caption: string;
@@ -373,6 +373,9 @@ export class SimulationAutopilot {
       disruption = event.entry.disruption;
       if (event.kind === "crash") status = "failed";
     }
+    if (event.kind === "step" && event.entry.recovered) {
+      await coordinator.recordRecovery(event.racerId, at);
+    }
     const agent = agents[event.racerIndex];
     coordinator.recordAgentFrame(event.racerId, {
       contentType: "image/svg+xml",
@@ -395,10 +398,9 @@ export class SimulationAutopilot {
   }
 
   /**
-   * The engine rejects progress while a racer is recovering. Returns `at`,
-   * or, when the racer is still recovering then, its recoverAt after ticking
-   * the coordinator there so the racer is running again. Scripted history
-   * already waits out every hazard; this is a safety net.
+   * The engine rejects progress while a racer is recovering. Persistent
+   * recovery is normally cleared by the scripted recovery step before this
+   * method is called; this remains a safety net for legacy history data.
    */
   private async pastRecovery(
     coordinator: RaceCoordinator,
@@ -406,12 +408,11 @@ export class SimulationAutopilot {
     at: number,
   ): Promise<number> {
     const racer = coordinator.engine.racers.get(racerId);
-    if (racer?.status !== "recovering" || racer.recoverAt === undefined || at >= racer.recoverAt) {
+    if (racer?.status !== "recovering") {
       return at;
     }
-    const recoverAt = racer.recoverAt;
-    await coordinator.tick(recoverAt);
-    return recoverAt;
+    await coordinator.recordRecovery(racerId, at);
+    return at;
   }
 
   private recordFinalFrames(coordinator: RaceCoordinator, course: SimTemplate, at: number): void {

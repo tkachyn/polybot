@@ -4,6 +4,7 @@ import type { Page } from "playwright";
 import {
   classifyBlockedBy,
   PlaywrightCompetitorRunner,
+  validateEvaluateScript,
   type AgentDecision,
   type CompetitorDecisionModel,
   type PlaywrightCompetitorRunnerOptions,
@@ -13,6 +14,15 @@ import type {
   CapturedFrame,
   CompetitorContext,
 } from "../src/application/contracts.js";
+
+test("bounds same-page recovery scripts and rejects privileged capabilities", () => {
+  assert.equal(
+    validateEvaluateScript("window.__arenaRecoverDisruptions?.()"),
+    "window.__arenaRecoverDisruptions?.()",
+  );
+  assert.throws(() => validateEvaluateScript("fetch('https://example.com')"), /forbidden capability/);
+  assert.throws(() => validateEvaluateScript("x".repeat(2_001)), /cannot exceed/);
+});
 
 type FakeElement = { role: string; text: string; decoy?: boolean };
 type FakeAction = {
@@ -70,6 +80,7 @@ class FakeLocator {
 class FakePage {
   currentUrl = "https://course.test/";
   navigations: string[] = [];
+  activeDisruption = false;
   /** Controls on the page. Undefined: every role matches one control. */
   elements?: FakeElement[];
   actions: FakeAction[] = [];
@@ -85,10 +96,71 @@ class FakePage {
     this.navigations.push(url);
     return null;
   }
+  async evaluate<T>(_pageFunction: unknown, argument?: unknown): Promise<T> {
+    if (typeof argument === "string") {
+      if (argument.includes("__arenaRecoverDisruptions")) this.activeDisruption = false;
+      return 1 as T;
+    }
+    return this.activeDisruption as T;
+  }
   async waitForTimeout() {}
 }
 
+class CursorLocator extends FakeLocator {
+  async boundingBox() {
+    return { x: 20, y: 30, width: 100, height: 40 };
+  }
+}
+
+class CursorPage extends FakePage {
+  moves: Array<{ x: number; y: number; steps?: number }> = [];
+  mouse = {
+    move: async (x: number, y: number, options?: { steps?: number }) => {
+      this.moves.push({ x, y, steps: options?.steps });
+    },
+  };
+
+  override locatorFor(selector: string, hasText?: string) {
+    return new CursorLocator(this, selector, hasText);
+  }
+
+  viewportSize() {
+    return { width: 800, height: 600 };
+  }
+}
+
 type DecisionInput = Parameters<CompetitorDecisionModel["decide"]>[0];
+
+test("evaluate recovery clears an active disruption and reports manual recovery", async () => {
+  const page = new FakePage();
+  page.activeDisruption = true;
+  const model = new SequenceModel([
+    { type: "evaluate", script: "window.__arenaRecoverDisruptions?.()" },
+    { type: "finish" },
+  ]);
+  const runner = new PlaywrightCompetitorRunner({
+    task: "Complete the course",
+    startUrl: "https://course.test/start",
+    model,
+  });
+  let recoveries = 0;
+  let finished = false;
+  const context = {
+    raceId: "race-1",
+    racerId: "racer-1",
+    courseId: "course-1",
+    seed: "seed-1",
+    checkpointCount: 1,
+    session: { racerId: "racer-1", steelSessionId: "steel-1", page } as unknown as CompetitorContext["session"],
+    async reportCheckpoint() {},
+    async reportFinish() { finished = true; },
+    async reportRecovery() { recoveries += 1; },
+  } satisfies CompetitorContext;
+  await runner.prepare(context);
+  await runner.run(context);
+  assert.equal(recoveries, 1);
+  assert.equal(finished, true);
+});
 
 class SequenceModel implements CompetitorDecisionModel {
   readonly inputs: DecisionInput[] = [];
@@ -271,6 +343,23 @@ async function runWith(
   });
   return { reports, model };
 }
+
+test("moves the browser cursor to a target and reports its position", async () => {
+  const page = new CursorPage();
+  const { reports } = await runWith(page, [
+    { type: "click", targetRole: "primary-action" },
+    { type: "finish" },
+  ]);
+
+  assert.deepEqual(page.moves, [{ x: 70, y: 50, steps: 12 }]);
+  assert.deepEqual(reports[0].evidence?.cursor, {
+    x: 70,
+    y: 50,
+    viewportWidth: 800,
+    viewportHeight: 600,
+    action: "click",
+  });
+});
 
 function timeoutError(callLog: string, action = "locator.click"): Error {
   return Object.assign(

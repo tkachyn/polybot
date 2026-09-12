@@ -263,8 +263,8 @@ test("disrupted runners report blocked steps against the sabotage", async () => 
   };
   const executor = new SimulatedObstacleExecutor(world, "exec");
   const plan = planFight("runner-disrupt", RACERS, template.stages.length, { difficulty: "normal" });
-  // Stubborn (never careful, never composed): it hammers the blocked control
-  // until the modal reverts, then resumes.
+  // Stubborn (never careful, never composed): it must actively clear the
+  // persistent modal before it can resume.
   plan.racers["racer-2"] = { ...plan.racers["racer-2"], failAtStep: null, vigilance: 0, composure: 0 };
   const runner = new SimulatedCompetitorRunner({
     template,
@@ -287,7 +287,7 @@ test("disrupted runners report blocked steps against the sabotage", async () => 
   const blocked = sink.actions.filter((report) =>
     report.text.includes("modal") || report.text.includes("overlay") || report.error?.includes("overlay"));
   assert.ok(blocked.length >= 1, "blocked steps were reported");
-  assert.ok(sink.actions.some((report) => report.text.startsWith("resume:")));
+  assert.ok(sink.actions.some((report) => report.text.includes('"Close"')));
   assert.ok(sink.frames.some((frame) => String(frame.body).includes("SABOTAGE")));
   assert.ok(sink.actions.some((report) =>
     report.kind === "error" && report.evidence?.blockedBy === "modal" &&
@@ -327,7 +327,7 @@ test("runner stop() aborts promptly and leaves no pending loop", async () => {
   assert.deepEqual(inert.pendingRacers(), []);
 });
 
-test("sim policies carry the scaled duration and the world honours it", async () => {
+test("sim policies retain scaled duration metadata until explicitly cleared", async () => {
   let clock = 1_000;
   const world = new SimulatedWorld(10, () => clock);
   const executor = new SimulatedObstacleExecutor(world, "seed");
@@ -342,6 +342,8 @@ test("sim policies carry the scaled duration and the world honours it", async ()
   clock = 1_799;
   assert.ok(world.disruption("racer-1"));
   clock = 1_800;
+  assert.ok(world.disruption("racer-1"), "elapsed time does not clear sabotage");
+  world.clear("racer-1");
   assert.equal(world.disruption("racer-1"), null);
 });
 
@@ -514,7 +516,7 @@ test("a stubborn agent hammers the blocked control, then stalls about 3x its usu
   assert.ok(steps.length <= Math.ceil(STALL_PACE_FACTOR * 4) + 1, `${steps.length} steps`);
 });
 
-test("offline runs follow the engine: progress waits out the hazard, frozen races apply none", () => {
+test("offline runs follow the engine: progress waits for active recovery, frozen races apply none", () => {
   const template = templateById("ssd-checkout");
   const sabotage = [{ checkpoint: 2, hazardType: "insert_decoy" as const, durationMs: 60_000, intensity: 2 }];
   const plan = scriptPlan(template, { vigilance: 0, composure: 1, haste: 1 });
@@ -523,7 +525,10 @@ test("offline runs follow the engine: progress waits out the hazard, frozen race
 
   const run = runScriptOffline(base);
   assert.deepEqual(run.hitAt, [run.checkpointAt[1]]);
-  assert.ok(run.checkpointAt[2] >= run.hitAt[0] + 60_000, "no progress while recovering");
+  const recovery = run.events.find((event): event is Extract<ScriptEvent, { kind: "step" }> =>
+    isStep(event) && event.entry.recovered === true);
+  assert.ok(recovery, "the script explicitly clears the persistent hazard");
+  assert.ok(run.checkpointAt[2] >= recovery.t, "progress follows active recovery");
   assert.ok(run.finishAt !== null && run.finishAt > run.checkpointAt[3]);
   const times = run.events.map((event) => event.t);
   assert.deepEqual(times, [...times].sort((left, right) => left - right));

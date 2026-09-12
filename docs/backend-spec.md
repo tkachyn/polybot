@@ -121,6 +121,7 @@ navigate
 inspect_page
 click
 type
+evaluate
 scroll
 go_back
 finish_task
@@ -233,9 +234,9 @@ const result = await cdp.send("Runtime.evaluate", {
 });
 ```
 
-Every mutation should have a disruption ID and a cleanup path. Use a namespace such as `data-arena-disruption-id` so a retry cannot create duplicate overlays or decoys.
+Every mutation should have a disruption ID and an explicit cleanup path. Use a namespace such as `data-arena-disruption-id` so a retry cannot create duplicate overlays or decoys. The cleanup path is activated by a visible recovery control or the competitor's bounded same-page DOM recovery action; `durationMs` is metadata and must not schedule automatic cleanup.
 
-Injected DOM changes normally disappear on navigation. Temporary hazards can use that behavior. Persistent hazards need either a navigation listener or `Page.addScriptToEvaluateOnNewDocument`, followed by a target lookup in the new document.
+Injected DOM changes normally disappear on navigation, which counts as clearing a page-bound hazard when the runner verifies that no active disruption remains. Same-page hazards remain active until their cleanup path runs.
 
 ## Per-agent checkpoint flow
 
@@ -625,9 +626,9 @@ type DisruptionEvent = {
   policyId: string;
   dispatchedAt: number;
   appliedAt?: number;
+  /** Set when the agent explicitly clears the persistent disruption. */
   removedAt?: number;
   applied: boolean;
-  recoveryAt?: number;
   error?: string;
 };
 

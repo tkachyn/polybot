@@ -23,6 +23,10 @@ test("parseDecision validates each decision type", () => {
     targetRole: "add-to-cart",
   });
   assert.deepEqual(parseDecision({ type: "finish", extra: 1 }), { type: "finish" });
+  assert.deepEqual(parseDecision({ type: "evaluate", script: "window.__arenaRecoverDisruptions?.()" }), {
+    type: "evaluate",
+    script: "window.__arenaRecoverDisruptions?.()",
+  });
   assert.throws(() => parseDecision({ type: "click" }), /click requires targetRole/);
   assert.throws(() => parseDecision({ type: "teleport" }), /Unsupported competitor decision/);
   assert.throws(() => parseDecision(null), /Invalid competitor decision/);
@@ -58,6 +62,7 @@ test("the tool schema enumerates every decision type and offers a label", () => 
   assert.equal(label.type, "string");
   assert.equal(label.maxLength, 120);
   assert.match(String(label.description), /visible label/);
+  assert.equal(COMPETITOR_TOOL_SCHEMA.properties.script.maxLength, 2_000);
 });
 
 test("describeDecision produces spectator log text", () => {
@@ -81,6 +86,10 @@ test("describeDecision produces spectator log text", () => {
   );
   assert.equal(describeDecision({ type: "checkpoint", checkpoint: 2 }), "Reported checkpoint 2");
   assert.equal(describeDecision({ type: "wait", durationMs: 500 }), "Waited 500ms");
+  assert.equal(
+    describeDecision({ type: "evaluate", script: "window.__arenaRecoverDisruptions?.()" }),
+    "Evaluated a bounded same-page DOM recovery script",
+  );
   assert.equal(describeDecision({ type: "finish" }), "Reported finish");
   const long = describeDecision({ type: "type", targetRole: "q", text: "x".repeat(200) });
   assert.ok(long.length < 60);

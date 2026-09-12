@@ -1,11 +1,15 @@
 import type { Locator, Page } from "playwright";
-import type { BlockedBy } from "../api/dto.js";
+import type { BlockedBy, CursorPosition } from "../api/dto.js";
 import type {
   ActionEvidence,
   CompetitorAgentRunner,
   CompetitorContext,
 } from "../application/contracts.js";
-import { describeDecision, normalizeLabel } from "./competitor-decision.js";
+import {
+  describeDecision,
+  EVALUATE_SCRIPT_MAX_LENGTH,
+  normalizeLabel,
+} from "./competitor-decision.js";
 
 export type BrowserObservation = {
   url: string;
@@ -28,6 +32,7 @@ export type AgentDecision =
   /** `label` picks, by visible text, among controls that share `targetRole`. */
   | { type: "click"; targetRole: string; label?: string }
   | { type: "type"; targetRole: string; text: string; label?: string }
+  | { type: "evaluate"; script: string }
   | { type: "navigate"; url: string }
   | { type: "wait"; durationMs: number }
   | { type: "checkpoint"; checkpoint: number }
@@ -73,6 +78,34 @@ const EVIDENCE_TIMEOUT_MS = 1_000;
 /** Longest wait for a navigation started by an action before syncing progress. */
 const SETTLE_TIMEOUT_MS = 3_000;
 const EVIDENCE_TEXT_MAX = 120;
+/** Gives the headful Steel viewer time to render the pointer arriving at a target. */
+const CURSOR_SETTLE_MS = 120;
+const CURSOR_MOVE_STEPS = 12;
+const EVALUATE_TIMEOUT_MS = 1_000;
+const UNSAFE_EVALUATE_PATTERNS: ReadonlyArray<RegExp> = [
+  /\bfetch\s*\(/i,
+  /\bXMLHttpRequest\b/i,
+  /\bWebSocket\b/i,
+  /\bEventSource\b/i,
+  /\bsendBeacon\s*\(/i,
+  /\bdocument\s*\.\s*cookie\b/i,
+  /\b(?:localStorage|sessionStorage|indexedDB)\b/i,
+  /\b(?:window\s*\.\s*)?location\b/i,
+  /\bwindow\s*\.\s*open\s*\(/i,
+  /\b(?:eval|Function)\s*\(/i,
+  /\bimport\s*\(/i,
+];
+
+export function validateEvaluateScript(script: string): string {
+  const source = script.trim();
+  if (source.length === 0) throw new Error("evaluate script cannot be empty");
+  if (source.length > EVALUATE_SCRIPT_MAX_LENGTH) {
+    throw new Error(`evaluate script cannot exceed ${EVALUATE_SCRIPT_MAX_LENGTH} characters`);
+  }
+  const unsafe = UNSAFE_EVALUATE_PATTERNS.find((pattern) => pattern.test(source));
+  if (unsafe) throw new Error(`evaluate script uses a forbidden capability: ${unsafe.source}`);
+  return source;
+}
 
 /** One executed decision, as the runner reports and remembers it. */
 type StepOutcome = {
@@ -317,6 +350,8 @@ export class PlaywrightCompetitorRunner implements CompetitorAgentRunner {
         const target = await this.resolveTarget(page, decision.targetRole, decision.label);
         const read = await readTarget(target);
         if (read) evidence.target = read;
+        const cursor = await moveCursorToTarget(page, target, "click");
+        if (cursor) evidence.cursor = cursor;
         await target.click({ timeout: this.actionTimeoutMs });
         return false;
       }
@@ -325,9 +360,17 @@ export class PlaywrightCompetitorRunner implements CompetitorAgentRunner {
         const target = await this.resolveTarget(page, decision.targetRole, decision.label);
         const read = await readTarget(target);
         if (read) evidence.target = read;
+        const cursor = await moveCursorToTarget(page, target, "type");
+        if (cursor) evidence.cursor = cursor;
         await target.fill(decision.text, { timeout: this.actionTimeoutMs });
         return false;
       }
+      case "evaluate":
+        if (!(await this.hasActiveDisruption(page))) {
+          throw new Error("evaluate is only available while an arena disruption is active");
+        }
+        await this.evaluateDom(page, decision.script);
+        return false;
       case "navigate": {
         const target = new URL(decision.url, this.options.startUrl);
         if (target.origin !== new URL(this.options.startUrl).origin) {
@@ -373,6 +416,7 @@ export class PlaywrightCompetitorRunner implements CompetitorAgentRunner {
   ): Promise<StepOutcome> {
     const evidence: ActionEvidence = {};
     const before = currentUrl(page);
+    const disruptionBefore = await this.hasActiveDisruption(page);
     let finished = false;
     let failed = false;
     let failure: unknown;
@@ -384,7 +428,17 @@ export class PlaywrightCompetitorRunner implements CompetitorAgentRunner {
     }
     const url = currentUrl(page);
     if (before !== undefined && url !== undefined) evidence.navigated = url !== before;
-    if (!failed) return { finished, evidence, url };
+    if (!failed) {
+      if (disruptionBefore && !(await this.hasActiveDisruption(page))) {
+        try {
+          await context.reportRecovery?.();
+        } catch {
+          // Recovery lifecycle must not turn a successful browser action into
+          // a competitor failure.
+        }
+      }
+      return { finished, evidence, url };
+    }
     const error = failure instanceof Error ? failure.message : String(failure);
     const blockedBy = classifyBlockedBy(failure);
     if (blockedBy) evidence.blockedBy = blockedBy;
@@ -419,6 +473,34 @@ export class PlaywrightCompetitorRunner implements CompetitorAgentRunner {
       );
     }
     return matches.first();
+  }
+
+  private async evaluateDom(page: Page, script: string): Promise<unknown> {
+    const source = validateEvaluateScript(script);
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    try {
+      return await Promise.race([
+        page.evaluate((expression) => {
+          const evaluate = new Function(`return (${expression})`) as () => unknown;
+          return evaluate();
+        }, source),
+        new Promise<never>((_, reject) => {
+          timeout = setTimeout(() => reject(new Error("evaluate script timed out")), EVALUATE_TIMEOUT_MS);
+        }),
+      ]);
+    } finally {
+      if (timeout) clearTimeout(timeout);
+    }
+  }
+
+  private async hasActiveDisruption(page: Page): Promise<boolean> {
+    if (typeof page.evaluate !== "function") return false;
+    return page.evaluate(() => {
+      const registry = (window as unknown as {
+        __arenaDisruptions?: Record<string, { active?: boolean }>;
+      }).__arenaDisruptions;
+      return Object.values(registry ?? {}).some((entry) => entry.active !== false);
+    }).catch(() => false);
   }
 
   /** Waits (bounded) for the current document to be interactive. */
@@ -546,6 +628,36 @@ async function readTarget(target: Locator): Promise<ActionEvidence["target"] | u
       { timeout: EVIDENCE_TIMEOUT_MS },
     );
   } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Moves the real Playwright pointer to the same center point used by the
+ * default locator click before executing the action. Steel headful sessions
+ * can then render the system cursor, while the returned position lets the
+ * spectator UI draw a cursor indicator even when a synthetic CDP pointer is
+ * not rendered by the viewer.
+ */
+async function moveCursorToTarget(
+  page: Page,
+  target: Locator,
+  action: CursorPosition["action"],
+): Promise<CursorPosition | undefined> {
+  try {
+    if (typeof target.boundingBox !== "function" || !page.mouse) return undefined;
+    const box = await target.boundingBox();
+    if (!box || box.width <= 0 || box.height <= 0) return undefined;
+    const viewport = page.viewportSize();
+    const x = box.x + box.width / 2;
+    const y = box.y + box.height / 2;
+    const viewportWidth = viewport?.width ?? Math.max(1, Math.ceil(box.x + box.width));
+    const viewportHeight = viewport?.height ?? Math.max(1, Math.ceil(box.y + box.height));
+    await page.mouse.move(x, y, { steps: CURSOR_MOVE_STEPS });
+    await page.waitForTimeout(CURSOR_SETTLE_MS);
+    return { x, y, viewportWidth, viewportHeight, action };
+  } catch {
+    // Pointer movement is visual evidence and must never block the action.
     return undefined;
   }
 }

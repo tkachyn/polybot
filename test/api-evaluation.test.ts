@@ -202,6 +202,7 @@ test("evaluation route: provisional while live, final after the finish, from the
     assert.ok(moved.updatedAt > pointer.updatedAt, "the pointer moves with new evidence");
 
     await race.tick(t0 + 15_000);
+    await race.recordRecovery("racer-1", t0 + 16_000);
     await race.recordCheckpoint("racer-1", 2, t0 + 30_000);
     await race.recordCheckpoint("racer-1", 3, t0 + 50_000);
     await race.recordFinish("racer-1", t0 + 60_000);

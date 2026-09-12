@@ -1,6 +1,6 @@
 /**
  * Real-browser checks that each hazard changes what a DOM-driven competitor's
- * `[data-arena-role]` locator resolves to, and fully reverts afterwards.
+ * `[data-arena-role]` locator resolves to, and reverts only after recovery.
  * Skipped when Playwright's Chromium cannot launch on this machine.
  */
 import assert from "node:assert/strict";
@@ -144,6 +144,9 @@ browserTest("insert_decoy plants a same-role clone first in document order that 
     });
     assert.equal(await matches.count(), 2, "no second decoy");
 
+    await page.waitForTimeout(1_700);
+    assert.equal(await matches.count(), 2, "the decoy persists after its duration");
+    await revertHazard(page, id);
     await waitForRevert(page, originalBody);
     assert.equal(await containerHtml(page), originalContainer);
     assert.equal(await matches.count(), 1);
@@ -220,25 +223,22 @@ browserTest("blocking_modal intercepts clicks until Close dismisses it (intensit
     await page.locator(SELECTOR).first().click({ timeout: 1_000 });
     assert.equal(await clicks(page), 1);
 
-    // The timer's revert is safe after the overlay was already dismissed.
+    // Manual dismissal fully reverts the persistent overlay.
     await waitForRevert(page, originalBody);
   } finally {
     await page.close();
   }
 });
 
-browserTest("blocking_modal offers Close only after half the duration at intensity 3", async () => {
+browserTest("blocking_modal keeps Close available until manual dismissal at intensity 3", async () => {
   const page = await openCourse();
   try {
     const originalBody = await bodyHtml(page);
-    const started = Date.now();
     await applyHazard(page, hazard("blocking_modal", 3, 1_200), "d-modal-3");
     const close = page.locator('[data-arena-role="dismiss-overlay"]');
-    assert.equal(await close.count(), 0, "Close is absent at first");
+    assert.equal(await close.count(), 1, "Close is available for recovery");
     assert.match((await clickFailure(page, SELECTOR, 200)).message, /intercepts pointer events/);
 
-    await close.waitFor({ state: "visible", timeout: 3_000 });
-    assert.ok(Date.now() - started >= 550, `Close appeared after ${Date.now() - started} ms`);
     await close.click({ timeout: 1_000 });
     await page.locator(SELECTOR).first().click({ timeout: 1_000 });
     assert.equal(await clicks(page), 1);
@@ -258,6 +258,7 @@ browserTest("temporary_disable sets disabled and aria-disabled, then restores th
     assert.equal(await target.getAttribute("aria-disabled"), "true");
     assert.match((await clickFailure(page, SELECTOR)).message, /element is not enabled/);
 
+    await revertHazard(page, "d-disable");
     await waitForRevert(page, originalBody);
     assert.equal(await target.isDisabled(), false);
     await target.click({ timeout: 1_000 });
@@ -284,7 +285,7 @@ browserTest("move_primary_action hides the target behind a More options disclosu
     await target.click({ timeout: 1_000 });
     assert.equal(await clicks(page), 1);
 
-    // The timer's revert is safe after the disclosure already revealed the target.
+    // The disclosure manually reverts the persistent hazard.
     await waitForRevert(page, originalBody);
   } finally {
     await page.close();
@@ -300,6 +301,7 @@ browserTest("rename_control relabels by intensity, keeps the role and restores t
       const target = page.locator("#checkpoint");
       assert.equal(await target.innerText(), expected);
       assert.equal(await target.getAttribute("data-arena-role"), ROLE);
+      await revertHazard(page, `d-rename-${intensity}`);
       await waitForRevert(page, originalBody);
       assert.equal(await target.innerText(), REAL_LABEL);
       assert.equal(await page.locator("#checkpoint > span").innerText(), "Complete");
@@ -320,6 +322,7 @@ browserTest("reports target_not_found, but a modal needs no target", async () =>
     const originalBody = await bodyHtml(page);
     const modal = { ...hazard("blocking_modal", 1, 300), targetRole: "no-such-role" };
     assert.equal((await applyHazard(page, modal, "d-modal-untargeted")).applied, true);
+    await revertHazard(page, "d-modal-untargeted");
     await waitForRevert(page, originalBody);
   } finally {
     await page.close();

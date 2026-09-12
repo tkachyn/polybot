@@ -326,7 +326,7 @@ test("syncProgress skips a recovering racer and records again once it recovers",
   assert.equal(verifier.checkpointCalls.length, calls, "nothing is verified while recovering");
   assert.deepEqual(claimedCheckpoints(coordinator, "racer-1"), [1, 2]);
 
-  await coordinator.tick(start + 31_000);
+  await context.reportRecovery?.();
   assert.equal(coordinator.engine.racers.get("racer-1")?.status, "running");
   await context.syncProgress();
   assert.deepEqual(claimedCheckpoints(coordinator, "racer-1"), [1, 2, 3]);

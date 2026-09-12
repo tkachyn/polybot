@@ -196,7 +196,12 @@ export class SimulatedCompetitorRunner implements CompetitorAgentRunner {
         this.reportFrame(context, page, stageNumber, script.steps, "browser context lost", null, "failed");
         throw new Error("simulated agent crashed: browser context lost");
       }
-      report(script.next(this.activeHazard(racerId, page), world.now()), page, stageNumber);
+      const entry = script.next(this.activeHazard(racerId, page), world.now());
+      report(entry, page, stageNumber);
+      if (entry?.recovered) {
+        world.clear(racerId);
+        await context.reportRecovery?.();
+      }
     }
   }
 

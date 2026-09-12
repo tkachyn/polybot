@@ -187,6 +187,8 @@ export type ActionLogEntry = {
   kind: ActionLogKind;
   text: string;
   url: string | null;
+  /** Last browser pointer position used for a click or text input. */
+  cursor?: CursorPosition;
 };
 
 export type FrameInfo = {
@@ -194,6 +196,14 @@ export type FrameInfo = {
   seq: number;
   capturedAt: number;
   contentType: string;
+};
+
+export type CursorPosition = {
+  x: number;
+  y: number;
+  viewportWidth: number;
+  viewportHeight: number;
+  action: "click" | "type";
 };
 
 export type BrowserView = {

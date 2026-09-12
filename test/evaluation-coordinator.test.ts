@@ -160,6 +160,7 @@ function settle(): Promise<void> {
 async function playWin(coordinator: RaceCoordinator): Promise<void> {
   await coordinator.recordCheckpoint("racer-1", 1, T + 20_000);
   await coordinator.recordCheckpoint("racer-1", 2, T + 40_000);
+  await coordinator.recordRecovery("racer-1", T + 41_000);
   await coordinator.tick(T + 45_000);
   await coordinator.recordCheckpoint("racer-1", 3, T + 70_000);
   await coordinator.recordFinish("racer-1", T + 75_000);
@@ -233,6 +234,7 @@ test("a fight driven through the public API with past timestamps is finalized on
   coordinator.recordAgentAction("racer-2", { kind: "action", text: "open cart", step: 1, maxSteps: 20 }, past + 5_000);
   await coordinator.recordCheckpoint("racer-2", 1, past + 20_000);
   await coordinator.recordCheckpoint("racer-2", 2, past + 41_000);
+  await coordinator.recordRecovery("racer-2", past + 42_000);
   coordinator.recordAgentAction("racer-2", {
     kind: "action",
     text: "click Continue",
@@ -333,6 +335,7 @@ test("live fights read Steel traces and the replay start after the sessions are 
   await coordinator.prepareAndStart(T);
   await coordinator.recordCheckpoint("racer-1", 1, T + 20_000);
   await coordinator.recordCheckpoint("racer-1", 2, T + 40_000);
+  await coordinator.recordRecovery("racer-1", T + 41_000);
   await coordinator.tick(T + 45_000);
   await coordinator.recordCheckpoint("racer-1", 3, T + 70_000);
   coordinator.evaluation(T + 71_000);

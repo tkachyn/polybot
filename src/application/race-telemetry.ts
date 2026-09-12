@@ -2,6 +2,7 @@ import type {
   ActionLogEntry,
   ActionLogKind,
   BlockedBy,
+  CursorPosition,
   EvidenceFrame,
   PricePoint,
   RacerPhase,
@@ -212,7 +213,7 @@ export class RaceTelemetry {
 
   appendLog(
     racerId: string,
-    entry: { kind: ActionLogKind; text: string; at: number; url?: string | null },
+    entry: { kind: ActionLogKind; text: string; at: number; url?: string | null; cursor?: CursorPosition },
   ): ActionLogEntry {
     const state = this.state(racerId);
     state.logSeq += 1;
@@ -222,6 +223,7 @@ export class RaceTelemetry {
       kind: entry.kind,
       text: clampText(entry.text),
       url: entry.url === undefined ? state.url : entry.url,
+      ...(entry.cursor ? { cursor: { ...entry.cursor } } : {}),
     };
     state.log.push(logged);
     if (state.log.length > this.logLimit) {
@@ -291,7 +293,7 @@ export class RaceTelemetry {
       evidence.trace.splice(0, evidence.trace.length - TRACE_LIMIT);
     }
 
-    return this.appendLog(racerId, { kind, text, at });
+    return this.appendLog(racerId, { kind, text, at, cursor: report.evidence?.cursor });
   }
 
   recordFrame(racerId: string, frame: CapturedFrame, now: number): StoredFrame {

@@ -68,7 +68,7 @@ function eventTypes(race: RaceEngine): string[] {
   return race.events.map((event) => event.type);
 }
 
-test("emits sabotage_applied and enters recovery until recoverAt", async () => {
+test("emits sabotage_applied and remains in recovery until manually cleared", async () => {
   const race = readyRace(new FakeObstacles());
   const result = await race.reachCheckpoint("racer-1", 1, 1_000);
   assert.deepEqual(result, { claimed: true, obstacleApplied: true });
@@ -84,18 +84,19 @@ test("emits sabotage_applied and enters recovery until recoverAt", async () => {
   assert.deepEqual(applied?.metadata, { tier: "intermediate", policy });
   const racer = race.racers.get("racer-1");
   assert.equal(racer?.status, "recovering");
-  assert.equal(racer?.recoverAt, 5_000);
+  assert.equal(racer?.recoverAt, undefined);
 
   race.tick(4_999);
   assert.equal(racer?.status, "recovering");
   race.tick(5_000);
+  assert.equal(racer?.status, "recovering");
+  race.markRecovered("racer-1", 5_000);
   assert.equal(racer?.status, "running");
-  assert.equal(racer?.recoverAt, undefined);
   const recovered = race.events.at(-1);
   assert.equal(recovered?.type, "sabotage_recovered");
   assert.equal(recovered?.racerId, "racer-1");
   assert.equal(recovered?.occurredAt, 5_000);
-  assert.deepEqual(recovered?.metadata, { checkpoint: 1, cause: "duration" });
+  assert.deepEqual(recovered?.metadata, { checkpoint: 1, cause: "manual" });
 
   race.tick(6_000);
   assert.equal(eventTypes(race).filter((type) => type === "sabotage_recovered").length, 1);
@@ -138,7 +139,7 @@ test("armSabotage rejects a trigger outside the course", () => {
   assert.throws(() => race.armSabotage(plan(3)), /outside the course/);
 });
 
-test("a recovering racer cannot reach a checkpoint or finish until recoverAt", async () => {
+test("a recovering racer cannot reach a checkpoint or finish until manually recovered", async () => {
   const race = readyRace(new FakeObstacles(), { checkpointCount: 1 });
   await race.reachCheckpoint("racer-3", 1, 1_000);
   assert.equal(race.racers.get("racer-3")?.status, "recovering");
@@ -150,10 +151,16 @@ test("a recovering racer cannot reach a checkpoint or finish until recoverAt", a
     other.reachCheckpoint("racer-1", 2, 2_000),
     /cannot reach a checkpoint while recovering/,
   );
-  // Past recoverAt the engine recovers the racer on its own tick first.
-  await other.reachCheckpoint("racer-1", 2, 5_000);
+  // Time does not clear persistent sabotage.
+  await assert.rejects(
+    other.reachCheckpoint("racer-1", 2, 5_000),
+    /cannot reach a checkpoint while recovering/,
+  );
+  other.markRecovered("racer-1", 5_000);
+  await other.reachCheckpoint("racer-1", 2, 5_001);
   assert.equal(other.racers.get("racer-1")?.checkpoint, 2);
 
+  race.markRecovered("racer-3", 5_000);
   assert.equal(race.finishRacer("racer-3", 5_000), true);
   assert.deepEqual(eventTypes(race).slice(-3), ["sabotage_recovered", "racer_finished", "race_finished"]);
 });

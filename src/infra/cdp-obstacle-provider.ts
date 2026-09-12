@@ -75,10 +75,10 @@ export const MORE_ACTIONS_LABEL = "More options";
 export const DECOY_ID_PREFIX = "arena-decoy-";
 
 /**
- * The page script for one hazard, evaluated through CDP. Every hazard reverts
- * after `durationMs` by restoring the exact original attributes, children and
- * nodes, so a second revert or an earlier partial one (Close, disclosure) is
- * harmless. Returns `{ applied, reason? }`.
+ * The page script for one hazard, evaluated through CDP. Hazards persist until
+ * a visible recovery control or the bounded competitor recovery action calls
+ * `revert`, restoring the exact original attributes, children and nodes.
+ * Returns `{ applied, reason? }`.
  */
 export function buildDisruptionScript(
   command: DisruptionCommand,
@@ -101,10 +101,26 @@ export function buildDisruptionScript(
       const decoyLabels = ${JSON.stringify([...DECOY_LABELS, ...DECOY_FALLBACK_LABELS])};
       const renameLabels = ${JSON.stringify(RENAME_LABELS)};
       const registryKey = "__arenaDisruptions";
+      const recoveryKey = "__arenaRecoverDisruptions";
       if (!window[registryKey]) {
         Object.defineProperty(window, registryKey, { value: Object.create(null), configurable: true });
       }
       const registry = window[registryKey];
+      if (!window[recoveryKey]) {
+        Object.defineProperty(window, recoveryKey, {
+          configurable: true,
+          value: () => {
+            let count = 0;
+            Object.values(registry).forEach((entry) => {
+              if (entry && entry.active) {
+                entry.revert();
+                count += 1;
+              }
+            });
+            return count;
+          },
+        });
+      }
       const selector = '[data-arena-role="' + CSS.escape(role) + '"]';
       const marker = '[data-arena-disruption-id="' + CSS.escape(disruptionId) + '"]';
 
@@ -119,7 +135,6 @@ export function buildDisruptionScript(
       }
 
       const undo = [];
-      const timers = [];
       const saved = new Map();
       const rememberAttribute = (element, name) => {
         let attributes = saved.get(element);
@@ -177,13 +192,14 @@ export function buildDisruptionScript(
       };
 
       let reverted = false;
+      let entry;
       const revert = () => {
         if (reverted) return;
         reverted = true;
-        timers.forEach((timer) => window.clearTimeout(timer));
         undo.reverse().forEach((step) => {
           try { step(); } catch (error) { /* keep reverting */ }
         });
+        if (entry) entry.active = false;
       };
 
       try {
@@ -232,16 +248,10 @@ export function buildDisruptionScript(
           close.addEventListener("click", (event) => {
             event.preventDefault();
             event.stopPropagation();
-            overlay.remove();
+            revert();
           });
           overlay.appendChild(panel);
-          if (intensity >= 3) {
-            timers.push(window.setTimeout(() => {
-              if (!reverted) panel.appendChild(close);
-            }, Math.floor(durationMs / 2)));
-          } else {
-            panel.appendChild(close);
-          }
+          panel.appendChild(close);
           (document.body || document.documentElement).appendChild(overlay);
           undo.push(() => overlay.remove());
         } else if (hazardType === "move_primary_action") {
@@ -254,8 +264,7 @@ export function buildDisruptionScript(
           disclosure.addEventListener("click", (event) => {
             event.preventDefault();
             event.stopPropagation();
-            restoreAttribute(target, "style");
-            disclosure.remove();
+            revert();
           });
           setStyle(target, "display", "none");
           target.parentNode.insertBefore(disclosure, target);
@@ -314,8 +323,8 @@ export function buildDisruptionScript(
         return { applied: false, reason: "apply_failed" };
       }
 
-      registry[disruptionId] = { hazardType, revert };
-      timers.push(window.setTimeout(revert, durationMs));
+      entry = { hazardType, active: true, revert };
+      registry[disruptionId] = entry;
       return { applied: true, disruptionId };
     })()
   `;
