@@ -21,7 +21,8 @@ export type LiveCaptureProps = {
   raceId: string;
   racerId: string;
   frame: FrameInfo | null;
-  browserView: BrowserView;
+  /** Absent from backends that predate the Steel live view; the frame path is used instead. */
+  browserView?: BrowserView | null;
   fightStatus: FightStatus;
   /** Scheduled start, for the upcoming placeholder. */
   startsAt: number | null;
@@ -41,7 +42,7 @@ type Shown = { src: string; seq: number; capturedAt: number };
 
 function CaptureSurface({ raceId, racerId, frame, browserView, fightStatus, startsAt, agentName, overlay, className }: LiveCaptureProps) {
   const shown = useBufferedFrame(raceId, racerId, frame);
-  const viewerUrl = browserView.status === "live" ? browserView.viewerUrl : null;
+  const viewerUrl = browserView?.status === "live" ? browserView.viewerUrl ?? null : null;
   const [viewerFailed, setViewerFailed] = useState(false);
   useEffect(() => setViewerFailed(false), [viewerUrl]);
   const showViewer = viewerUrl !== null && !viewerFailed;
