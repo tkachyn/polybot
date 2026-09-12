@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import QRCode from "qrcode";
 import { Button, ButtonLink } from "../../components";
 import { Dialog } from "../evaluation/Dialog";
+import { copyInviteText, fightInviteUrl } from "./invite";
 import styles from "./FightInvite.module.css";
 
 export function FightInvite({ raceId }: { raceId: string }) {
@@ -10,7 +11,7 @@ export function FightInvite({ raceId }: { raceId: string }) {
   const [copied, setCopied] = useState(false);
   const url = useMemo(() => {
     if (typeof window === "undefined") return "";
-    return `${window.location.origin}/fights/${encodeURIComponent(raceId)}?join=1`;
+    return fightInviteUrl(window.location.origin, raceId);
   }, [raceId]);
 
   useEffect(() => {
@@ -23,9 +24,13 @@ export function FightInvite({ raceId }: { raceId: string }) {
   }, [open, url]);
 
   const copy = async () => {
-    await navigator.clipboard.writeText(url);
-    setCopied(true);
-    window.setTimeout(() => setCopied(false), 1500);
+    try {
+      await copyInviteText(url);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1500);
+    } catch {
+      setCopied(false);
+    }
   };
 
   return (
