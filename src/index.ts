@@ -16,3 +16,7 @@ export * from "./infra/steel-session-manager.js";
 export * from "./prediction/virtual-market.js";
 export * from "./persistence/in-memory-event-store.js";
 export * from "./persistence/jsonl-event-store.js";
+export * from "./application/race-telemetry.js";
+export * from "./domain/errors.js";
+export * from "./domain/sabotage.js";
+export * from "./wallet/credit-ledger.js";

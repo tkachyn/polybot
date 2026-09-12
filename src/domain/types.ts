@@ -39,7 +39,11 @@ export type Racer = {
   status: RacerStatus;
   startedAt?: number;
   finishedAt?: number;
+  /** Set while `recovering`: when the applied disruption's duration elapses. */
+  recoveringUntil?: number;
 };
+
+export type RecoveryCause = "duration" | "checkpoint" | "finish" | "manual";
 
 export type RaceEvent = {
   id: string;
@@ -50,6 +54,8 @@ export type RaceEvent = {
     | "racer_ready"
     | "race_started"
     | "checkpoint_reached"
+    | "obstacle_applied"
+    | "racer_recovered"
     | "hazards_frozen"
     | "racer_finished"
     | "racer_failed"

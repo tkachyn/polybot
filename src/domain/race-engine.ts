@@ -1,9 +1,12 @@
 import { NoopObstacleProvider } from "./noop-obstacle-provider.js";
 import type {
+  DisruptionCommand,
+  DisruptionResult,
   ObstacleProvider,
   Race,
   RaceEvent,
   Racer,
+  RecoveryCause,
 } from "./types.js";
 
 export type RaceEngineOptions = {
@@ -23,7 +26,7 @@ export class RaceEngine {
   private readonly claimedCheckpoints = new Set<string>();
   private readonly stagePolicies = new Map<
     number,
-    Promise<Awaited<ReturnType<ObstacleProvider["getPolicy"]>>>
+    Promise<DisruptionCommand | null>
   >();
 
   constructor(
@@ -110,7 +113,7 @@ export class RaceEngine {
     const racer = this.getRacer(racerId);
     this.tick(now);
 
-    if (this.race.status === "finished" || this.race.status === "timed_out") {
+    if (this.isOver()) {
       return { claimed: false, obstacleApplied: false };
     }
     const claimKey = `${racerId}:${checkpoint}`;
@@ -128,6 +131,7 @@ export class RaceEngine {
     }
 
     this.claimedCheckpoints.add(claimKey);
+    this.recover(racer, "checkpoint", now);
     racer.checkpoint = checkpoint;
     this.emit({
       type: "checkpoint_reached",
@@ -142,7 +146,9 @@ export class RaceEngine {
 
     let policyPromise = this.stagePolicies.get(checkpoint);
     if (!policyPromise) {
-      policyPromise = this.obstacleProvider.getPolicy(this.race.id, checkpoint);
+      policyPromise = this.obstacleProvider
+        .getPolicy(this.race.id, checkpoint)
+        .catch(() => null);
       this.stagePolicies.set(checkpoint, policyPromise);
     }
     const policy = await policyPromise;
@@ -150,16 +156,33 @@ export class RaceEngine {
       return { claimed: true, obstacleApplied: false };
     }
 
-    const result = await this.obstacleProvider.apply(racerId, policy);
-    racer.status = result.applied ? "recovering" : "running";
+    const result = await this.applyObstacle(racerId, policy);
+    this.emit({
+      type: "obstacle_applied",
+      racerId,
+      checkpoint,
+      occurredAt: now,
+      metadata: {
+        hazardType: policy.hazardType,
+        targetRole: policy.targetRole,
+        durationMs: policy.durationMs,
+        intensity: policy.intensity,
+        applied: result.applied,
+        reason: result.reason ?? null,
+      },
+    });
+    // The race may have ended, or the racer failed, while the obstacle was
+    // being applied; only a still-running racer enters recovery.
+    if (result.applied && !this.isOver() && racer.status === "running") {
+      racer.status = "recovering";
+      racer.recoveringUntil = now + policy.durationMs;
+    }
     return { claimed: true, obstacleApplied: result.applied };
   }
 
-  markRecovered(racerId: string): void {
-    const racer = this.getRacer(racerId);
-    if (racer.status === "recovering") {
-      racer.status = "running";
-    }
+  /** Ends a racer's recovery early. Emits only when the status changes. */
+  markRecovered(racerId: string, now = Date.now()): void {
+    this.recover(this.getRacer(racerId), "manual", now);
   }
 
   failRacer(racerId: string, reason: string, now = Date.now()): void {
@@ -168,6 +191,7 @@ export class RaceEngine {
       return;
     }
     racer.status = "failed";
+    delete racer.recoveringUntil;
     this.emit({
       type: "racer_failed",
       racerId,
@@ -180,7 +204,7 @@ export class RaceEngine {
     const racer = this.getRacer(racerId);
     this.tick(now);
 
-    if (this.race.status === "finished" || this.race.status === "timed_out") {
+    if (this.isOver()) {
       return false;
     }
     if (racer.checkpoint !== this.race.checkpointCount) {
@@ -190,6 +214,7 @@ export class RaceEngine {
       return false;
     }
 
+    this.recover(racer, "finish", now);
     racer.status = "finished";
     racer.finishedAt = now;
     this.emit({ type: "racer_finished", racerId, occurredAt: now });
@@ -228,19 +253,75 @@ export class RaceEngine {
       this.emit({ type: "hazards_frozen", occurredAt: now });
     }
 
-    if (
-      now >= this.race.absoluteDeadlineAt &&
-      this.race.status !== "finished" &&
-      this.race.status !== "timed_out"
-    ) {
-      this.race.status = "timed_out";
+    if (!this.isOver()) {
       for (const racer of this.racers.values()) {
-        if (racer.status !== "finished") {
-          racer.status = "timed_out";
+        if (
+          racer.status === "recovering" &&
+          racer.recoveringUntil !== undefined &&
+          racer.recoveringUntil <= now
+        ) {
+          this.recover(racer, "duration", now);
         }
       }
-      this.emit({ type: "race_timed_out", occurredAt: now });
     }
+
+    if (now >= this.race.absoluteDeadlineAt && !this.isOver()) {
+      this.timeOut(now, "absolute_deadline");
+    }
+  }
+
+  /**
+   * Ends a race that has not finished, e.g. because start-up failed. Every
+   * unfinished racer is timed out and `race_timed_out` carries the reason.
+   */
+  abort(reason: string, now = Date.now()): boolean {
+    if (this.isOver()) {
+      return false;
+    }
+    this.timeOut(now, reason);
+    return true;
+  }
+
+  private timeOut(now: number, reason: string): void {
+    this.race.status = "timed_out";
+    for (const racer of this.racers.values()) {
+      if (racer.status !== "finished") {
+        racer.status = "timed_out";
+        delete racer.recoveringUntil;
+      }
+    }
+    this.emit({ type: "race_timed_out", occurredAt: now, metadata: { reason } });
+  }
+
+  private recover(racer: Racer, cause: RecoveryCause, now: number): void {
+    if (racer.status !== "recovering") {
+      return;
+    }
+    racer.status = "running";
+    delete racer.recoveringUntil;
+    this.emit({
+      type: "racer_recovered",
+      racerId: racer.racerId,
+      checkpoint: racer.checkpoint,
+      occurredAt: now,
+      metadata: { cause },
+    });
+  }
+
+  private async applyObstacle(
+    racerId: string,
+    policy: DisruptionCommand,
+  ): Promise<DisruptionResult> {
+    try {
+      return await this.obstacleProvider.apply(racerId, policy);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return { applied: false, reason: `apply_failed: ${message}` };
+    }
+  }
+
+  private isOver(): boolean {
+    return this.race.status === "finished" || this.race.status === "timed_out";
   }
 
   private getRacer(racerId: string): Racer {
