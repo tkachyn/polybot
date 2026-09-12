@@ -21,7 +21,10 @@ export class RaceEngine {
   private readonly obstacleProvider: ObstacleProvider;
   private readonly idFactory: () => string;
   private readonly claimedCheckpoints = new Set<string>();
-  private readonly stagePolicies = new Map<number, Awaited<ReturnType<ObstacleProvider["getPolicy"]>>>();
+  private readonly stagePolicies = new Map<
+    number,
+    Promise<Awaited<ReturnType<ObstacleProvider["getPolicy"]>>>
+  >();
 
   constructor(
     input: {
@@ -137,11 +140,12 @@ export class RaceEngine {
       return { claimed: true, obstacleApplied: false };
     }
 
-    let policy = this.stagePolicies.get(checkpoint);
-    if (policy === undefined) {
-      policy = await this.obstacleProvider.getPolicy(this.race.id, checkpoint);
-      this.stagePolicies.set(checkpoint, policy);
+    let policyPromise = this.stagePolicies.get(checkpoint);
+    if (!policyPromise) {
+      policyPromise = this.obstacleProvider.getPolicy(this.race.id, checkpoint);
+      this.stagePolicies.set(checkpoint, policyPromise);
     }
+    const policy = await policyPromise;
     if (!policy) {
       return { claimed: true, obstacleApplied: false };
     }
@@ -156,6 +160,20 @@ export class RaceEngine {
     if (racer.status === "recovering") {
       racer.status = "running";
     }
+  }
+
+  failRacer(racerId: string, reason: string, now = Date.now()): void {
+    const racer = this.getRacer(racerId);
+    if (racer.status === "finished" || racer.status === "failed" || racer.status === "timed_out") {
+      return;
+    }
+    racer.status = "failed";
+    this.emit({
+      type: "racer_failed",
+      racerId,
+      occurredAt: now,
+      metadata: { reason },
+    });
   }
 
   finishRacer(racerId: string, now = Date.now()): boolean {
@@ -194,7 +212,11 @@ export class RaceEngine {
   }
 
   tick(now = Date.now()): void {
-    if (!this.race.startedAt || !this.race.targetDurationAt || !this.race.absoluteDeadlineAt) {
+    if (
+      this.race.startedAt === undefined ||
+      this.race.targetDurationAt === undefined ||
+      this.race.absoluteDeadlineAt === undefined
+    ) {
       return;
     }
 

@@ -52,6 +52,7 @@ export type RaceEvent = {
     | "checkpoint_reached"
     | "hazards_frozen"
     | "racer_finished"
+    | "racer_failed"
     | "race_finished"
     | "race_timed_out";
   checkpoint?: number;
