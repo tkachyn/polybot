@@ -1,0 +1,212 @@
+.banner {
+  margin-bottom: var(--space-4);
+}
+
+/* --- Sell confirmation notice ------------------------------------------------ */
+
+.notice {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2-5);
+  margin-bottom: var(--space-4);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--tint-positive-border);
+  border-radius: var(--radius-md);
+  background-color: var(--tint-positive);
+  color: var(--color-text);
+  font-size: var(--fs-body);
+  font-variant-numeric: tabular-nums;
+}
+
+.noticeText {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.noticeDismiss {
+  display: inline-flex;
+  padding: var(--space-1);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text-muted);
+}
+
+.noticeDismiss:hover {
+  color: var(--color-text);
+}
+
+/* --- Stat tiles -------------------------------------------------------------- */
+
+.stats {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--space-3);
+  margin-bottom: var(--space-8);
+}
+
+/* --- Sections ---------------------------------------------------------------- */
+
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-width: 0;
+  margin-bottom: var(--space-8);
+}
+
+.section:last-child {
+  margin-bottom: 0;
+}
+
+.sectionHeader {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2) var(--space-4);
+  min-width: 0;
+}
+
+.sectionTitle {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  color: var(--color-text);
+  font-size: var(--fs-body-lg);
+  font-weight: var(--fw-semibold);
+}
+
+.count {
+  color: var(--color-text-muted);
+  font-size: var(--fs-body-sm);
+  font-weight: var(--fw-medium);
+}
+
+.filterScroll {
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+.footnote {
+  color: var(--color-text-muted);
+  font-size: var(--fs-body-sm);
+}
+
+/* --- Cells ------------------------------------------------------------------- */
+
+.nowrap {
+  white-space: nowrap;
+}
+
+.fightLink {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-0-5);
+  min-width: 180px;
+  max-width: 280px;
+}
+
+.fightTitle {
+  color: var(--color-text);
+  font-weight: var(--fw-medium);
+  line-height: var(--lh-snug);
+}
+
+.fightLink:hover .fightTitle,
+.fightNumLink:hover {
+  color: var(--color-edge);
+}
+
+.fightNumLink {
+  color: var(--color-text);
+  white-space: nowrap;
+}
+
+.side {
+  font-size: var(--fs-label-lg);
+  font-weight: var(--fw-semibold);
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+}
+
+.yes {
+  color: var(--color-positive);
+}
+
+.no {
+  color: var(--color-negative);
+}
+
+.pl {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: var(--space-0-5);
+}
+
+.plPct {
+  font-size: var(--fs-body-sm);
+}
+
+.outcome {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1-5);
+  white-space: nowrap;
+}
+
+/* --- Sell -------------------------------------------------------------------- */
+
+.actionCell {
+  width: 1%;
+}
+
+.sell {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: var(--space-1);
+}
+
+.confirm {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-1-5);
+}
+
+.confirmText {
+  margin-right: var(--space-1);
+  color: var(--color-text);
+  font-size: var(--fs-body);
+  font-weight: var(--fw-medium);
+  white-space: nowrap;
+}
+
+.sellNote {
+  max-width: 280px;
+  color: var(--color-text-secondary);
+  font-size: var(--fs-body-sm);
+  line-height: var(--lh-snug);
+  text-align: right;
+  white-space: normal;
+}
+
+.sellError {
+  color: var(--color-negative);
+}
+
+/* --- Reflow ------------------------------------------------------------------ */
+
+@media (max-width: 999px) {
+  /* Low-priority ledger column: keeps Amount and Balance after in view. */
+  .hideReflow {
+    display: none;
+  }
+
+  .stats {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    margin-bottom: var(--space-6);
+  }
+}
