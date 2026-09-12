@@ -1,8 +1,33 @@
-import type { ObstacleProvider, Race, Racer } from "../domain/types.js";
+import type {
+  OrderReceipt,
+  OrderRequest,
+  PricePoint,
+  RunStatus,
+  SabotageState,
+} from "../api/dto.js";
+import { DomainError } from "../domain/errors.js";
 import { RaceEngine } from "../domain/race-engine.js";
+import {
+  SabotageObstacleProvider,
+  describeHazard,
+  describeHazardDetail,
+  hazardLabel,
+  sabotagePlaceholder,
+  type SabotagePlan,
+} from "../domain/sabotage.js";
+import type {
+  DisruptionCommand,
+  Race,
+  RaceEvent,
+  Racer,
+  ObstacleProvider,
+} from "../domain/types.js";
 import { VirtualPredictionMarket } from "../prediction/virtual-market.js";
 import type { TradeReceipt } from "../prediction/virtual-market.js";
+import type { CreditLedger } from "../wallet/credit-ledger.js";
 import type {
+  AgentActionReport,
+  CapturedFrame,
   CompetitorAgentRunner,
   CompetitorContext,
   CourseVerifier,
@@ -10,6 +35,23 @@ import type {
   RacerSessionManager,
   RaceEventStore,
 } from "./contracts.js";
+import {
+  defaultCheckpointLabel,
+  normalizeFightMetadata,
+  type FightMetadata,
+} from "./fight-metadata.js";
+import {
+  RaceTelemetry,
+  type RacerTelemetry,
+  type StoredFrame,
+} from "./race-telemetry.js";
+
+export {
+  DEFAULT_AGENT_ROSTER,
+  normalizeFightMetadata,
+  type FightMetadata,
+  type FightMetadataInput,
+} from "./fight-metadata.js";
 
 export type CreateRaceInput = {
   raceId: string;
@@ -18,6 +60,22 @@ export type CreateRaceInput = {
   checkpointCount: number;
   targetDurationMs?: number;
   absoluteDurationMs?: number;
+};
+
+export type RaceCoordinatorInput = CreateRaceInput & {
+  /** Master task. `ApiCreateRaceInput` supplies it; fight.task wins. */
+  task?: string;
+  fight?: Partial<FightMetadata>;
+};
+
+export type RaceCoordinatorDependencies = {
+  sessionManager: RacerSessionManager;
+  agentRunner: CompetitorAgentRunner;
+  courseVerifier: CourseVerifier;
+  eventStore: RaceEventStore;
+  obstacleProvider?: ObstacleProvider;
+  /** Shared wallet. Defaults to a private per-market ledger. */
+  ledger?: CreditLedger;
 };
 
 export type RaceSnapshot = {
@@ -35,43 +93,171 @@ export type RaceSnapshot = {
   };
 };
 
+export type RaceChange =
+  | { kind: "fight" }
+  | { kind: "price"; point: PricePoint }
+  | { kind: "frame"; racerId: string }
+  | { kind: "account"; userIds: string[] };
+
+export type RaceChangeListener = (change: RaceChange) => void;
+
+export type SabotageStatus = {
+  plan: SabotagePlan;
+  checkpointLabel: string;
+  /** Arming has settled (policy may still be null). */
+  armed: boolean;
+  /** The armed hazard; null when not armed or no policy was chosen. */
+  policy: DisruptionCommand | null;
+  armedAt: number | null;
+  /** First time the sabotage was applied to any agent. */
+  firedAt: number | null;
+  hitRacerIds: string[];
+  state: SabotageState;
+};
+
+/** Weight deltas per race event, as multiples of base liquidity L. */
+export const CONFIDENCE_SIGNALS = {
+  checkpoint: 0.35,
+  sabotageHit: -0.25,
+  recovery: 0.1,
+} as const;
+
+/** While live, tick appends a price point when the last is this old. */
+export const PRICE_HEARTBEAT_MS = 5_000;
+
+type PendingChanges = {
+  fight: boolean;
+  points: PricePoint[];
+  frames: Set<string>;
+  accounts: Set<string>;
+};
+
+const RECOVERY_TEXT: Record<string, string> = {
+  duration: "Recovered: disruption expired",
+  checkpoint: "Recovered: cleared the next checkpoint",
+  finish: "Recovered at the finish",
+  manual: "Recovered",
+};
+
+function createChanges(): PendingChanges {
+  return { fight: false, points: [], frames: new Set(), accounts: new Set() };
+}
+
 export class RaceCoordinator {
   readonly engine: RaceEngine;
   readonly market: VirtualPredictionMarket;
+  readonly telemetry: RaceTelemetry;
 
+  private readonly fightMeta: FightMetadata;
+  private readonly sabotageProvider?: SabotageObstacleProvider;
+  private readonly sabotageDefaulted: boolean;
+  private sabotagePlan: SabotagePlan | null;
+  private sabotageArmedAt: number | null = null;
+  private sabotageFiredAt: number | null = null;
+  private readonly sabotageHits: string[] = [];
   private readonly sessions = new Map<string, RacerSessionHandle>();
   private readonly runnerTasks = new Map<string, Promise<void>>();
+  private readonly orderReceipts = new Map<string, OrderReceipt>();
+  private readonly listeners = new Set<RaceChangeListener>();
+  private processedEventCount = 0;
   private persistedEventCount = 0;
+  private persisting: Promise<void> = Promise.resolve();
+  private closedAtValue: number | null = null;
   private stopped = false;
 
   constructor(
-    input: CreateRaceInput,
-    private readonly dependencies: {
-      sessionManager: RacerSessionManager;
-      agentRunner: CompetitorAgentRunner;
-      courseVerifier: CourseVerifier;
-      eventStore: RaceEventStore;
-      obstacleProvider?: ObstacleProvider;
-    },
+    input: RaceCoordinatorInput,
+    private readonly dependencies: RaceCoordinatorDependencies,
   ) {
+    this.fightMeta = normalizeFightMetadata(input);
+
+    let obstacleProvider: ObstacleProvider | undefined;
+    if (dependencies.obstacleProvider) {
+      const checkpoint = this.fightMeta.sabotage?.checkpoint ??
+        Math.ceil(input.checkpointCount / 2);
+      const plan: SabotagePlan = this.fightMeta.sabotage
+        ? { ...this.fightMeta.sabotage }
+        : { checkpoint, summary: sabotagePlaceholder(this.checkpointLabel(checkpoint)) };
+      this.sabotageDefaulted = this.fightMeta.sabotage === null;
+      this.sabotagePlan = plan;
+      this.sabotageProvider = new SabotageObstacleProvider(dependencies.obstacleProvider, plan);
+      obstacleProvider = this.sabotageProvider;
+    } else {
+      this.sabotageDefaulted = false;
+      this.sabotagePlan = null;
+    }
+    this.fightMeta.sabotage = this.sabotagePlan;
+
     this.engine = new RaceEngine(
       {
         raceId: input.raceId,
         courseId: input.courseId,
         seed: input.seed,
         checkpointCount: input.checkpointCount,
+        now: this.fightMeta.createdAt,
       },
       {
         targetDurationMs: input.targetDurationMs,
         absoluteDurationMs: input.absoluteDurationMs,
-        obstacleProvider: dependencies.obstacleProvider,
+        obstacleProvider,
       },
     );
-    this.market = new VirtualPredictionMarket([...this.engine.racers.keys()]);
+    const racerIds = [...this.engine.racers.keys()];
+    this.market = new VirtualPredictionMarket(racerIds, {
+      ledger: dependencies.ledger,
+      raceId: input.raceId,
+    });
+    this.telemetry = new RaceTelemetry(racerIds, input.checkpointCount);
+    this.telemetry.setOpeningPrices(this.market.pricesSnapshot());
+    // Baseline chart sample so upcoming fights have a price series.
+    this.telemetry.appendPrice(this.fightMeta.createdAt, this.market.pricesSnapshot());
+  }
+
+  get raceId(): string {
+    return this.engine.race.id;
+  }
+
+  /** When the race became finished or timed_out. */
+  get closedAt(): number | null {
+    return this.closedAtValue;
+  }
+
+  subscribe(listener: RaceChangeListener): () => void {
+    this.listeners.add(listener);
+    return () => {
+      this.listeners.delete(listener);
+    };
+  }
+
+  /**
+   * Chooses the sabotage policy (memoised). A default plan's summary is
+   * generated from the armed hazard. Resolves null without sabotage.
+   */
+  async arm(now = Date.now()): Promise<DisruptionCommand | null> {
+    const provider = this.sabotageProvider;
+    if (!provider || !this.sabotagePlan) return null;
+    const policy = await provider.arm(this.engine.race.id);
+    if (this.sabotageArmedAt === null) {
+      this.sabotageArmedAt = now;
+      if (this.sabotageDefaulted && policy) {
+        const label = this.checkpointLabel(this.sabotagePlan.checkpoint);
+        this.sabotagePlan = {
+          ...this.sabotagePlan,
+          summary: describeHazard(policy, label),
+          detail: describeHazardDetail(policy, label),
+        };
+        this.fightMeta.sabotage = this.sabotagePlan;
+      }
+      this.flush({ ...createChanges(), fight: true });
+    }
+    return policy;
   }
 
   async prepareAndStart(now = Date.now()): Promise<RaceSnapshot> {
     try {
+      if (this.sabotageProvider && this.sabotageArmedAt === null) {
+        await this.arm(now);
+      }
       const sessions = await Promise.all(
         [...this.engine.racers.keys()].map((racerId) =>
           this.dependencies.sessionManager.create(racerId),
@@ -90,7 +276,7 @@ export class RaceCoordinator {
         this.engine.markReady(session.racerId, now);
       }
       this.engine.start(now);
-      await this.persistNewEvents();
+      await this.afterEngineMutation(now);
 
       for (const session of sessions) {
         const context: CompetitorContext = {
@@ -107,7 +293,7 @@ export class RaceCoordinator {
 
       return this.snapshot();
     } catch (error) {
-      await this.shutdown();
+      await this.abortStart(now);
       throw error;
     }
   }
@@ -129,9 +315,17 @@ export class RaceCoordinator {
       throw new Error(`Checkpoint ${checkpoint} was not verified for ${racerId}`);
     }
 
-    await this.engine.reachCheckpoint(racerId, checkpoint, now);
-    await this.synchronizeLifecycle(now);
-    await this.persistNewEvents();
+    // checkpoint_reached is emitted synchronously, before the obstacle is
+    // chosen and applied, so spectators see the checkpoint immediately.
+    const reaching = this.engine.reachCheckpoint(racerId, checkpoint, now);
+    const early = createChanges();
+    this.processEngineEvents(now, early);
+    this.flush(early);
+    try {
+      await reaching;
+    } finally {
+      await this.afterEngineMutation(now);
+    }
   }
 
   async recordFinish(racerId: string, now = Date.now()): Promise<void> {
@@ -147,38 +341,135 @@ export class RaceCoordinator {
     }
 
     const won = this.engine.finishRacer(racerId, now);
+    const changes = createChanges();
     if (won) {
       this.market.freeze();
-      this.market.resolve(racerId);
-      await this.persistNewEvents();
+      this.market.resolve(racerId, now);
+      this.addSettledAccounts(changes);
+    }
+    this.processEngineEvents(now, changes);
+    await this.synchronizeLifecycle(now, changes);
+    await this.persistNewEvents();
+    if (won && !this.stopped) {
       await this.stopRacers();
       await this.dependencies.sessionManager.releaseAll();
       this.stopped = true;
-      return;
     }
-    await this.persistNewEvents();
+    this.flush(changes);
   }
 
   async tick(now = Date.now()): Promise<void> {
     this.engine.tick(now);
-    await this.synchronizeLifecycle(now);
+    const changes = createChanges();
+    this.processEngineEvents(now, changes);
+    await this.synchronizeLifecycle(now, changes);
+    if (this.isLive()) {
+      const last = this.telemetry.lastPricePoint();
+      if (last && now - last.t >= PRICE_HEARTBEAT_MS) {
+        const point = this.telemetry.appendPrice(now, this.market.pricesSnapshot(), {
+          heartbeat: true,
+        });
+        if (point) changes.points.push(point);
+      }
+    }
     await this.persistNewEvents();
+    this.flush(changes);
   }
 
-  fundSpectator(userId: string, credits: number): void {
-    this.market.fund(userId, credits);
+  /** Places a spectator order. Idempotent per userId + clientOrderId. */
+  placeOrder(order: OrderRequest, now = Date.now()): OrderReceipt {
+    const { userId, racerId, side, action, quantity, limitPrice, clientOrderId } = order;
+    if (typeof userId !== "string" || userId.length === 0) {
+      throw new DomainError("invalid", "userId is required");
+    }
+    if (
+      clientOrderId !== undefined &&
+      (typeof clientOrderId !== "string" || clientOrderId.length === 0 ||
+        clientOrderId.length > 128)
+    ) {
+      throw new DomainError("invalid", "clientOrderId must be 1 to 128 characters");
+    }
+    const idempotencyKey = clientOrderId === undefined
+      ? undefined
+      : `${userId} ${clientOrderId}`;
+    const previous = idempotencyKey ? this.orderReceipts.get(idempotencyKey) : undefined;
+    if (previous) {
+      return { ...previous };
+    }
+
+    if (typeof racerId !== "string" || !this.engine.racers.has(racerId)) {
+      throw new DomainError("not_found", `Unknown racer: ${String(racerId)}`);
+    }
+    if (side !== "yes" && side !== "no") {
+      throw new DomainError("invalid", "side must be yes or no");
+    }
+    if (action !== "buy" && action !== "sell") {
+      throw new DomainError("invalid", "action must be buy or sell");
+    }
+    if (!Number.isInteger(quantity) || quantity <= 0) {
+      throw new DomainError("invalid", "quantity must be a positive integer");
+    }
+
+    const options = { limitPrice, now };
+    const trade = action === "buy"
+      ? this.market.buy(userId, racerId, quantity, side, options)
+      : this.market.sell(userId, racerId, quantity, side, options);
+    const receipt: OrderReceipt = {
+      orderId: crypto.randomUUID(),
+      clientOrderId: clientOrderId ?? null,
+      raceId: this.engine.race.id,
+      racerId,
+      side,
+      action,
+      quantity,
+      price: trade.price,
+      total: trade.total,
+      payoutIfWin: action === "buy" ? quantity : 0,
+      executedAt: now,
+    };
+    if (idempotencyKey) {
+      this.orderReceipts.set(idempotencyKey, receipt);
+    }
+    this.afterTrade(userId, now);
+    return { ...receipt };
   }
 
-  buyShares(userId: string, racerId: string, quantity: number): TradeReceipt {
-    return this.market.buy(userId, racerId, quantity);
+  fundSpectator(userId: string, credits: number, now = Date.now()): void {
+    this.market.fund(userId, credits, now);
+    const changes = createChanges();
+    changes.accounts.add(userId);
+    this.flush(changes);
   }
 
-  sellShares(userId: string, racerId: string, quantity: number): TradeReceipt {
-    return this.market.sell(userId, racerId, quantity);
+  buyShares(userId: string, racerId: string, quantity: number, now = Date.now()): TradeReceipt {
+    const receipt = this.market.buy(userId, racerId, quantity, "yes", { now });
+    this.afterTrade(userId, now);
+    return receipt;
+  }
+
+  sellShares(userId: string, racerId: string, quantity: number, now = Date.now()): TradeReceipt {
+    const receipt = this.market.sell(userId, racerId, quantity, "yes", { now });
+    this.afterTrade(userId, now);
+    return receipt;
   }
 
   spectatorBalance(userId: string): number {
     return this.market.balance(userId);
+  }
+
+  /** Applies a competitor step report to the racer's telemetry. */
+  recordAgentAction(racerId: string, report: AgentActionReport, now = Date.now()): void {
+    this.telemetry.recordAction(racerId, report, now);
+    this.flush({ ...createChanges(), fight: true });
+  }
+
+  /** Stores a racer's latest browser capture and bumps its frame seq. */
+  recordAgentFrame(racerId: string, frame: CapturedFrame, now = Date.now()): void {
+    this.telemetry.recordFrame(racerId, frame, now);
+    const changes = createChanges();
+    changes.frames.add(racerId);
+    changes.fight = true;
+    this.flush(changes);
   }
 
   snapshot(): RaceSnapshot {
@@ -198,6 +489,63 @@ export class RaceCoordinator {
     };
   }
 
+  /** A copy of the fight metadata. `sabotage` reflects the effective plan. */
+  get fight(): FightMetadata {
+    return structuredClone(this.fightMeta);
+  }
+
+  checkpointLabel(checkpoint: number): string {
+    return this.fightMeta.checkpointLabels[checkpoint - 1] ?? defaultCheckpointLabel(checkpoint);
+  }
+
+  /** Null when the fight has no sabotage (no obstacle provider). */
+  get sabotage(): SabotageStatus | null {
+    const plan = this.sabotagePlan;
+    if (!plan) return null;
+    const armedPolicy = this.sabotageProvider?.armedPolicy();
+    const raceStatus = this.engine.race.status;
+    const state: SabotageState = this.sabotageFiredAt !== null
+      ? "fired"
+      : raceStatus === "hazards_frozen" || raceStatus === "finished" ||
+          raceStatus === "timed_out"
+        ? "expired"
+        : "armed";
+    return {
+      plan: structuredClone(plan),
+      checkpointLabel: this.checkpointLabel(plan.checkpoint),
+      armed: armedPolicy !== undefined,
+      policy: armedPolicy ?? null,
+      armedAt: this.sabotageArmedAt,
+      firedAt: this.sabotageFiredAt,
+      hitRacerIds: [...this.sabotageHits],
+      state,
+    };
+  }
+
+  racerTelemetry(racerId: string): RacerTelemetry {
+    return this.telemetry.racer(racerId);
+  }
+
+  runStatus(racerId: string): RunStatus {
+    const racer = this.engine.racers.get(racerId);
+    if (!racer) throw new DomainError("not_found", `Unknown racer: ${racerId}`);
+    return this.telemetry.runStatus(racerId, racer.status);
+  }
+
+  /** Oldest first. */
+  priceHistory(): PricePoint[] {
+    return this.telemetry.priceHistory();
+  }
+
+  /** YES prices at race start, or at creation before the start. */
+  get openingPrices(): Record<string, number> {
+    return this.telemetry.openingPrices() ?? this.market.pricesSnapshot();
+  }
+
+  frame(racerId: string): StoredFrame | null {
+    return this.telemetry.frame(racerId);
+  }
+
   async events() {
     return this.dependencies.eventStore.list(this.engine.race.id);
   }
@@ -212,13 +560,28 @@ export class RaceCoordinator {
   private baseContext(
     session: RacerSessionHandle,
   ): Omit<CompetitorContext, "reportCheckpoint" | "reportFinish"> {
+    const racerId = session.racerId;
     return {
       raceId: this.engine.race.id,
-      racerId: session.racerId,
+      racerId,
       courseId: this.engine.race.courseId,
       seed: this.engine.race.seed,
       checkpointCount: this.engine.race.checkpointCount,
       session,
+      reportAction: (report) => {
+        try {
+          this.recordAgentAction(racerId, report);
+        } catch {
+          // Telemetry must never break the competitor loop.
+        }
+      },
+      reportFrame: (frame) => {
+        try {
+          this.recordAgentFrame(racerId, frame);
+        } catch {
+          // Telemetry must never break the competitor loop.
+        }
+      },
     };
   }
 
@@ -228,20 +591,225 @@ export class RaceCoordinator {
     return session;
   }
 
-  private async synchronizeLifecycle(now: number): Promise<void> {
+  private isLive(): boolean {
+    const status = this.engine.race.status;
+    return status === "running" || status === "hazards_frozen" || status === "finishing";
+  }
+
+  private afterTrade(userId: string, now: number): void {
+    const changes = createChanges();
+    changes.fight = true;
+    changes.accounts.add(userId);
+    // A trade moves every mark in the race, so every holder is notified.
+    for (const position of this.market.allPositions()) {
+      changes.accounts.add(position.userId);
+    }
+    this.capturePrices(now, changes, false);
+    this.flush(changes);
+  }
+
+  private async afterEngineMutation(now: number): Promise<void> {
+    const changes = createChanges();
+    this.processEngineEvents(now, changes);
+    await this.synchronizeLifecycle(now, changes);
+    await this.persistNewEvents();
+    this.flush(changes);
+  }
+
+  /** Reacts to engine events not yet seen, in order. Synchronous. */
+  private processEngineEvents(now: number, changes: PendingChanges): void {
+    let processed = false;
+    while (this.processedEventCount < this.engine.events.length) {
+      const event = this.engine.events[this.processedEventCount];
+      this.processedEventCount += 1;
+      processed = true;
+      this.applyEvent(event, changes);
+    }
+    if (processed) {
+      changes.fight = true;
+      this.capturePrices(now, changes, false);
+    }
+  }
+
+  private applyEvent(event: RaceEvent, changes: PendingChanges): void {
+    const liquidity = this.market.baseLiquidity;
+    const at = event.occurredAt;
+    const racerId = event.racerId;
+    const metadata = event.metadata ?? {};
+
+    switch (event.type) {
+      case "race_started":
+        this.telemetry.setOpeningPrices(this.market.pricesSnapshot());
+        this.capturePrices(at, changes, true);
+        return;
+      case "hazards_frozen":
+        this.market.freeze();
+        return;
+      case "race_finished":
+        this.closedAtValue ??= at;
+        return;
+      case "race_timed_out": {
+        this.closedAtValue ??= at;
+        const reason = String(metadata.reason ?? "absolute_deadline");
+        const text = reason === "absolute_deadline"
+          ? "Timed out at the safety cap"
+          : `Stopped: ${reason}`;
+        for (const racer of this.engine.racers.values()) {
+          if (racer.status === "timed_out") {
+            this.telemetry.appendLog(racer.racerId, { kind: "status", text, at });
+          }
+        }
+        return;
+      }
+      default:
+        break;
+    }
+    if (!racerId) return;
+
+    switch (event.type) {
+      case "checkpoint_reached": {
+        const checkpoint = event.checkpoint ?? 0;
+        this.telemetry.markCheckpointCleared(racerId, checkpoint, at);
+        this.telemetry.appendLog(racerId, {
+          kind: "checkpoint",
+          text: `Cleared ${this.checkpointLabel(checkpoint)}`,
+          at,
+        });
+        this.market.adjustConfidence(racerId, CONFIDENCE_SIGNALS.checkpoint * liquidity);
+        return;
+      }
+      case "obstacle_applied": {
+        const hazard = hazardLabel(String(metadata.hazardType ?? "hazard"));
+        if (metadata.applied === true) {
+          this.telemetry.markSabotageHit(racerId, event.checkpoint ?? null, at);
+          this.telemetry.appendLog(racerId, {
+            kind: "sabotage",
+            text: `Sabotage fired: ${hazard}`,
+            at,
+          });
+          if (!this.sabotageHits.includes(racerId)) this.sabotageHits.push(racerId);
+          this.sabotageFiredAt ??= at;
+          this.market.adjustConfidence(racerId, CONFIDENCE_SIGNALS.sabotageHit * liquidity);
+        } else {
+          const reason = typeof metadata.reason === "string" ? metadata.reason : "not applied";
+          this.telemetry.appendLog(racerId, {
+            kind: "sabotage",
+            text: `Sabotage misfired (${reason}): ${hazard}`,
+            at,
+          });
+        }
+        return;
+      }
+      case "racer_recovered": {
+        const cause = String(metadata.cause ?? "manual");
+        this.telemetry.markRecovered(racerId, at);
+        this.telemetry.appendLog(racerId, {
+          kind: "recovered",
+          text: RECOVERY_TEXT[cause] ?? "Recovered",
+          at,
+        });
+        this.market.adjustConfidence(racerId, CONFIDENCE_SIGNALS.recovery * liquidity);
+        return;
+      }
+      case "racer_failed":
+        this.telemetry.appendLog(racerId, {
+          kind: "status",
+          text: `Failed: ${String(metadata.reason ?? "unknown error")}`,
+          at,
+        });
+        this.market.collapse(racerId);
+        return;
+      case "racer_finished":
+        this.telemetry.appendLog(racerId, {
+          kind: "status",
+          text: "Finished: final task state verified",
+          at,
+        });
+        return;
+      default:
+        return;
+    }
+  }
+
+  /** Appends a price point when prices moved (or when forced). */
+  private capturePrices(now: number, changes: PendingChanges, force: boolean): void {
+    const point = this.telemetry.appendPrice(now, this.market.pricesSnapshot(), {
+      heartbeat: force,
+    });
+    if (!point) return;
+    changes.points.push(point);
+    changes.fight = true;
+    // Marks moved: every holder's position value changed.
+    for (const position of this.market.allPositions()) {
+      changes.accounts.add(position.userId);
+    }
+  }
+
+  private addSettledAccounts(changes: PendingChanges): void {
+    changes.fight = true;
+    for (const line of this.market.settlementLines()) {
+      changes.accounts.add(line.userId);
+    }
+  }
+
+  private async synchronizeLifecycle(now: number, changes: PendingChanges): Promise<void> {
     if (this.engine.race.status === "hazards_frozen") {
       this.market.freeze();
     }
     if (this.engine.race.status === "timed_out" && !this.stopped) {
       if (this.market.status !== "resolved" && this.market.status !== "unresolved") {
-        this.market.markUnresolved();
+        this.market.markUnresolved(now);
+        this.addSettledAccounts(changes);
       }
+      this.closedAtValue ??= now;
       await this.persistNewEvents();
       await this.stopRacers();
       await this.dependencies.sessionManager.releaseAll();
       this.stopped = true;
     }
-    void now;
+  }
+
+  /** Start-up failed: void the market, abort the race, release sessions. */
+  private async abortStart(now: number): Promise<void> {
+    const changes = createChanges();
+    try {
+      if (this.market.status !== "resolved" && this.market.status !== "unresolved") {
+        this.market.markUnresolved(now);
+        this.addSettledAccounts(changes);
+      }
+      this.engine.abort("start_failed", now);
+      this.processEngineEvents(now, changes);
+    } catch {
+      // Never mask the original start-up failure.
+    }
+    await this.persistNewEvents().catch(() => undefined);
+    await this.shutdown().catch(() => undefined);
+    this.flush(changes);
+  }
+
+  private flush(changes: PendingChanges): void {
+    for (const point of changes.points) {
+      this.emitChange({ kind: "price", point });
+    }
+    for (const racerId of changes.frames) {
+      this.emitChange({ kind: "frame", racerId });
+    }
+    if (changes.fight) {
+      this.emitChange({ kind: "fight" });
+    }
+    if (changes.accounts.size > 0) {
+      this.emitChange({ kind: "account", userIds: [...changes.accounts] });
+    }
+  }
+
+  private emitChange(change: RaceChange): void {
+    for (const listener of [...this.listeners]) {
+      try {
+        listener(change);
+      } catch {
+        // A failing subscriber must not break the race.
+      }
+    }
   }
 
   private async stopRacers(): Promise<void> {
@@ -253,16 +821,27 @@ export class RaceCoordinator {
   }
 
   private async handleRunnerFailure(racerId: string, error: unknown): Promise<void> {
+    // Runners commonly reject once they are stopped; that is not a failure.
+    if (this.stopped) return;
     const reason = error instanceof Error ? error.message : String(error);
-    this.engine.failRacer(racerId, reason);
-    await this.persistNewEvents();
+    try {
+      this.engine.failRacer(racerId, reason);
+      await this.afterEngineMutation(Date.now());
+    } catch {
+      // The runner task must never reject unhandled.
+    }
   }
 
-  private async persistNewEvents(): Promise<void> {
-    while (this.persistedEventCount < this.engine.events.length) {
-      const event = this.engine.events[this.persistedEventCount];
-      await this.dependencies.eventStore.append(event);
-      this.persistedEventCount += 1;
-    }
+  /** Serialised so concurrent callers never append an event twice. */
+  private persistNewEvents(): Promise<void> {
+    const run = this.persisting.then(async () => {
+      while (this.persistedEventCount < this.engine.events.length) {
+        const event = this.engine.events[this.persistedEventCount];
+        await this.dependencies.eventStore.append(event);
+        this.persistedEventCount += 1;
+      }
+    });
+    this.persisting = run.catch(() => undefined);
+    return run;
   }
 }

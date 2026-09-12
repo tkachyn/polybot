@@ -14,6 +14,30 @@ export interface RacerSessionManager {
   releaseAll(): Promise<void>;
 }
 
+/** One step of a competitor's loop, reported for spectator telemetry. */
+export type AgentActionReport = {
+  kind: "action" | "error" | "note";
+  /** Human-readable, e.g. "click checkout-submit". */
+  text: string;
+  /** Page URL after the step, when known. */
+  url?: string;
+  /** Actions taken so far, including this one. */
+  step: number;
+  /** The agent's action budget. */
+  maxSteps: number;
+  /** Stable key for loop detection. Defaults to `text`. */
+  signature?: string;
+  error?: string;
+  at?: number;
+};
+
+/** A periodic capture of a racer's browser. */
+export type CapturedFrame = {
+  contentType: "image/jpeg" | "image/png" | "image/svg+xml";
+  body: Buffer | string;
+  capturedAt?: number;
+};
+
 export type CompetitorContext = {
   raceId: string;
   racerId: string;
@@ -23,6 +47,10 @@ export type CompetitorContext = {
   session: RacerSessionHandle;
   reportCheckpoint(checkpoint: number): Promise<void>;
   reportFinish(): Promise<void>;
+  /** Telemetry sink. Never throws. */
+  reportAction?(report: AgentActionReport): void;
+  /** Frame sink. Never throws. */
+  reportFrame?(frame: CapturedFrame): void;
 };
 
 export interface CompetitorAgentRunner {
