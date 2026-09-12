@@ -1,3 +1,4 @@
+import "dotenv/config";
 import { buildApi } from "./api/server.js";
 import { createProductionRaceCoordinator } from "./application/production-race-factory.js";
 

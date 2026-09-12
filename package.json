@@ -7,6 +7,8 @@
     "build": "tsc -p tsconfig.json",
     "start": "node dist/src/server.js",
     "dev": "node --import tsx src/server.ts",
+    "dev:course": "node --import tsx src/course-server.ts",
+    "dev:all": "node --import tsx src/dev.ts",
     "smoke:steel": "node --import tsx scripts/steel-smoke.ts",
     "check": "npm test && npm run build",
     "test": "node --import tsx --test test/**/*.test.ts"
@@ -18,7 +20,9 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.125.0",
+    "dotenv": "^17.4.2",
     "fastify": "^5.12.4",
+    "openai": "^7.15.0",
     "playwright": "^1.63.0",
     "steel-sdk": "^0.18.0"
   }

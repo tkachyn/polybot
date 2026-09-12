@@ -1,8 +1,9 @@
 import { resolve } from "node:path";
 import {
-  AnthropicCompetitorDecisionModel,
-  AnthropicMasterPolicyModel,
-} from "../agents/anthropic-models.js";
+  OpenRouterCompetitorDecisionModel,
+  OpenRouterMasterPolicyModel,
+  OpenRouterUsageBudget,
+} from "../agents/openrouter-models.js";
 import {
   MasterObstacleProvider,
   type RaceObservationSource,
@@ -25,17 +26,50 @@ function requiredEnv(name: string): string {
   return value;
 }
 
+function positiveNumberEnv(name: string, fallback: number): number {
+  const value = process.env[name];
+  if (!value) return fallback;
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    throw new Error(`${name} must be a positive number`);
+  }
+  return parsed;
+}
+
+function competitorRoster(): Map<string, string> {
+  const models = requiredEnv("COMPETITOR_LLM_MODELS")
+    .split(",")
+    .map((model) => model.trim())
+    .filter(Boolean);
+  if (models.length !== 4) {
+    throw new Error("COMPETITOR_LLM_MODELS must contain exactly four comma-separated models");
+  }
+  return new Map(models.map((model, index) => [`racer-${index + 1}`, model]));
+}
+
 export function createProductionRaceCoordinator(
   input: ApiCreateRaceInput,
 ): RaceCoordinator {
   const sessionManager = new SteelSessionManager();
-  const competitorModel = new AnthropicCompetitorDecisionModel({
-    model: requiredEnv("COMPETITOR_LLM_MODEL"),
-  });
+  const roster = competitorRoster();
+  const budget = new OpenRouterUsageBudget(
+    positiveNumberEnv("RACE_LLM_BUDGET_USD", 0.25),
+  );
+  const competitorModels = new Map(
+    [...roster].map(([racerId, model]) => [
+      racerId,
+      new OpenRouterCompetitorDecisionModel({ model, budget }),
+    ]),
+  );
   const agentRunner = new PlaywrightCompetitorRunner({
     task: input.task,
     startUrl: input.startUrl,
-    model: competitorModel,
+    modelForRacer(racerId) {
+      const model = competitorModels.get(racerId);
+      if (!model) throw new Error(`No OpenRouter model configured for ${racerId}`);
+      return model;
+    },
+    maxActions: positiveNumberEnv("COMPETITOR_MAX_ACTIONS", 20),
   });
   const courseVerifier = new DeterministicCourseVerifier(
     new HttpCourseStateGateway(
@@ -87,19 +121,26 @@ export function createProductionRaceCoordinator(
   const cdpExecutor = new CdpObstacleProvider(sessionManager);
   const obstacleProvider = input.obstaclesEnabled
     ? new MasterObstacleProvider(
-        new AnthropicMasterPolicyModel({ model: requiredEnv("MASTER_LLM_MODEL") }),
+        new OpenRouterMasterPolicyModel({
+          model: requiredEnv("MASTER_LLM_MODEL"),
+          budget,
+        }),
         observationSource,
         cdpExecutor,
         fallbackPolicies,
       )
     : undefined;
 
-  coordinator = new RaceCoordinator(input, {
+  coordinator = new RaceCoordinator({
+    ...input,
+    competitorModels: Object.fromEntries(roster),
+  }, {
     sessionManager,
     agentRunner,
     courseVerifier,
     eventStore,
     obstacleProvider,
+    llmUsage: () => budget.snapshot(),
   });
   return coordinator;
 }

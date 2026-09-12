@@ -78,3 +78,37 @@ test("prepares a seeded racer URL and reports verified progress", async () => {
   assert.match(page.navigations[0], /racerId=racer-1/);
   assert.match(page.navigations[0], /seed=seed-1/);
 });
+
+test("resolves a distinct model for each racer", async () => {
+  const page = new FakePage();
+  const selected: string[] = [];
+  const runner = new PlaywrightCompetitorRunner({
+    task: "Complete the course",
+    startUrl: "https://course.test/start",
+    modelForRacer(racerId) {
+      selected.push(racerId);
+      return new SequenceModel([{ type: "finish" }]);
+    },
+  });
+  const base = {
+    raceId: "race-1",
+    racerId: "racer-3",
+    courseId: "course-1",
+    seed: "seed-1",
+    checkpointCount: 3,
+    session: {
+      racerId: "racer-3",
+      steelSessionId: "steel-3",
+      page: page as unknown as Page,
+    },
+  };
+
+  await runner.prepare(base);
+  await runner.run({
+    ...base,
+    async reportCheckpoint() {},
+    async reportFinish() {},
+  });
+
+  assert.deepEqual(selected, ["racer-3"]);
+});

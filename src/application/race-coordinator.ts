@@ -18,6 +18,7 @@ export type CreateRaceInput = {
   checkpointCount: number;
   targetDurationMs?: number;
   absoluteDurationMs?: number;
+  competitorModels?: Record<string, string>;
 };
 
 export type RaceSnapshot = {
@@ -33,6 +34,16 @@ export type RaceSnapshot = {
     prices: Record<string, number>;
     winnerRacerId?: string;
   };
+  competitors: Array<{
+    racerId: string;
+    model?: string;
+  }>;
+  llmUsage?: {
+    limitUsd: number;
+    spentUsd: number;
+    remainingUsd: number;
+    requests: number;
+  };
 };
 
 export class RaceCoordinator {
@@ -43,6 +54,7 @@ export class RaceCoordinator {
   private readonly runnerTasks = new Map<string, Promise<void>>();
   private persistedEventCount = 0;
   private stopped = false;
+  private readonly competitorModels: Record<string, string>;
 
   constructor(
     input: CreateRaceInput,
@@ -52,8 +64,10 @@ export class RaceCoordinator {
       courseVerifier: CourseVerifier;
       eventStore: RaceEventStore;
       obstacleProvider?: ObstacleProvider;
+      llmUsage?: () => RaceSnapshot["llmUsage"];
     },
   ) {
+    this.competitorModels = { ...input.competitorModels };
     this.engine = new RaceEngine(
       {
         raceId: input.raceId,
@@ -195,6 +209,11 @@ export class RaceCoordinator {
         prices: this.market.pricesSnapshot(),
         winnerRacerId: this.market.winnerRacerId,
       },
+      competitors: [...this.engine.racers.keys()].map((racerId) => ({
+        racerId,
+        model: this.competitorModels[racerId],
+      })),
+      llmUsage: this.dependencies.llmUsage?.(),
     };
   }
 

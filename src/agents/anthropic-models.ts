@@ -4,6 +4,7 @@ import type {
   BrowserObservation,
   CompetitorDecisionModel,
 } from "./playwright-competitor-runner.js";
+import { parseAgentDecision } from "./playwright-competitor-runner.js";
 import type { MasterPolicyModel } from "./master-obstacle-provider.js";
 import type { DisruptionCommand } from "../domain/types.js";
 import { validateDisruptionCommand } from "../infra/cdp-obstacle-provider.js";
@@ -112,37 +113,6 @@ export class AnthropicCompetitorDecisionModel implements CompetitorDecisionModel
       }],
       tool_choice: { type: "tool", name: "take_browser_action" },
     });
-    return this.parseDecision(toolInput(response, "take_browser_action"));
-  }
-
-  private parseDecision(value: unknown): AgentDecision {
-    if (!value || typeof value !== "object" || !("type" in value)) {
-      throw new Error("Invalid competitor decision");
-    }
-    const input = value as Record<string, unknown>;
-    switch (input.type) {
-      case "inspect":
-      case "finish":
-        return { type: input.type };
-      case "click":
-        if (typeof input.targetRole !== "string") throw new Error("click requires targetRole");
-        return { type: "click", targetRole: input.targetRole };
-      case "type":
-        if (typeof input.targetRole !== "string" || typeof input.text !== "string") {
-          throw new Error("type requires targetRole and text");
-        }
-        return { type: "type", targetRole: input.targetRole, text: input.text };
-      case "navigate":
-        if (typeof input.url !== "string") throw new Error("navigate requires url");
-        return { type: "navigate", url: input.url };
-      case "wait":
-        if (typeof input.durationMs !== "number") throw new Error("wait requires durationMs");
-        return { type: "wait", durationMs: input.durationMs };
-      case "checkpoint":
-        if (typeof input.checkpoint !== "number") throw new Error("checkpoint requires a number");
-        return { type: "checkpoint", checkpoint: input.checkpoint };
-      default:
-        throw new Error(`Unsupported competitor decision: ${String(input.type)}`);
-    }
+    return parseAgentDecision(toolInput(response, "take_browser_action"));
   }
 }

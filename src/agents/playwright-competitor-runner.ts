@@ -35,10 +35,42 @@ export interface CompetitorDecisionModel {
   }): Promise<AgentDecision>;
 }
 
+export function parseAgentDecision(value: unknown): AgentDecision {
+  if (!value || typeof value !== "object" || !("type" in value)) {
+    throw new Error("Invalid competitor decision");
+  }
+  const input = value as Record<string, unknown>;
+  switch (input.type) {
+    case "inspect":
+    case "finish":
+      return { type: input.type };
+    case "click":
+      if (typeof input.targetRole !== "string") throw new Error("click requires targetRole");
+      return { type: "click", targetRole: input.targetRole };
+    case "type":
+      if (typeof input.targetRole !== "string" || typeof input.text !== "string") {
+        throw new Error("type requires targetRole and text");
+      }
+      return { type: "type", targetRole: input.targetRole, text: input.text };
+    case "navigate":
+      if (typeof input.url !== "string") throw new Error("navigate requires url");
+      return { type: "navigate", url: input.url };
+    case "wait":
+      if (typeof input.durationMs !== "number") throw new Error("wait requires durationMs");
+      return { type: "wait", durationMs: input.durationMs };
+    case "checkpoint":
+      if (typeof input.checkpoint !== "number") throw new Error("checkpoint requires a number");
+      return { type: "checkpoint", checkpoint: input.checkpoint };
+    default:
+      throw new Error(`Unsupported competitor decision: ${String(input.type)}`);
+  }
+}
+
 export type PlaywrightCompetitorRunnerOptions = {
   task: string;
   startUrl: string;
-  model: CompetitorDecisionModel;
+  model?: CompetitorDecisionModel;
+  modelForRacer?: (racerId: string) => CompetitorDecisionModel;
   maxActions?: number;
 };
 
@@ -51,6 +83,9 @@ export class PlaywrightCompetitorRunner implements CompetitorAgentRunner {
     this.maxActions = options.maxActions ?? 60;
     if (!options.task) throw new Error("Competitor task is required");
     if (!options.startUrl) throw new Error("Competitor start URL is required");
+    if (!options.model && !options.modelForRacer) {
+      throw new Error("A competitor model or model resolver is required");
+    }
   }
 
   async prepare(
@@ -61,6 +96,8 @@ export class PlaywrightCompetitorRunner implements CompetitorAgentRunner {
     url.searchParams.set("raceId", context.raceId);
     url.searchParams.set("racerId", context.racerId);
     url.searchParams.set("seed", context.seed);
+    url.searchParams.set("courseId", context.courseId);
+    url.searchParams.set("checkpointCount", String(context.checkpointCount));
     await page.goto(url.toString(), { waitUntil: "domcontentloaded" });
     this.prepared.add(context.racerId);
   }
@@ -78,7 +115,7 @@ export class PlaywrightCompetitorRunner implements CompetitorAgentRunner {
       for (let action = 0; action < this.maxActions; action += 1) {
         if (controller.signal.aborted) return;
         const observation = await this.observe(page);
-        const decision = await this.options.model.decide({
+        const decision = await this.modelFor(context.racerId).decide({
           task: this.options.task,
           racerId: context.racerId,
           observation,
@@ -100,6 +137,12 @@ export class PlaywrightCompetitorRunner implements CompetitorAgentRunner {
     } finally {
       this.controllers.delete(context.racerId);
     }
+  }
+
+  private modelFor(racerId: string): CompetitorDecisionModel {
+    const model = this.options.modelForRacer?.(racerId) ?? this.options.model;
+    if (!model) throw new Error(`No competitor model configured for ${racerId}`);
+    return model;
   }
 
   async stop(racerId: string): Promise<void> {

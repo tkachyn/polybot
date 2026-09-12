@@ -1,3 +1,4 @@
+import "dotenv/config";
 import { steelKeysFromEnv } from "../src/infra/steel-key-pool.js";
 import { SteelSessionManager } from "../src/infra/steel-session-manager.js";
 
