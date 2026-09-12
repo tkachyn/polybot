@@ -16,7 +16,7 @@ import type { FightAgentSummary, FightSummary, Side } from "@contract";
 import { AgentMonogram, ButtonLink, ChangeCents, EmptyState, Skeleton, StatusPill, fightPillStatus } from "../../components";
 import { agentStyle, rosterVisuals, type AgentVisual } from "../../lib/agents";
 import { cx } from "../../lib/cx";
-import { formatCents, formatCompactMoney, formatFightNumber, formatNumber } from "../../lib/format";
+import { formatCents, formatChance, formatCompactMoney, formatFightNumber, formatNumber } from "../../lib/format";
 import { RUN_STATUS_LABEL } from "../../lib/labels";
 import { useFightStream } from "../fight/useFightStream";
 import { ProbabilityChart } from "../market/ProbabilityChart";
@@ -24,13 +24,8 @@ import { SLIP_PARAM, formatSlipParam } from "../market/slipParam";
 import { CardClock, Resolution, SabotageLine } from "./FightCard";
 import styles from "./FeaturedFightCard.module.css";
 
-/** Chance as Kalshi shows it: whole percent, with <1% / >99% at the ends. */
-export function formatChance(probability: number): string {
-  if (!Number.isFinite(probability)) return "—";
-  if (probability > 0 && probability < 0.005) return "<1%";
-  if (probability < 1 && probability > 0.995) return ">99%";
-  return `${Math.round(probability * 100)}%`;
-}
+/** Chance as a whole percent. Lives in lib/format; re-exported for this screen. */
+export { formatChance } from "../../lib/format";
 
 type Outcome = "winner" | "loser" | null;
 
@@ -70,7 +65,9 @@ function OutcomeRow({ agent, visual, checkpointCount, outcome, tradable, closedR
       </div>
       <div className={styles.chance}>
         <span className={cx("num", styles.chanceValue)}>{formatChance(agent.yes)}</span>
-        <ChangeCents value={agent.change} />
+        {/* The chance restates the Yes price, so the only figure worth adding
+            here is a move. At no change there is nothing to add. */}
+        {agent.change !== 0 && <ChangeCents value={agent.change} />}
       </div>
       <div className={styles.sides}>
         <button
@@ -168,6 +165,7 @@ export function FeaturedFightCard({ fight }: { fight: FightSummary }) {
             sabotageAt={shown.sabotage?.firedAt ?? null}
             sabotageLabel="Sabotage"
             endAt={shown.status === "resolved" ? shown.finishedAt : null}
+            volume={shown.volume}
             className={styles.chart}
           />
         </div>

@@ -1,41 +1,47 @@
-.tile {
+/*
+ * Identity marks are the vendor's own logo: no tile, no fill, no border. The
+ * mark takes the surrounding text colour unless `tinted` asks for the agent's
+ * identity colour.
+ */
+.mark {
+  display: inline-block;
+  flex-shrink: 0;
+  vertical-align: middle;
+  color: inherit;
+}
+
+.fallback {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  flex-shrink: 0;
-  border: 1px solid var(--agent-border);
-  background-color: var(--agent-fill);
-  color: var(--agent-color);
+  font-family: var(--font-sans);
   font-weight: var(--fw-semibold);
+  font-style: normal;
   letter-spacing: 0.02em;
   line-height: 1;
   user-select: none;
 }
 
 .xs {
-  width: 18px;
-  height: 18px;
-  border-radius: var(--radius-xs);
+  width: 14px;
+  height: 14px;
   font-size: 8px;
 }
 
 .sm {
-  width: 22px;
-  height: 22px;
-  border-radius: var(--radius-sm);
-  font-size: var(--fs-label-sm);
+  width: 16px;
+  height: 16px;
+  font-size: 9px;
 }
 
 .md {
-  width: 28px;
-  height: 28px;
-  border-radius: var(--radius-md);
-  font-size: var(--fs-label-lg);
+  width: 20px;
+  height: 20px;
+  font-size: 10px;
 }
 
 .lg {
-  width: 36px;
-  height: 36px;
-  border-radius: var(--radius-lg);
-  font-size: var(--fs-body-lg);
+  width: 26px;
+  height: 26px;
+  font-size: 12px;
 }

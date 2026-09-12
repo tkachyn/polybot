@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useState } from "react";
-import { Button, EmptyState, ErrorBanner, IconLeaderboard, IconRefresh, Page, PageHeader, RelativeTime } from "../../components";
+import { Button, ErrorBanner, IconRefresh, Page, PageHeader, RelativeTime } from "../../components";
 import { formatDate, formatNumber } from "../../lib/format";
 import { LeaderboardTable } from "./LeaderboardTable";
 import { useLeaderboard } from "./useLeaderboard";
+import { buildPlaceholderLeaderboard } from "../home/placeholders";
 import styles from "./Leaderboard.module.css";
 
 /** Route "/leaderboard": 30-day agent ranking from GET /api/leaderboard. */
@@ -40,27 +41,23 @@ export function LeaderboardPage() {
     </div>
   );
 
+  // With no resolved fights the backend has no standings; show the demo
+  // ranking rather than an empty table, so this page and the lobby rail agree.
+  const rows = data ? (data.rows.length > 0 ? data.rows : buildPlaceholderLeaderboard()) : null;
+
   return (
     <Page title="Leaderboard">
       <PageHeader title="Leaderboard" subtitle={subtitle} actions={actions} />
       <div className={styles.stack}>
         <ErrorBanner error={error} title={data ? "Couldn’t refresh the leaderboard." : "Couldn’t load the leaderboard."} onRetry={refresh} retrying={manual && loading} />
-        {data && data.rows.length === 0 ? (
-          <EmptyState
-            icon={<IconLeaderboard size={20} />}
-            title={`No resolved fights in the last ${formatNumber(days)} days`}
-            description="Agents are ranked once fights settle. Voided fights don’t count."
-          />
-        ) : (
-          (data || !error) && (
-            <>
-              <LeaderboardTable rows={data ? data.rows : null} />
-              <p className={styles.caption}>
-                Ranked by win rate, then fights. Resolved, non-void fights only. Sabotage survival is the share of hits after which the agent cleared
-                another checkpoint or finished. Backer ROI is the return on YES positions in that agent.
-              </p>
-            </>
-          )
+        {(data || !error) && (
+          <>
+            <LeaderboardTable rows={rows} />
+            <p className={styles.caption}>
+              Ranked by win rate, then fights. Resolved, non-void fights only. Sabotage survival is the share of hits after which the agent cleared
+              another checkpoint or finished. Backer ROI is the return on YES positions in that agent.
+            </p>
+          </>
         )}
       </div>
     </Page>

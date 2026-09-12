@@ -1,11 +1,10 @@
 /**
- * Lobby fight card (handoff 2.1): a four-part flex row that reflows when the
- * card is narrow.
+ * Lobby fight card: a self-contained block, two to a row in the lobby grid.
  *
- *   left 150px   FIGHT #0412 · status pill · clock
- *   centre       title (2 lines) · SABOTAGE + summary (1 line) · volume / traders / checkpoints
- *   agent strip  four chips from a 78px basis: name → monogram → price → change
- *   right 104px  View (action) · resolution countdown / result
+ *   head     FIGHT #0412 · status pill · clock
+ *   title    the task (2 lines) · SABOTAGE + summary (1 line)
+ *   agents   one row per agent: mark, name over a progress rule, chance
+ *   footer   volume / traders / checkpoints · resolution · View
  *
  * Shared by the Fights (home) and Resolved screens.
  */
@@ -15,20 +14,16 @@ import {
   AgentMonogram,
   Button,
   ButtonLink,
-  ChangeCents,
   ElapsedClock,
-  PriceCents,
-  ProgressBar,
   SabotageTag,
   Skeleton,
   StatusPill,
   Tag,
   fightPillStatus,
-  type ProgressMarker,
 } from "../../components";
 import { agentStyle, rosterVisuals, type AgentVisual } from "../../lib/agents";
 import { cx } from "../../lib/cx";
-import { formatClock, formatCompactMoney, formatFightNumber, formatNumber, formatTimeOfDay, isoDuration } from "../../lib/format";
+import { formatChance, formatClock, formatCompactMoney, formatFightNumber, formatNumber, formatTimeOfDay, isoDuration } from "../../lib/format";
 import { RUN_STATUS_LABEL, SABOTAGE_HIDDEN_COPY } from "../../lib/labels";
 import { useNow } from "../../state/clock";
 import styles from "./FightCard.module.css";
@@ -111,10 +106,6 @@ export function SabotageLine({ sabotage }: { sabotage: SabotageSummary | null })
 
 function CardMeta({ fight }: { fight: FightSummary }) {
   const count = fight.checkpointCount;
-  const markers: ProgressMarker[] =
-    fight.sabotage && count > 0
-      ? [{ at: fight.sabotage.checkpoint / count, tone: "sabotage", label: `Sabotage at ${fight.sabotage.checkpointLabel}` }]
-      : [];
   return (
     <div className={styles.meta}>
       <span className={styles.metaItem}>
@@ -129,13 +120,6 @@ function CardMeta({ fight }: { fight: FightSummary }) {
         <span className={cx("num", styles.metaFigure)}>
           {formatNumber(fight.leaderCheckpoint)}/{formatNumber(count)}
         </span>
-        <ProgressBar
-          className={styles.metaProgress}
-          value={count > 0 ? fight.leaderCheckpoint / count : 0}
-          markers={markers}
-          size="xs"
-          label="Leader checkpoint progress"
-        />
       </span>
     </div>
   );
@@ -154,24 +138,32 @@ function chipOutcome(fight: FightSummary, racerId: string): ChipOutcome {
   return fight.winnerRacerId === racerId ? "winner" : "loser";
 }
 
-function AgentChip({ agent, visual, outcome, live }: { agent: FightAgentSummary; visual: AgentVisual; outcome: ChipOutcome; live: boolean }) {
+function AgentRow({ agent, visual, outcome, live, checkpointCount }: {
+  agent: FightAgentSummary;
+  visual: AgentVisual;
+  outcome: ChipOutcome;
+  live: boolean;
+  checkpointCount: number;
+}) {
   const blocked = live && agent.runStatus === "bad";
+  const progress = checkpointCount > 0 ? Math.min(1, agent.checkpoint / checkpointCount) : 0;
   return (
-    <li className={cx(styles.chip, outcome && styles[outcome])} style={agentStyle(visual)}>
-      <span className={styles.chipName} title={agent.agent.name}>
+    <li className={cx(styles.agentRow, outcome && styles[outcome])} style={agentStyle(visual)}>
+      <AgentMonogram agent={visual} size="sm" className={styles.agentMark} />
+      <span className={styles.agentName} title={agent.agent.name}>
         {agent.agent.name}
+        {/* The rule under the name is that agent's course progress. */}
+        <span className={styles.agentRule} aria-hidden="true">
+          <span className={styles.agentRuleFill} style={{ width: `${progress * 100}%` }} />
+        </span>
       </span>
-      <AgentMonogram agent={visual} size="sm" />
+      {blocked && <span className={styles.blocked} title={RUN_STATUS_LABEL.bad} role="img" aria-label={RUN_STATUS_LABEL.bad} />}
       {outcome === "void" ? (
         <span className={cx("label", styles.chipVoid)}>Void</span>
       ) : (
-        <>
-          <PriceCents value={agent.yes} size="lg" flash={live} tone={outcome === "winner" ? "positive" : "default"} />
-          <ChangeCents value={agent.change} />
-        </>
+        <span className={cx("num", styles.agentChance)}>{formatChance(agent.yes)}</span>
       )}
       {outcome === "winner" && <span className="sr-only">Winner</span>}
-      {blocked && <span className={styles.blocked} title={RUN_STATUS_LABEL.bad} role="img" aria-label={RUN_STATUS_LABEL.bad} />}
     </li>
   );
 }
@@ -180,14 +172,15 @@ function AgentStrip({ fight }: { fight: FightSummary }) {
   const visuals = rosterVisuals(fight.agents.map((a) => a.agent));
   const live = fight.status === "live";
   return (
-    <ul className={styles.strip} aria-label="Agents, YES price and change">
+    <ul className={styles.strip} aria-label="Agents and win chance">
       {fight.agents.map((agent, i) => (
-        <AgentChip
+        <AgentRow
           key={agent.racerId}
           agent={agent}
           visual={visuals[i] ?? rosterVisuals([agent.agent])[0]!}
           outcome={chipOutcome(fight, agent.racerId)}
           live={live}
+          checkpointCount={fight.checkpointCount}
         />
       ))}
     </ul>
@@ -277,7 +270,7 @@ export function FightCard({ fight, className, preview = false }: FightCardProps)
   return (
     <article className={cx(styles.container, className)} aria-labelledby={titleId}>
       <div className={styles.card}>
-        <div className={styles.left}>
+        <div className={styles.head}>
           <span className={cx("label", styles.number)}>
             Fight <span className="num">{number}</span>
           </span>
@@ -285,42 +278,40 @@ export function FightCard({ fight, className, preview = false }: FightCardProps)
           <CardClock fight={fight} />
         </div>
 
-        <div className={styles.centre}>
-          <h2 id={titleId} className={cx("clamp-2", styles.title)} title={fight.title}>
-            {fight.title}
-          </h2>
-          <SabotageLine sabotage={fight.sabotage} />
-          <CardMeta fight={fight} />
-        </div>
+        <h2 id={titleId} className={cx("clamp-2", styles.title)} title={fight.title}>
+          {fight.title}
+        </h2>
+        <SabotageLine sabotage={fight.sabotage} />
 
         <AgentStrip fight={fight} />
 
-        <div className={styles.right}>
-          {preview ? (
-            <Button
-              variant="action"
-              size="sm"
-              block
-              className={cx(styles.view, styles.viewPreview)}
-              aria-disabled="true"
-              title="Preview only: this demo runs the featured fight"
-              aria-label={`Fight ${number} is a preview`}
-            >
-              View
-            </Button>
-          ) : (
-            <ButtonLink
-              to={`/fights/${encodeURIComponent(fight.raceId)}`}
-              variant="action"
-              size="sm"
-              block
-              className={styles.view}
-              aria-label={`View fight ${number}`}
-            >
-              View
-            </ButtonLink>
-          )}
-          <Resolution fight={fight} />
+        <div className={styles.footer}>
+          <CardMeta fight={fight} />
+          <div className={styles.footerEnd}>
+            <Resolution fight={fight} />
+            {preview ? (
+              <Button
+                variant="subtle"
+                size="sm"
+                className={cx(styles.view, styles.viewPreview)}
+                aria-disabled="true"
+                title="Preview only: this demo runs the featured fight"
+                aria-label={`Fight ${number} is a preview`}
+              >
+                View
+              </Button>
+            ) : (
+              <ButtonLink
+                to={`/fights/${encodeURIComponent(fight.raceId)}`}
+                variant="subtle"
+                size="sm"
+                className={styles.view}
+                aria-label={`View fight ${number}`}
+              >
+                View
+              </ButtonLink>
+            )}
+          </div>
         </div>
       </div>
     </article>
@@ -347,31 +338,24 @@ export function FightCardSkeleton() {
   return (
     <div className={styles.container} aria-hidden="true">
       <div className={styles.card}>
-        <div className={styles.left}>
+        <div className={styles.head}>
           <Skeleton width={84} height={10} />
           <Skeleton width={56} height={18} radius="pill" />
-          <Skeleton width={44} height={12} />
         </div>
-        <div className={styles.centre}>
-          <Skeleton width="88%" height={13} />
-          <Skeleton width="60%" height={13} />
-          <Skeleton width="72%" height={18} />
-          <Skeleton width="50%" height={10} />
-        </div>
+        <Skeleton width="88%" height={18} />
+        <Skeleton width="52%" height={12} />
         <div className={styles.strip}>
           {[0, 1, 2, 3].map((i) => (
-            <div key={i} className={cx(styles.chip, styles.chipSkeleton)}>
-              <Skeleton width="80%" height={10} />
-              <Skeleton width={22} height={22} radius="sm" />
-              <Skeleton width={36} height={16} />
-              <Skeleton width={28} height={10} />
+            <div key={i} className={styles.agentRow}>
+              <Skeleton width={16} height={16} radius="sm" />
+              <Skeleton width="60%" height={12} />
+              <Skeleton width={32} height={14} />
             </div>
           ))}
         </div>
-        <div className={styles.right}>
-          <Skeleton width="100%" height={26} radius="md" />
-          <Skeleton width={60} height={10} />
-          <Skeleton width={48} height={13} />
+        <div className={styles.footer}>
+          <Skeleton width="45%" height={10} />
+          <Skeleton width={64} height={26} radius="md" />
         </div>
       </div>
     </div>

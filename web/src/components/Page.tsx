@@ -2,7 +2,7 @@ import { useEffect, type ReactNode } from "react";
 import { cx } from "../lib/cx";
 import styles from "./Page.module.css";
 
-export const APP_TITLE = "Sabotage Markets";
+export const APP_TITLE = "PolyBot";
 
 export type PageProps = {
   children: ReactNode;
@@ -16,7 +16,7 @@ export type PageProps = {
   width?: "default" | "wide" | "full";
   /** Standard gutters. Default true. */
   padded?: boolean;
-  /** Sets document.title to "<title> · Sabotage Markets". */
+  /** Sets document.title to "<title> · PolyBot". */
   title?: string;
   className?: string;
 };

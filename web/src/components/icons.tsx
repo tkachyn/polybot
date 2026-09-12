@@ -159,13 +159,29 @@ export function IconRefresh(props: IconProps) {
   );
 }
 
-/** Brand mark (matches public/favicon.svg). Uses tokens via currentColor + a sabotage dot. */
+/**
+ * PolyBot mark (matches public/favicon.svg).
+ *
+ * Two equilateral triangles stacked on a shared vertical spine — the Nepal
+ * flag's double pennant, read as an angular B. Side 12 on a 32 grid, so each
+ * apex sits 12·√3/2 ≈ 10.39 to the right of the spine, level with the middle
+ * of its own edge. Drawn as one open outline in currentColor.
+ */
 export function LogoMark({ size = 22 }: { size?: number }) {
   return (
-    <svg width={size} height={size} viewBox="0 0 32 32" aria-hidden="true" focusable="false">
-      <rect width="32" height="32" rx="7" fill="var(--color-inset)" />
-      <path d="M9 21.5 15 10.5M17 21.5 23 10.5" stroke="var(--color-text)" strokeWidth="2.6" strokeLinecap="round" />
-      <circle cx="23" cy="21.5" r="2" fill="var(--color-sabotage)" />
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 32 32"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2.2}
+      strokeLinejoin="round"
+      strokeLinecap="round"
+      aria-hidden="true"
+      focusable="false"
+    >
+      <path d="M10 4 L20.39 10 L10 16 L20.39 22 L10 28 Z" />
     </svg>
   );
 }

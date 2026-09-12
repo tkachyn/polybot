@@ -32,14 +32,16 @@
   margin: 0;
 }
 
-/* Legend: 2 × 2, line key + name + current price. */
+/*
+ * Legend: one row of model + price cells, divided by vertical rules. The
+ * series key is a dot, not a line segment.
+ */
 .legend {
   flex: none;
-  display: grid;
-  /* Two columns in the rail; left-aligned columns (not stretched) when wide. */
-  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
-  max-width: 720px;
-  gap: var(--space-1) var(--space-4);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: stretch;
+  gap: var(--space-1) 0;
   margin: 0;
   padding: 0;
   list-style: none;
@@ -47,27 +49,40 @@
 
 .legendItem {
   display: flex;
-  align-items: center;
-  gap: var(--space-1-5);
+  align-items: baseline;
+  gap: var(--space-2);
   min-width: 0;
+  padding-inline: var(--space-3-5);
   font-size: var(--fs-body-sm);
+  border-left: 1px solid var(--color-divider);
+}
+
+.legendItem:first-child {
+  padding-left: 0;
+  border-left: 0;
 }
 
 .key {
   flex: none;
-  width: 12px;
-  height: 2px;
-  border-radius: 1px;
+  align-self: center;
+  width: 7px;
+  height: 7px;
+  border-radius: var(--radius-pill);
   background-color: var(--agent-color);
 }
 
 .legendName {
-  flex: 1 1 auto;
+  flex: 0 1 auto;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   color: var(--color-text-secondary);
+}
+
+.legendPrice {
+  flex: none;
+  color: var(--color-text);
 }
 
 /* Collapsed strip: one row of monogram + price. */
@@ -120,7 +135,7 @@
 
 .line {
   fill: none;
-  stroke-width: 2;
+  stroke-width: 1.5;
   stroke-linejoin: round;
   stroke-linecap: round;
 }
@@ -195,4 +210,64 @@
   overflow: hidden;
   text-overflow: ellipsis;
   color: var(--color-text-secondary);
+}
+
+/* --- Money flow -------------------------------------------------------------- */
+
+/*
+ * Amounts that just traded, floating up the left of the plot as the agents
+ * move the market. Purely decorative: the figures are also in the footer.
+ */
+.moneyFlow {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.money {
+  position: absolute;
+  left: var(--space-2);
+  font-family: var(--font-sans);
+  font-size: var(--fs-body-sm);
+  font-weight: var(--fw-medium);
+  font-variant-numeric: tabular-nums;
+  color: var(--color-positive);
+  white-space: nowrap;
+  animation: money-rise 2600ms var(--ease-standard) forwards;
+}
+
+@keyframes money-rise {
+  0% {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  12% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  70% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(-26px);
+  }
+}
+
+/* A flash that never fades would pile up, so hold it still and let it go. */
+@media (prefers-reduced-motion: reduce) {
+  .money {
+    animation: money-hold 2600ms steps(1, end) forwards;
+  }
+
+  @keyframes money-hold {
+    0%,
+    85% {
+      opacity: 1;
+    }
+    100% {
+      opacity: 0;
+    }
+  }
 }

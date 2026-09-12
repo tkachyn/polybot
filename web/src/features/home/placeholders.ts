@@ -7,7 +7,14 @@
  * the length of a demo. Fight numbers sit around the featured fight's
  * number and never collide with it.
  */
-import type { AgentIdentity, FightAgentSummary, FightStatus, FightSummary, SabotageSummary } from "@contract";
+import type {
+  AgentIdentity,
+  FightAgentSummary,
+  FightStatus,
+  FightSummary,
+  LeaderboardRow,
+  SabotageSummary,
+} from "@contract";
 
 const ROSTER: readonly AgentIdentity[] = [
   { key: "gpt", name: "GPT-5.2", provider: "openai", model: "gpt-5.2" },
@@ -247,4 +254,84 @@ export function buildPlaceholderFights(now: number, featuredNumber: number): Fig
       voided,
     } satisfies FightSummary;
   });
+}
+
+// ---------------------------------------------------------------------------
+// Leaderboard
+// ---------------------------------------------------------------------------
+
+/**
+ * A standing for one agent, before the derived rates are filled in. Win rate,
+ * sabotage survival and rank are computed rather than written down, so the
+ * figures can never contradict each other.
+ */
+type PlaceholderStanding = {
+  agent: AgentIdentity;
+  fights: number;
+  wins: number;
+  sabotageHits: number;
+  sabotageSurvived: number;
+  /** Return to backers who bought YES on this agent. */
+  backerRoi: number | null;
+  /** Mean winning finish, in seconds. */
+  avgFinishSec: number | null;
+};
+
+/**
+ * The demo's ranking, ordered as written: strongest first. Keys match the
+ * vendor marks in brand-logos, so every row carries its model's real logo.
+ */
+const PLACEHOLDER_STANDINGS: readonly PlaceholderStanding[] = [
+  {
+    agent: { key: "claude", name: "Claude Opus 4.6", provider: "anthropic", model: "claude-opus-4-6" },
+    fights: 31, wins: 12, sabotageHits: 24, sabotageSurvived: 17, backerRoi: 0.34, avgFinishSec: 168,
+  },
+  {
+    agent: { key: "gpt", name: "GPT-5.2", provider: "openai", model: "gpt-5.2" },
+    fights: 34, wins: 11, sabotageHits: 27, sabotageSurvived: 18, backerRoi: 0.19, avgFinishSec: 181,
+  },
+  {
+    agent: { key: "gemini", name: "Gemini 3 Pro", provider: "google", model: "gemini-3-pro" },
+    fights: 29, wins: 8, sabotageHits: 22, sabotageSurvived: 13, backerRoi: -0.06, avgFinishSec: 195,
+  },
+  {
+    agent: { key: "grok", name: "Grok 4.1", provider: "xai", model: "grok-4.1" },
+    fights: 27, wins: 6, sabotageHits: 21, sabotageSurvived: 11, backerRoi: -0.12, avgFinishSec: 204,
+  },
+  {
+    agent: { key: "deepseek", name: "DeepSeek V4.1 Flash", provider: "deepseek", model: "deepseek-v4.1-flash" },
+    fights: 22, wins: 4, sabotageHits: 18, sabotageSurvived: 8, backerRoi: -0.21, avgFinishSec: 212,
+  },
+  {
+    agent: { key: "qwen", name: "Qwen 3 Max", provider: "alibaba", model: "qwen-3-max" },
+    fights: 18, wins: 3, sabotageHits: 15, sabotageSurvived: 6, backerRoi: -0.28, avgFinishSec: 227,
+  },
+  {
+    agent: { key: "mistral", name: "Mistral Large 3", provider: "mistralai", model: "mistral-large-3" },
+    fights: 16, wins: 2, sabotageHits: 13, sabotageSurvived: 4, backerRoi: -0.35, avgFinishSec: 241,
+  },
+  {
+    agent: { key: "meta", name: "Llama 4.2 405B", provider: "meta-llama", model: "llama-4.2-405b" },
+    fights: 14, wins: 1, sabotageHits: 12, sabotageSurvived: 3, backerRoi: -0.44, avgFinishSec: null,
+  },
+];
+
+/**
+ * Hardcoded standings for the demo, used only while the backend has none of
+ * its own (a fresh live deployment, before any fight has resolved). Real rows
+ * always win; these never merge with them.
+ */
+export function buildPlaceholderLeaderboard(): LeaderboardRow[] {
+  return PLACEHOLDER_STANDINGS.map((standing, index) => ({
+    rank: index + 1,
+    agent: standing.agent,
+    fights: standing.fights,
+    wins: standing.wins,
+    winRate: standing.wins / standing.fights,
+    sabotageHits: standing.sabotageHits,
+    sabotageSurvived: standing.sabotageSurvived,
+    sabotageSurvival: standing.sabotageHits === 0 ? null : standing.sabotageSurvived / standing.sabotageHits,
+    backerRoi: standing.backerRoi,
+    avgFinishMs: standing.avgFinishSec === null ? null : standing.avgFinishSec * 1000,
+  }));
 }

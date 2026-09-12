@@ -75,6 +75,18 @@ export function centsValue(probability: Numeric): string {
   return String(Math.round(cents));
 }
 
+/**
+ * Probability as a whole percent, the way a prediction market shows it:
+ * "34%", with "<1%" / ">99%" at the ends so a live outcome never reads as
+ * settled.
+ */
+export function formatChance(probability: number): string {
+  if (!Number.isFinite(probability)) return "—";
+  if (probability > 0 && probability < 0.005) return "<1%";
+  if (probability < 1 && probability > 0.995) return ">99%";
+  return `${Math.round(probability * 100)}%`;
+}
+
 /** "45¢". See {@link centsValue} for the rounding rule. */
 export function formatCents(probability: Numeric): string {
   const value = centsValue(probability);

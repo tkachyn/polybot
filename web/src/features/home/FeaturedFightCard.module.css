@@ -11,7 +11,7 @@
   flex-direction: column;
   gap: var(--space-4);
   padding: var(--space-5) var(--space-6);
-  border: 1px solid var(--color-divider);
+  border: 1px solid var(--color-hairline);
   border-radius: var(--radius-xl);
   background-color: var(--color-surface);
 }
@@ -33,7 +33,7 @@
 }
 
 .featured {
-  color: var(--color-edge);
+  color: var(--color-text-secondary);
 }
 
 .number {
@@ -42,10 +42,9 @@
 
 .title {
   margin: 0;
-  max-width: 62ch;
-  font-size: var(--fs-display);
-  font-weight: 600;
-  line-height: 1.25;
+  max-width: 42ch;
+  font-size: 38px;
+  line-height: 1.1;
   color: var(--color-text);
 }
 
@@ -130,9 +129,11 @@
 }
 
 .progress {
+  overflow: hidden;
   font-size: var(--fs-body-sm);
   color: var(--color-text-muted);
   white-space: nowrap;
+  text-overflow: ellipsis;
 }
 
 .status.warn {
@@ -259,6 +260,31 @@
 }
 
 /* --- Narrow ---------------------------------------------------------------- */
+
+@container (max-width: 1060px) {
+  .outcomesHead,
+  .outcome {
+    grid-template-columns: 22px minmax(0, 1fr) 52px 128px;
+    column-gap: var(--space-2);
+  }
+
+  .outcome {
+    padding-inline: var(--space-1);
+  }
+
+  .outcomesHead {
+    padding-inline: var(--space-1) var(--space-1);
+  }
+
+  .chanceValue {
+    font-size: 17px;
+  }
+
+  .side {
+    padding: var(--space-1-5);
+    font-size: var(--fs-body-sm);
+  }
+}
 
 @container (max-width: 860px) {
   .card {

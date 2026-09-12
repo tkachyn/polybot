@@ -11,7 +11,6 @@ import { Countdown } from "../../components";
 import { agentVisual, rosterVisuals } from "../../lib/agents";
 import { cx } from "../../lib/cx";
 import { formatCompactMoney, formatNumber } from "../../lib/format";
-import type { ChartRange } from "./chart";
 import { marketStatusText } from "./market";
 import { OrderForm } from "./OrderForm";
 import { OutcomeTable } from "./OutcomeTable";
@@ -25,7 +24,6 @@ function slipKey(raceId: string, slip: Slip | null): string {
 }
 
 export function MarketRail({ fight, priceHistory, slip, onSlipChange }: MarketRailProps) {
-  const [range, setRange] = useState<ChartRange>("all");
   const [amount, setAmount] = useState("");
   const [filled, setFilled] = useState<FilledOrder | null>(null);
 
@@ -92,8 +90,6 @@ export function MarketRail({ fight, priceHistory, slip, onSlipChange }: MarketRa
         sabotageAt={fight.sabotage?.firedAt ?? null}
         endAt={fight.status === "resolved" ? fight.finishedAt : null}
         collapsed={panelOpen}
-        range={range}
-        onRangeChange={setRange}
         className={panelOpen ? undefined : styles.chartFloor}
       />
       <OutcomeTable fight={fight} slip={activeSlip} onSelect={select} className={cx(styles.table, panelOpen && styles.tableShrink)} />

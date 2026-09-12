@@ -2,7 +2,8 @@
  * Foundation primitives. Import from "../../components" in feature folders.
  * See web/README.md for props and usage.
  */
-export { AppShell, NAV_ITEMS, useSearchQuery } from "./AppShell";
+export { AppShell, NAV_ITEMS } from "./AppShell";
+export { useSearchQuery } from "../state/search";
 export { Page, PageHeader, APP_TITLE, type PageProps, type PageHeaderProps } from "./Page";
 export { AgentMonogram, type AgentMonogramProps, type AgentMonogramSize } from "./AgentMonogram";
 export { Button, ButtonLink, type ButtonProps, type ButtonLinkProps, type ButtonVariant, type ButtonSize } from "./Button";

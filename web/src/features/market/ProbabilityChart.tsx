@@ -1,20 +1,20 @@
 /**
  * Win-probability chart: one line per agent (identity colour), y axis
- * 0–100¢, time x axis, dashed terracotta line at the sabotage moment,
- * 5M / 1H / ALL ranges, a legend with current prices and a hover/keyboard
- * crosshair. Inline SVG sized by ResizeObserver.
+ * 0–100¢, time x axis, dashed terracotta line at the sabotage moment, a
+ * legend with current prices and a hover/keyboard crosshair. Inline SVG
+ * sized by ResizeObserver. The window is always the whole fight.
  *
  * `collapsed` renders only a compact legend strip (monogram + price), for
  * when the order form needs the chart's space.
  */
-import { useMemo, useState, useEffect, useId, type KeyboardEvent, type PointerEvent, type ReactNode } from "react";
+import { useMemo, useRef, useState, useEffect, useId, type KeyboardEvent, type PointerEvent, type ReactNode } from "react";
 import type { AgentIdentity, PricePoint } from "@contract";
-import { AgentMonogram, PriceCents, SegmentedControl } from "../../components";
+import { AgentMonogram, PriceCents } from "../../components";
 import { agentStyle, agentVisual, rosterVisuals, type AgentVisual } from "../../lib/agents";
 import { cx } from "../../lib/cx";
-import { formatCents, formatLogTime, formatTimeOfDay } from "../../lib/format";
+import { formatCents, formatCompactMoney, formatLogTime, formatTimeOfDay } from "../../lib/format";
 import { useNow } from "../../state/clock";
-import { CHART_RANGES, Y_TICKS, buildChartWindow, linearScale, nearestIndex, seriesPath, timeTicks, type ChartRange } from "./chart";
+import { Y_TICKS, buildChartWindow, linearScale, nearestIndex, seriesPath, timeTicks, type ChartRange } from "./chart";
 import styles from "./ProbabilityChart.module.css";
 
 /** Structurally satisfied by FightAgentSummary / FightAgentDetail. */
@@ -32,10 +32,14 @@ export type ProbabilityChartProps = {
   endAt?: number | null;
   /** Only the compact legend strip. */
   collapsed?: boolean;
-  /** Controlled range; omit to let the chart own it. */
+  /** Window to plot. Defaults to the whole fight; there is no range picker. */
   range?: ChartRange;
-  defaultRange?: ChartRange;
-  onRangeChange?: (range: ChartRange) => void;
+  /**
+   * The market's running volume. Every increase floats the amount that just
+   * traded over the plot, so money moving into the market is visible at the
+   * moment the agents shift it.
+   */
+  volume?: number;
   title?: ReactNode;
   className?: string;
 };
@@ -70,18 +74,11 @@ export function ProbabilityChart({
   sabotageLabel = "Sabotage",
   endAt = null,
   collapsed = false,
-  range: rangeProp,
-  defaultRange = "all",
-  onRangeChange,
+  range = "all",
+  volume,
   title = "Win probability",
   className,
 }: ProbabilityChartProps) {
-  const [rangeState, setRangeState] = useState<ChartRange>(defaultRange);
-  const range = rangeProp ?? rangeState;
-  const changeRange = (next: ChartRange) => {
-    if (rangeProp === undefined) setRangeState(next);
-    onRangeChange?.(next);
-  };
 
   const visuals = useMemo(() => {
     const roster = rosterVisuals(agents.map((a) => a.agent));
@@ -108,7 +105,6 @@ export function ProbabilityChart({
     <section className={cx(styles.chart, styles.expanded, className)}>
       <div className={styles.head}>
         <h3 className={cx("label", styles.title)}>{title}</h3>
-        <SegmentedControl size="sm" options={CHART_RANGES} value={range} onChange={changeRange} aria-label="Chart range" />
       </div>
       <ul className={styles.legend} aria-label="Legend">
         {agents.map((a, i) => (
@@ -117,11 +113,20 @@ export function ProbabilityChart({
             <span className={styles.legendName} title={a.agent.name}>
               {a.agent.name}
             </span>
-            <PriceCents value={a.yes} size="sm" flash />
+            <PriceCents value={a.yes} size="sm" flash className={styles.legendPrice} />
           </li>
         ))}
       </ul>
-      <Plot agents={agents} visuals={visuals} priceHistory={priceHistory} range={range} endAt={endAt} sabotageAt={sabotageAt} sabotageLabel={sabotageLabel} />
+      <Plot
+        agents={agents}
+        visuals={visuals}
+        priceHistory={priceHistory}
+        range={range}
+        endAt={endAt}
+        sabotageAt={sabotageAt}
+        sabotageLabel={sabotageLabel}
+        volume={volume}
+      />
     </section>
   );
 }
@@ -134,10 +139,60 @@ type PlotProps = {
   endAt: number | null;
   sabotageAt: number | null;
   sabotageLabel: string;
+  volume?: number;
 };
 
+/** One amount floating over the plot, with the lane it rises in. */
+type MoneyFlash = { id: number; amount: number; lane: number };
+
+/** How long an amount stays on screen. Must match the CSS animation. */
+const MONEY_FLASH_MS = 2600;
+/** Vertical lanes, so amounts arriving together do not stack on one line. */
+const MONEY_LANES = 5;
+
+/**
+ * Turns a running volume total into one flash per increase. Only the delta is
+ * shown: that is the money that just traded, not the total already in.
+ */
+function useMoneyFlow(volume: number | undefined): MoneyFlash[] {
+  const [flashes, setFlashes] = useState<MoneyFlash[]>([]);
+  const previous = useRef<number | undefined>(undefined);
+  const nextId = useRef(0);
+  const timers = useRef(new Set<ReturnType<typeof setTimeout>>());
+
+  // Clear every pending removal on unmount; a flash outliving the chart would
+  // set state on a gone component.
+  useEffect(() => {
+    const pending = timers.current;
+    return () => {
+      for (const timer of pending) clearTimeout(timer);
+      pending.clear();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (typeof volume !== "number" || !Number.isFinite(volume)) return;
+    const before = previous.current;
+    previous.current = volume;
+    // The first reading is the volume already traded, not a new trade.
+    if (typeof before !== "number" || volume <= before) return;
+
+    const id = nextId.current;
+    nextId.current += 1;
+    setFlashes((list) => [...list, { id, amount: volume - before, lane: id % MONEY_LANES }]);
+
+    const timer = setTimeout(() => {
+      timers.current.delete(timer);
+      setFlashes((list) => list.filter((flash) => flash.id !== id));
+    }, MONEY_FLASH_MS);
+    timers.current.add(timer);
+  }, [volume]);
+
+  return flashes;
+}
+
 /** The SVG body. Split out so the per-second tick re-renders only this. */
-function Plot({ agents, visuals, priceHistory, range, endAt, sabotageAt, sabotageLabel }: PlotProps) {
+function Plot({ agents, visuals, priceHistory, range, endAt, sabotageAt, sabotageLabel, volume }: PlotProps) {
   const frozen = endAt !== null;
   const now = useNow(1000, !frozen);
   const end = frozen ? endAt : now;
@@ -145,6 +200,7 @@ function Plot({ agents, visuals, priceHistory, range, endAt, sabotageAt, sabotag
   const { width, height } = useElementSize(box);
   const [hoverX, setHoverX] = useState<number | null>(null);
   const descId = useId();
+  const moneyFlow = useMoneyFlow(volume);
 
   const current = useMemo(() => Object.fromEntries(agents.map((a) => [a.racerId, a.yes])), [agents]);
   const win = useMemo(() => buildChartWindow({ history: priceHistory, range, end, current }), [priceHistory, range, end, current]);
@@ -287,6 +343,16 @@ function Plot({ agents, visuals, priceHistory, range, endAt, sabotageAt, sabotag
             </g>
           )}
         </svg>
+      )}
+
+      {moneyFlow.length > 0 && (
+        <div className={styles.moneyFlow} aria-hidden="true">
+          {moneyFlow.map((flash) => (
+            <span key={flash.id} className={styles.money} style={{ bottom: `${12 + flash.lane * 17}%` }}>
+              +{formatCompactMoney(flash.amount)}
+            </span>
+          ))}
+        </div>
       )}
 
       {drawable && win.historyCount === 0 && <p className={styles.empty}>Price history appears once trading starts.</p>}

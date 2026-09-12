@@ -1,34 +1,31 @@
 /**
- * The persistent frame: sidebar + top bar + content column.
+ * The persistent frame: one navbar across the top, content beneath.
  *
  * The shell is fixed to the viewport (body never scrolls). The content
  * column is a flex column; each route renders a <Page> that either scrolls
  * (default) or fills the height without scrolling (<Page scroll={false}>).
+ *
+ * The navbar carries the brand on the left, the destinations as inline tabs
+ * beside it, and the account on the right. There is no sidebar.
  */
-import { useEffect, useRef, useState, type ComponentType } from "react";
+import { type ComponentType } from "react";
 import { Link, NavLink, Outlet, useLocation } from "react-router-dom";
-import { combineStreamStatus } from "../api/stream";
 import { cx } from "../lib/cx";
 import { formatInitials } from "../lib/format";
-import { useFights } from "../state/fights";
-import { BREAKPOINT_REFLOW, useMediaQuery } from "../state/media";
-import { useSearchQuery, useSetSearchQuery, useTrackHomeSearch } from "../state/search";
 import { useSession } from "../state/session";
-import { ButtonLink } from "./Button";
-import { ConnectionIndicator } from "./ConnectionIndicator";
 import { Skeleton } from "./Feedback";
 import { Money } from "./Figures";
-import { IconClose, IconFights, IconLeaderboard, IconPortfolio, IconResolved, IconSearch, IconWallet, LogoMark, type IconProps } from "./icons";
+import { IconFights, IconLeaderboard, IconPortfolio, IconResolved, IconWallet, LogoMark, type IconProps } from "./icons";
 import { ErrorBoundary } from "../app/ErrorBoundary";
 import { Tag } from "./Tag";
 import styles from "./AppShell.module.css";
 
 export { Page, PageHeader } from "./Page";
-export { useSearchQuery } from "../state/search";
 
 type NavItem = {
   to: string;
   label: string;
+  /** Retained for consumers that render nav with icons; the navbar is text-only. */
   Icon: ComponentType<IconProps>;
   /** Extra path prefixes that mark this item active. */
   match?: (pathname: string) => boolean;
@@ -42,120 +39,51 @@ export const NAV_ITEMS: readonly NavItem[] = [
   { to: "/wallet", label: "Wallet", Icon: IconWallet },
 ];
 
-function Sidebar() {
+/** Brand, destinations and account, in one row across the top. */
+function Navbar() {
   const { pathname } = useLocation();
-  return (
-    <nav className={styles.sidebar} aria-label="Primary">
-      <Link to="/" className={styles.brand} aria-label="Sabotage Markets home">
-        <LogoMark size={24} />
-        <span className={styles.brandText}>Sabotage Markets</span>
-      </Link>
-      <ul className={styles.nav}>
-        {NAV_ITEMS.map(({ to, label, Icon, match }) => (
-          <li key={to}>
-            <NavLink
-              to={to}
-              end={to === "/"}
-              title={label}
-              className={({ isActive }) => cx(styles.navLink, (match ? match(pathname) : isActive) && styles.navActive)}
-              aria-current={match ? (match(pathname) ? "page" : undefined) : undefined}
-            >
-              <Icon size={16} className={styles.navIcon} />
-              <span className={styles.navLabel}>{label}</span>
-            </NavLink>
-          </li>
-        ))}
-      </ul>
-    </nav>
-  );
-}
-
-function SearchBox() {
-  const { pathname } = useLocation();
-  const query = useSearchQuery();
-  const setQuery = useSetSearchQuery();
-  const onHome = pathname === "/";
-  const [text, setText] = useState(query);
-  const inputRef = useRef<HTMLInputElement>(null);
-  useTrackHomeSearch();
-
-  useEffect(() => {
-    if (onHome) setText(query);
-  }, [onHome, query]);
-
-  // "/" focuses search from anywhere (except while typing in a field).
-  useEffect(() => {
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key !== "/" || event.metaKey || event.ctrlKey || event.altKey) return;
-      const target = event.target as HTMLElement | null;
-      if (target && (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName))) return;
-      event.preventDefault();
-      inputRef.current?.focus();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, []);
-
-  const update = (value: string) => {
-    setText(value);
-    setQuery(value);
-  };
+  const { meta, account } = useSession();
 
   return (
-    <form className={styles.search} role="search" onSubmit={(e) => e.preventDefault()}>
-      <IconSearch size={14} className={styles.searchIcon} />
-      <input
-        ref={inputRef}
-        type="search"
-        className={styles.searchInput}
-        placeholder="Search fights, tasks, agents"
-        aria-label="Search fights"
-        value={text}
-        onChange={(e) => update(e.target.value)}
-        onKeyDown={(e) => {
-          if (e.key === "Escape" && text) {
-            e.preventDefault();
-            update("");
-          }
-        }}
-        autoComplete="off"
-        spellCheck={false}
-      />
-      {text && (
-        <button type="button" className={styles.searchClear} onClick={() => update("")} aria-label="Clear search">
-          <IconClose size={12} />
-        </button>
-      )}
-    </form>
-  );
-}
-
-function TopBar() {
-  const { meta, account, streamStatus: userStream } = useSession();
-  const { streamStatus: fightsStream } = useFights();
-  const reflow = useMediaQuery(BREAKPOINT_REFLOW);
-  const connection = combineStreamStatus([fightsStream, userStream]);
-
-  return (
-    <header className={styles.topbar}>
-      <SearchBox />
-      <div className={styles.topbarRight}>
-        {meta?.mode === "simulated" && (
-          <Tag tone="edge" title="Simulated mode: agents, browsers and sabotage are simulated. Market, ledger and streams are real.">
-            Simulated
-          </Tag>
-        )}
-        <ConnectionIndicator status={connection} showLabel={!reflow} />
-        <Link to="/wallet" className={styles.balance} title="Available balance (virtual credits)">
-          <span className={cx("label", styles.balanceLabel)}>Balance</span>
-          {account ? <Money value={account.balance} size="md" /> : <Skeleton width={64} height={14} />}
+    <header className={styles.navbar}>
+      {/* Inner column matches <Page>'s: same max-width and gutter, so the
+          brand and the account line up with the page content beneath. */}
+      <div className={styles.navbarInner}>
+        <Link to="/" className={styles.brand} aria-label="PolyBot home">
+          <LogoMark size={26} />
+          <span className={styles.brandText}>PolyBot</span>
         </Link>
-        <ButtonLink to="/wallet?tab=deposit" variant="action" size="sm">
-          Deposit
-        </ButtonLink>
-        <Link to="/portfolio" className={styles.avatar} title={account?.displayName ?? "Your account"} aria-label="Your portfolio">
-          {account ? formatInitials(account.displayName) : ""}
-        </Link>
+
+        <nav className={styles.nav} aria-label="Primary">
+          <ul className={styles.navList}>
+            {NAV_ITEMS.map(({ to, label, match }) => (
+              <li key={to}>
+                <NavLink
+                  to={to}
+                  end={to === "/"}
+                  className={({ isActive }) => cx(styles.navLink, (match ? match(pathname) : isActive) && styles.navActive)}
+                  aria-current={match ? (match(pathname) ? "page" : undefined) : undefined}
+                >
+                  {label}
+                </NavLink>
+              </li>
+            ))}
+          </ul>
+        </nav>
+
+        <div className={styles.end}>
+          {meta?.mode === "simulated" && (
+            <Tag tone="edge" title="Simulated mode: agents, browsers and sabotage are simulated. Market, ledger and streams are real.">
+              Simulated
+            </Tag>
+          )}
+          <Link to="/wallet" className={styles.balance} title="Available balance (virtual credits)">
+            {account ? <Money value={account.balance} size="md" /> : <Skeleton width={64} height={14} />}
+          </Link>
+          <Link to="/portfolio" className={styles.avatar} title={account?.displayName ?? "Your account"} aria-label="Your portfolio">
+            {account ? formatInitials(account.displayName) : ""}
+          </Link>
+        </div>
       </div>
     </header>
   );
@@ -169,8 +97,7 @@ export function AppShell() {
       <a className="skip-link" href="#main">
         Skip to content
       </a>
-      <Sidebar />
-      <TopBar />
+      <Navbar />
       <main id="main" className={styles.content} tabIndex={-1}>
         <ErrorBoundary resetKey={pathname}>
           <Outlet />

@@ -6,7 +6,7 @@ import { useCallback, useSyncExternalStore } from "react";
 
 /** Below this width everything reflows (flexible tracks, wrapping rows). */
 export const BREAKPOINT_REFLOW = "(max-width: 999px)";
-/** Below this width the sidebar collapses to icons. */
+/** Below this width the layout tightens. */
 export const BREAKPOINT_COMPACT = "(max-width: 759px)";
 
 function mql(query: string): MediaQueryList | null {

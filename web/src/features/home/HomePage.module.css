@@ -1,36 +1,37 @@
-.toolbar {
+/*
+ * Lobby: a main column (featured fight, then what is coming up) with the
+ * resolved rail alongside. The rail drops under the main column once the two
+ * no longer fit side by side.
+ */
+
+.layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) var(--lobby-rail-width);
+  align-items: start;
+  gap: var(--space-6);
+}
+
+.main {
   display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-2) var(--space-4);
-  margin-bottom: var(--space-4);
-}
-
-.searchNote {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-2);
+  flex-direction: column;
+  gap: var(--space-6);
   min-width: 0;
-  font-size: var(--fs-body);
-  color: var(--color-text-secondary);
-  overflow-wrap: anywhere;
 }
 
-.body {
+.section {
   display: flex;
   flex-direction: column;
   gap: var(--space-3);
+  min-width: 0;
 }
 
-.emptyActions {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: center;
-  gap: var(--space-2);
+.sectionHead {
+  margin: 0;
+  color: var(--color-text-secondary);
 }
 
-/* Room between the featured hero and the filterable list beneath it. */
-.featuredSection {
-  margin-bottom: var(--space-6);
+@media (max-width: 1099px) {
+  .layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }

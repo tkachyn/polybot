@@ -1,17 +1,23 @@
 /*
- * Fight card (handoff 2.1). Four-part flex row: left 150px, centre flexible,
- * agent strip (chips from a 78px basis), right 104px. The card reflows on its
- * own width (container query), so it wraps the same way whether the sidebar is
- * full, collapsed or the viewport is under ~1000px.
+ * Fight card: a block, two to a row. The card reflows on its own width
+ * (container query), so it behaves the same whether the sidebar is full,
+ * collapsed or the viewport is narrow.
  */
 
 .list {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2-5);
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-3);
   margin: 0;
   padding: 0;
   list-style: none;
+}
+
+/* One column once two blocks no longer fit side by side. */
+@media (max-width: 899px) {
+  .list {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
 .container {
@@ -20,9 +26,10 @@
 
 .card {
   display: flex;
-  align-items: stretch;
-  gap: var(--space-4);
-  padding: var(--space-3-5) var(--space-4);
+  flex-direction: column;
+  gap: var(--space-2-5);
+  height: 100%;
+  padding: var(--space-4);
   border: 1px solid var(--color-hairline);
   border-radius: var(--radius-lg);
   background-color: var(--color-surface);
@@ -34,15 +41,17 @@
   border-color: var(--color-divider);
 }
 
-/* --- Left ------------------------------------------------------------------ */
+/* --- Head ------------------------------------------------------------------ */
 
-.left {
-  flex: 0 0 var(--card-left-width);
+.head {
   display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: var(--space-2);
+  align-items: center;
+  gap: var(--space-2-5);
   min-width: 0;
+}
+
+.head .clock {
+  margin-left: auto;
 }
 
 .number {
@@ -67,21 +76,11 @@
   color: var(--color-text);
 }
 
-/* --- Centre ---------------------------------------------------------------- */
-
-.centre {
-  /* Grows faster than the strip so the one-line sabotage summary has room. */
-  flex: 2 1 220px;
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-  min-width: 0;
-}
+/* --- Title ----------------------------------------------------------------- */
 
 .title {
-  font-size: var(--fs-body-lg);
-  font-weight: var(--fw-semibold);
-  line-height: var(--lh-snug);
+  font-size: var(--fs-title);
+  line-height: var(--lh-tight);
   color: var(--color-text);
   overflow-wrap: anywhere;
 }
@@ -116,7 +115,6 @@
   flex-wrap: wrap;
   align-items: center;
   gap: var(--space-1) var(--space-3-5);
-  margin-top: auto;
   font-size: var(--fs-body-sm);
   color: var(--color-text-muted);
 }
@@ -145,100 +143,121 @@
   margin-left: var(--space-1);
 }
 
-/* --- Agent strip ----------------------------------------------------------- */
+/* --- Agent rows ------------------------------------------------------------ */
 
 .strip {
-  /* Four chips plus three gaps; shrinks and wraps the chips as a block. */
-  flex: 1 1 calc(var(--chip-basis) * 4 + var(--space-1-5) * 3);
   display: flex;
-  flex-wrap: wrap;
-  align-content: center;
-  gap: var(--space-1-5);
-  min-width: 0;
+  flex-direction: column;
+  gap: var(--space-0-5);
   margin: 0;
+  margin-top: var(--space-1);
   padding: 0;
   list-style: none;
 }
 
-.chip {
-  position: relative;
-  flex: 1 1 var(--chip-basis);
+.agentRow {
   display: flex;
-  flex-direction: column;
   align-items: center;
-  justify-content: center;
-  gap: var(--space-1);
+  gap: var(--space-2-5);
   min-width: 0;
-  padding: var(--space-2) var(--space-1-5);
-  border: 1px solid var(--color-hairline);
-  border-radius: var(--radius-md);
-  background-color: var(--color-inset);
-  text-align: center;
+  padding-block: var(--space-1-5);
   transition: opacity var(--duration-base) var(--ease-standard);
 }
 
-.chipName {
-  max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: var(--fs-label-lg);
-  font-weight: var(--fw-medium);
-  line-height: var(--lh-tight);
+.agentMark {
+  flex: none;
   color: var(--color-text-secondary);
 }
 
-.chipVoid {
-  line-height: 20px;
-}
-
-.winner {
-  border-color: var(--tint-positive-border);
-  background-color: var(--tint-positive);
-}
-
-.winner .chipName {
+.agentName {
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 0;
+  padding-bottom: var(--space-1-5);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--fs-body-lg);
   color: var(--color-text);
 }
 
+/* Progress rule: a hairline the agent's colour fills as it clears checkpoints. */
+.agentRule {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  display: block;
+  width: 100%;
+  height: 1px;
+  background-color: var(--color-hairline);
+}
+
+.agentRuleFill {
+  display: block;
+  height: 100%;
+  background-color: var(--agent-color);
+  transition: width var(--duration-slow) var(--ease-standard);
+}
+
+.agentChance {
+  flex: none;
+  min-width: 44px;
+  text-align: right;
+  font-size: var(--fs-price);
+  font-weight: var(--fw-medium);
+  color: var(--color-text);
+}
+
+.chipVoid {
+  flex: none;
+}
+
+.winner .agentName,
+.winner .agentChance {
+  color: var(--color-positive);
+}
+
 .loser {
-  opacity: 0.45;
+  opacity: 0.4;
 }
 
 .void {
-  opacity: 0.6;
+  opacity: 0.55;
 }
 
 .blocked {
-  position: absolute;
-  top: var(--space-1-5);
-  right: var(--space-1-5);
-  width: 6px;
-  height: 6px;
+  flex: none;
+  width: 5px;
+  height: 5px;
   border-radius: 50%;
   background-color: var(--color-sabotage);
 }
 
-.chipSkeleton {
-  gap: var(--space-1-5);
+/* --- Footer ---------------------------------------------------------------- */
+
+.footer {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-top: auto;
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--color-hairline);
 }
 
-/* --- Right ----------------------------------------------------------------- */
-
-.right {
-  flex: 0 0 var(--card-right-width);
+.footerEnd {
   display: flex;
-  flex-direction: column;
-  justify-content: space-between;
-  gap: var(--space-2-5);
-  min-width: 0;
+  align-items: center;
+  gap: var(--space-3);
+  flex: none;
 }
 
 .resolution {
   display: flex;
-  flex-direction: column;
-  gap: var(--space-0-5);
+  align-items: baseline;
+  gap: var(--space-1-5);
   min-width: 0;
+  white-space: nowrap;
 }
 
 .resolutionLabel {
@@ -251,7 +270,7 @@
 
 .resolutionValue {
   font-size: var(--fs-body-lg);
-  font-weight: var(--fw-semibold);
+  font-weight: var(--fw-medium);
   line-height: var(--lh-tight);
   color: var(--color-text);
   white-space: nowrap;
@@ -279,49 +298,17 @@
   color: var(--agent-color);
 }
 
-/* --- Reflow: narrow cards stack into full-width rows ------------------------ */
+/* --- Reflow: a very narrow block ------------------------------------------- */
 
-@container (max-width: 859px) {
-  .card {
-    flex-wrap: wrap;
-    gap: var(--space-3);
+@container (max-width: 419px) {
+  .footer {
+    flex-direction: column;
+    align-items: stretch;
+    gap: var(--space-2-5);
   }
 
-  .left {
-    flex: 1 1 100%;
-    flex-direction: row;
-    align-items: center;
-    flex-wrap: wrap;
-    gap: var(--space-2) var(--space-2-5);
-  }
-
-  .left .clock {
-    margin-left: auto;
-  }
-
-  .centre,
-  .strip {
-    flex: 1 1 100%;
-  }
-
-  .right {
-    flex: 1 1 100%;
-    flex-direction: row-reverse;
-    align-items: center;
+  .footerEnd {
     justify-content: space-between;
-    padding-top: var(--space-2-5);
-    border-top: 1px solid var(--color-hairline);
-  }
-
-  .view {
-    width: auto;
-    min-width: var(--card-right-width);
-  }
-
-  .resolution {
-    flex-direction: row;
-    align-items: baseline;
-    gap: var(--space-2);
   }
 }
 

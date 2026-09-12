@@ -55,15 +55,23 @@ dd {
   margin: 0;
 }
 
+/*
+ * Headings are the statement voice: Instrument Serif, upright, regular weight.
+ * Anything that is a label rather than a statement opts back out via .label,
+ * and every figure opts out via .num, so numerals stay tabular Inter.
+ */
 h1,
 h2,
 h3,
 h4,
 h5,
 h6 {
+  font-family: var(--font-display);
   font-size: inherit;
-  font-weight: var(--fw-semibold);
+  font-style: normal;
+  font-weight: var(--fw-regular);
   line-height: var(--lh-tight);
+  letter-spacing: 0;
 }
 
 ul[class],
@@ -109,7 +117,7 @@ table {
 }
 
 ::selection {
-  background-color: rgba(61, 143, 181, 0.45);
+  background-color: rgba(236, 231, 223, 0.22);
   color: var(--color-text);
 }
 
@@ -142,7 +150,7 @@ table {
 }
 
 ::-webkit-scrollbar-thumb {
-  background-color: var(--color-inset);
+  background-color: var(--color-divider);
   background-clip: padding-box;
   border: 3px solid transparent;
   border-radius: var(--radius-pill);
@@ -156,12 +164,28 @@ table {
 
 /** Tabular numerals. Apply to every price, volume, counter and clock. */
 .num {
+  font-family: var(--font-sans);
+  font-style: normal;
   font-variant-numeric: tabular-nums;
   font-feature-settings: "tnum" 1;
 }
 
+/**
+ * The statement voice: serif. Use for titles, page headings and hero figures.
+ * Headings get it automatically; this is for non-heading elements.
+ */
+.display {
+  font-family: var(--font-display);
+  font-style: normal;
+  font-weight: var(--fw-regular);
+  line-height: var(--lh-tight);
+  letter-spacing: 0;
+}
+
 /** Label: 10px uppercase, 0.1em tracking, muted. Sizes: .label-sm 9px, .label-lg 10.5px. */
 .label {
+  font-family: var(--font-sans);
+  font-style: normal;
   font-size: var(--fs-label);
   font-weight: var(--fw-semibold);
   line-height: var(--lh-tight);

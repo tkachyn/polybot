@@ -1,68 +1,72 @@
 /*
- * Sabotage Markets design tokens.
+ * PolyBot design tokens.
  * Source of truth: docs/sabotage-markets-handoff.md, section 3 (Visual system).
  * Values marked "handoff" are exact and must not be changed. Values marked
  * "extension" are foundation choices that fill gaps the handoff leaves open.
  *
  * Breakpoints (CSS variables cannot be used in media queries):
  *   <= 999px  everything reflows (flexible tracks, wrapping rows)
- *   <= 759px  sidebar collapses to icons
+ *   <= 759px  the navbar drops its wordmark and tightens
  */
 
 :root {
   /* --- Surfaces: exactly three depths (handoff) ---------------------------
    * Deeper never means more important; it means further back.
    *   depth 0  ground   page behind everything
-   *   depth 1  surface  sidebar, top bar, cards, panes
+   *   depth 1  surface  navbar, cards, panes
    *   depth 2  inset    search, chips, order form
    */
-  --color-ground: #0d151d;
-  --color-surface: #15202b;
-  --color-inset: #22303d;
+  --color-ground: #08090a;
+  --color-surface: #0d0e10;
+  --color-inset: #141518;
 
   /* --- Lines and edges (handoff) ------------------------------------------ */
-  --color-hairline: #22303d; /* 1px borders; same value as inset */
-  --color-divider: #34485a; /* strong rules */
-  --color-edge: #3d8fb5; /* active or focused edge */
-  --color-focus: #3d8fb5;
+  --color-hairline: #1b1d21; /* 1px borders */
+  --color-divider: #2a2d33; /* strong rules */
+  --color-edge: #cfc9bf; /* active or focused edge */
+  --color-focus: #cfc9bf;
 
   /* --- Action (handoff): the ONLY colour used for actions ----------------- */
-  --color-action: #2c7da0;
-  --color-action-hover: #3d8fb5;
-  --color-on-action: #ffffff;
+  --color-action: #ece7df;
+  --color-action-hover: #ffffff;
+  --color-on-action: #0a0b0c;
 
   /* --- Semantic (handoff): rationed strictly ----------------------------- */
-  --color-positive: #34c98a; /* live, YES, gains, cleared checkpoints */
-  --color-negative: #e8736b; /* NO, losses, blocked agents */
-  --color-sabotage: #e8736b; /* sabotage; same value as negative */
+  --color-positive: #6bbf94; /* live, YES, gains, cleared checkpoints */
+  --color-negative: #c9766c; /* NO, losses, blocked agents */
+  --color-sabotage: #c9766c; /* sabotage; same value as negative */
 
   /* --- Text (handoff) ---------------------------------------------------- */
-  --color-text: #ffffff; /* primary */
-  --color-text-secondary: #9fb1bf; /* secondary */
-  --color-text-muted: #7e94a6; /* figures and labels */
+  --color-text: #f4f2ef; /* primary: warm off-white, never pure #fff */
+  --color-text-secondary: #9d9a94; /* secondary */
+  --color-text-muted: #6d6a65; /* figures and labels */
 
   /* --- Agent identity (handoff): never swap between agents --------------- */
-  --color-agent-gpt: #7fd1c1; /* teal   GPT-5.2 */
-  --color-agent-claude: #e8c07a; /* sand   Claude Opus 4.6 */
-  --color-agent-gemini: #79a8e8; /* blue   Gemini 3 Pro */
-  --color-agent-grok: #b39ae0; /* violet Grok 4.1 */
+  --color-agent-gpt: #8fc7bb; /* teal   OpenAI */
+  --color-agent-claude: #d8a87a; /* sand   Claude */
+  --color-agent-gemini: #8aa6d4; /* blue   Gemini */
+  --color-agent-grok: #a596cc; /* violet Grok */
 
   /* --- Tints (extension): semantic colour at the tile ratios, 12% fill and
    *     33% border, the same ratios the handoff gives agent monograms. ----- */
-  --tint-positive: rgba(52, 201, 138, 0.12);
-  --tint-positive-border: rgba(52, 201, 138, 0.33);
-  --tint-negative: rgba(232, 115, 107, 0.12);
-  --tint-negative-border: rgba(232, 115, 107, 0.33);
-  --tint-sabotage: rgba(232, 115, 107, 0.12);
-  --tint-sabotage-border: rgba(232, 115, 107, 0.33);
-  --tint-edge: rgba(61, 143, 181, 0.12);
-  --tint-edge-border: rgba(61, 143, 181, 0.33);
-  --tint-hover: rgba(34, 48, 61, 0.55); /* inset at 55%: hover wash, not a depth */
+  --tint-positive: rgba(107, 191, 148, 0.1);
+  --tint-positive-border: rgba(107, 191, 148, 0.28);
+  --tint-negative: rgba(201, 118, 108, 0.1);
+  --tint-negative-border: rgba(201, 118, 108, 0.28);
+  --tint-sabotage: rgba(201, 118, 108, 0.1);
+  --tint-sabotage-border: rgba(201, 118, 108, 0.28);
+  --tint-edge: rgba(236, 231, 223, 0.08);
+  --tint-edge-border: rgba(236, 231, 223, 0.22);
+  --tint-hover: rgba(244, 242, 239, 0.04); /* a wash, not a depth */
 
-  /* --- Type (handoff: Inter 400/500/600; labels 9-10.5px uppercase with
-   *     0.1em tracking; body 11-13px; prices 16-17px) --------------------- */
-  --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial,
+  /* --- Type: Fraunces for statements, Sora for everything else -----------
+   * Labels 9-10.5px uppercase with 0.1em tracking; body 11-13px; prices
+   * 16-17px. Sora runs a little wide, so body sizes carry tighter tracking.
+   */
+  --font-sans: "Sora", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial,
     sans-serif;
+  /* Statement face: titles, page headings, hero figures. */
+  --font-display: "Fraunces", "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, "Times New Roman", serif;
   --font-mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
 
   --fs-label-sm: 9px;
@@ -73,8 +77,8 @@
   --fs-body-lg: 13px;
   --fs-price: 16px;
   --fs-price-lg: 17px;
-  --fs-title: 17px; /* extension: page titles stay on the price step */
-  --fs-display: 22px; /* extension: hero figures only (wallet balance, big stats) */
+  --fs-title: 22px; /* serif titles carry more size at the same weight */
+  --fs-display: 30px; /* hero figures and page headings */
 
   --fw-regular: 400;
   --fw-medium: 500;
@@ -106,20 +110,21 @@
   --radius-xs: 3px;
   --radius-sm: 4px; /* chips, tags, small tiles */
   --radius-md: 6px; /* buttons, inputs, segmented controls */
-  --radius-lg: 8px; /* cards, panes, panels */
+  --radius-lg: 10px; /* cards, panes, panels */
   --radius-xl: 12px;
   --radius-pill: 999px;
 
   /* --- Layout (handoff where noted) ------------------------------------- */
-  --sidebar-width: 208px;
-  --sidebar-width-collapsed: 60px;
-  --topbar-height: 52px;
+  --navbar-height: 60px;
   --rail-width: 344px; /* handoff: fight detail market rail */
+  --lobby-rail-width: 300px; /* lobby: resolved fights */
   --card-left-width: 150px; /* handoff: fight card left column */
   --card-right-width: 104px; /* handoff: fight card right column */
   --chip-basis: 78px; /* handoff: agent chip flex basis */
   --page-gutter: 24px;
-  --content-max-width: 1180px;
+  /* Wide enough that the lobby's main column still clears the featured
+     card's 860px two-column breakpoint with the resolved rail beside it. */
+  --content-max-width: 1300px;
   --content-wide-width: 1440px;
 
   /* --- Motion (extension) ------------------------------------------------ */
@@ -129,7 +134,7 @@
   --ease-standard: cubic-bezier(0.2, 0, 0, 1);
 
   /* --- Elevation and layering (extension) -------------------------------- */
-  --shadow-pop: 0 8px 24px rgba(0, 0, 0, 0.35), 0 0 0 1px var(--color-divider);
+  --shadow-pop: 0 16px 40px rgba(0, 0, 0, 0.6), 0 0 0 1px var(--color-hairline);
   --z-sticky: 5;
   --z-topbar: 10;
   --z-overlay: 50;

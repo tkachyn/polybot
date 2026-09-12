@@ -135,7 +135,7 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
     });
   } catch (error) {
     if (isAbortError(error)) throw error;
-    throw new ApiFailure("Can’t reach the Sabotage Markets server.", "network", 0, { cause: error });
+    throw new ApiFailure("Can’t reach the PolyBot server.", "network", 0, { cause: error });
   }
   const receivedAt = Date.now();
 
