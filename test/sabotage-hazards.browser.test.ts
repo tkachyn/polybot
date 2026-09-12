@@ -445,3 +445,66 @@ browserTest("the runner reports decoy clicks and blocked actions against real ha
     await page.close();
   }
 });
+
+browserTest("the runner records a paced, pointer-transparent in-page cursor", async () => {
+  const page = await browser!.newPage();
+  try {
+    await page.route("https://course.test/**", (route) =>
+      route.fulfill({ contentType: "text/html", body: COURSE_HTML }));
+    const runner = new PlaywrightCompetitorRunner({
+      task: "Complete checkpoint 2",
+      startUrl: "https://course.test/start",
+      model: {
+        async decide(input) {
+          return input.history.length === 0
+            ? { type: "click", targetRole: ROLE, label: REAL_LABEL }
+            : { type: "finish" };
+        },
+      },
+    });
+    const base = {
+      raceId: "race-1",
+      racerId: "racer-1",
+      courseId: "course-1",
+      seed: "seed-1",
+      checkpointCount: 4,
+      session: { racerId: "racer-1", steelSessionId: "steel-1", page },
+    };
+    await runner.prepare(base);
+    const target = page.locator(SELECTOR).filter({ hasText: REAL_LABEL }).first();
+    const targetBox = await target.boundingBox();
+    assert.ok(targetBox);
+    await page.evaluate(() => {
+      const cursor = document.getElementById("arena-agent-cursor");
+      if (!cursor) throw new Error("cursor was not installed");
+      let mutations = 0;
+      (window as unknown as { arenaCursorMutations?: () => number }).arenaCursorMutations = () => mutations;
+      new MutationObserver(() => {
+        mutations += 1;
+      }).observe(cursor, { attributes: true, attributeFilter: ["style"] });
+    });
+
+    await runner.run({
+      ...base,
+      async reportCheckpoint() {},
+      async reportFinish() {},
+    });
+
+    const result = await page.evaluate(() => {
+      const cursor = document.getElementById("arena-agent-cursor");
+      const rect = cursor?.getBoundingClientRect();
+      return {
+        pointerEvents: cursor ? getComputedStyle(cursor).pointerEvents : null,
+        left: rect?.left ?? null,
+        top: rect?.top ?? null,
+        mutations: (window as unknown as { arenaCursorMutations?: () => number }).arenaCursorMutations?.() ?? 0,
+      };
+    });
+    assert.equal(result.pointerEvents, "none");
+    assert.ok(result.mutations > 1, "cursor should move through intermediate positions");
+    assert.ok(Math.abs((result.left ?? 0) - (targetBox.x + targetBox.width / 2)) < 1);
+    assert.ok(Math.abs((result.top ?? 0) - (targetBox.y + targetBox.height / 2)) < 1);
+  } finally {
+    await page.close();
+  }
+});

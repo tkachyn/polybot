@@ -78,9 +78,14 @@ const EVIDENCE_TIMEOUT_MS = 1_000;
 /** Longest wait for a navigation started by an action before syncing progress. */
 const SETTLE_TIMEOUT_MS = 3_000;
 const EVIDENCE_TEXT_MAX = 120;
-/** Gives the headful Steel viewer time to render the pointer arriving at a target. */
-const CURSOR_SETTLE_MS = 120;
-const CURSOR_MOVE_STEPS = 12;
+const CURSOR_INITIAL_X = 24;
+const CURSOR_INITIAL_Y = 24;
+const CURSOR_FRAME_MS = 16;
+const CURSOR_MIN_MOVE_MS = 220;
+const CURSOR_MAX_MOVE_MS = 750;
+const CURSOR_PIXELS_PER_MS = 2.4;
+/** Gives the recorded page time to render the pointer arriving at a target. */
+const CURSOR_SETTLE_MS = 100;
 const EVALUATE_TIMEOUT_MS = 1_000;
 const UNSAFE_EVALUATE_PATTERNS: ReadonlyArray<RegExp> = [
   /\bfetch\s*\(/i,
@@ -95,6 +100,70 @@ const UNSAFE_EVALUATE_PATTERNS: ReadonlyArray<RegExp> = [
   /\b(?:eval|Function)\s*\(/i,
   /\bimport\s*\(/i,
 ];
+
+type CursorPoint = { x: number; y: number };
+type PageCursorApi = {
+  ensure(x: number, y: number): void;
+  move(x: number, y: number, action: "click" | "type", pulse: boolean): void;
+};
+
+const CURSOR_BOOTSTRAP_SCRIPT = `
+(() => {
+  const cursorId = "arena-agent-cursor";
+  const styleId = "arena-agent-cursor-style";
+  const install = () => {
+    const root = document.documentElement;
+    if (!root) return;
+
+    if (!document.getElementById(styleId)) {
+      const style = document.createElement("style");
+      style.id = styleId;
+      style.textContent = [
+        "#" + cursorId + "{position:fixed;left:0;top:0;width:22px;height:28px;z-index:2147483647;pointer-events:none;user-select:none;will-change:transform;transition:transform 16ms linear;}",
+        "#" + cursorId + " .arena-agent-cursor-shape{position:absolute;left:1px;top:1px;width:18px;height:24px;background:#fff;clip-path:polygon(0 0,0 100%,29% 72%,45% 100%,61% 93%,44% 65%,94% 65%);filter:drop-shadow(0 1px 1px rgb(0 0 0 / 80%));}",
+        "#" + cursorId + " .arena-agent-cursor-pulse{position:absolute;left:-10px;top:-8px;width:38px;height:38px;border:2px solid #ff5364;border-radius:50%;opacity:0;}",
+        "#" + cursorId + ".arena-agent-cursor-pulsing .arena-agent-cursor-pulse{animation:arena-agent-cursor-pulse 650ms ease-out both;}",
+        "@keyframes arena-agent-cursor-pulse{0%{opacity:.9;transform:scale(.35)}100%{opacity:0;transform:scale(1.2)}}",
+        "@media (prefers-reduced-motion: reduce){#" + cursorId + "{transition:none}#" + cursorId + ".arena-agent-cursor-pulsing .arena-agent-cursor-pulse{animation:none;opacity:.75}}",
+      ].join("");
+      (document.head || root).appendChild(style);
+    }
+
+    let cursor = document.getElementById(cursorId);
+    if (!cursor) {
+      cursor = document.createElement("div");
+      cursor.id = cursorId;
+      cursor.setAttribute("aria-hidden", "true");
+      cursor.setAttribute("data-arena-agent-cursor", "true");
+      cursor.innerHTML = '<span class="arena-agent-cursor-pulse"></span><span class="arena-agent-cursor-shape"></span>';
+      root.appendChild(cursor);
+    }
+
+    const api = {
+      ensure(x, y) {
+        cursor.style.transform = "translate3d(" + x + "px," + y + "px,0)";
+      },
+      move(x, y, action, pulse) {
+        cursor.style.transform = "translate3d(" + x + "px," + y + "px,0)";
+        cursor.dataset.action = action;
+        if (pulse) {
+          cursor.classList.remove("arena-agent-cursor-pulsing");
+          void cursor.offsetWidth;
+          cursor.classList.add("arena-agent-cursor-pulsing");
+        }
+      },
+    };
+    window.__arenaAgentCursor = api;
+    api.ensure(window.__arenaAgentCursorPosition?.x ?? ${CURSOR_INITIAL_X}, window.__arenaAgentCursorPosition?.y ?? ${CURSOR_INITIAL_Y});
+  };
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", install, { once: true });
+  } else {
+    install();
+  }
+})();
+`;
 
 export function validateEvaluateScript(script: string): string {
   const source = script.trim();
@@ -129,6 +198,8 @@ export class PlaywrightCompetitorRunner implements CompetitorAgentRunner {
   private readonly prepared = new Set<string>();
   private readonly controllers = new Map<string, AbortController>();
   private readonly captures = new Map<string, FrameCapture>();
+  private readonly cursorPositions = new Map<string, CursorPoint>();
+  private readonly cursorBootstrapped = new WeakSet<Page>();
   private readonly maxActions: number;
   private readonly actionTimeoutMs: number;
 
@@ -156,6 +227,8 @@ export class PlaywrightCompetitorRunner implements CompetitorAgentRunner {
     context: Omit<CompetitorContext, "reportCheckpoint" | "reportFinish">,
   ): Promise<void> {
     const page = this.pageFor(context);
+    this.cursorPositions.set(context.racerId, initialCursorPoint(page));
+    await this.bootstrapCursor(page);
     const url = new URL(this.options.startUrl);
     url.searchParams.set("raceId", context.raceId);
     url.searchParams.set("racerId", context.racerId);
@@ -164,6 +237,7 @@ export class PlaywrightCompetitorRunner implements CompetitorAgentRunner {
     url.searchParams.set("steelSessionId", context.session.steelSessionId);
     url.searchParams.set("checkpointCount", String(context.checkpointCount));
     await page.goto(url.toString(), { waitUntil: "domcontentloaded" });
+    await this.restoreCursor(page, context.racerId);
     this.prepared.add(context.racerId);
   }
 
@@ -219,6 +293,7 @@ export class PlaywrightCompetitorRunner implements CompetitorAgentRunner {
     } finally {
       this.stopFrames(context.racerId);
       this.controllers.delete(context.racerId);
+      this.cursorPositions.delete(context.racerId);
     }
   }
 
@@ -350,7 +425,7 @@ export class PlaywrightCompetitorRunner implements CompetitorAgentRunner {
         const target = await this.resolveTarget(page, decision.targetRole, decision.label);
         const read = await readTarget(target);
         if (read) evidence.target = read;
-        const cursor = await moveCursorToTarget(page, target, "click");
+        const cursor = await this.moveCursorToTarget(page, context.racerId, target, "click");
         if (cursor) evidence.cursor = cursor;
         await target.click({ timeout: this.actionTimeoutMs });
         return false;
@@ -360,7 +435,7 @@ export class PlaywrightCompetitorRunner implements CompetitorAgentRunner {
         const target = await this.resolveTarget(page, decision.targetRole, decision.label);
         const read = await readTarget(target);
         if (read) evidence.target = read;
-        const cursor = await moveCursorToTarget(page, target, "type");
+        const cursor = await this.moveCursorToTarget(page, context.racerId, target, "type");
         if (cursor) evidence.cursor = cursor;
         await target.fill(decision.text, { timeout: this.actionTimeoutMs });
         return false;
@@ -377,6 +452,7 @@ export class PlaywrightCompetitorRunner implements CompetitorAgentRunner {
           throw new Error("Cross-origin navigation is not allowed");
         }
         await page.goto(target.toString(), { waitUntil: "domcontentloaded" });
+        await this.restoreCursor(page, context.racerId);
         return false;
       }
       case "wait":
@@ -473,6 +549,71 @@ export class PlaywrightCompetitorRunner implements CompetitorAgentRunner {
       );
     }
     return matches.first();
+  }
+
+  private async bootstrapCursor(page: Page): Promise<void> {
+    if (this.cursorBootstrapped.has(page) || typeof page.addInitScript !== "function") return;
+    try {
+      await page.addInitScript({ content: CURSOR_BOOTSTRAP_SCRIPT });
+      this.cursorBootstrapped.add(page);
+    } catch {
+      // Cursor visuals must never prevent a racer from starting.
+    }
+  }
+
+  private async restoreCursor(page: Page, racerId: string): Promise<void> {
+    const point = this.cursorPositions.get(racerId) ?? initialCursorPoint(page);
+    this.cursorPositions.set(racerId, point);
+    await movePageCursor(page, point.x, point.y, "click", false);
+  }
+
+  /**
+   * Moves both the page-rendered cursor and Playwright's synthetic pointer at
+   * a paced, distance-based speed. The page cursor is the visual source of
+   * truth because Steel records it as ordinary page pixels.
+   */
+  private async moveCursorToTarget(
+    page: Page,
+    racerId: string,
+    target: Locator,
+    action: CursorPosition["action"],
+  ): Promise<CursorPosition | undefined> {
+    try {
+      if (typeof target.scrollIntoViewIfNeeded === "function") {
+        await target.scrollIntoViewIfNeeded({ timeout: this.actionTimeoutMs }).catch(() => undefined);
+      }
+      if (typeof target.boundingBox !== "function" || !page.mouse) return undefined;
+      const box = await target.boundingBox();
+      if (!box || box.width <= 0 || box.height <= 0) return undefined;
+      const viewport = readViewportSize(page);
+      const x = box.x + box.width / 2;
+      const y = box.y + box.height / 2;
+      const viewportWidth = viewport?.width ?? Math.max(1, Math.ceil(box.x + box.width));
+      const viewportHeight = viewport?.height ?? Math.max(1, Math.ceil(box.y + box.height));
+      const from = this.cursorPositions.get(racerId) ?? initialCursorPoint(page);
+      const distance = Math.hypot(x - from.x, y - from.y);
+      const duration = Math.min(
+        CURSOR_MAX_MOVE_MS,
+        Math.max(CURSOR_MIN_MOVE_MS, distance / CURSOR_PIXELS_PER_MS),
+      );
+      const steps = Math.max(1, Math.ceil(duration / CURSOR_FRAME_MS));
+
+      for (let step = 1; step <= steps; step += 1) {
+        const rawProgress = step / steps;
+        const progress = rawProgress * rawProgress * (3 - 2 * rawProgress);
+        const nextX = from.x + (x - from.x) * progress;
+        const nextY = from.y + (y - from.y) * progress;
+        await movePageCursor(page, nextX, nextY, action, step === steps);
+        await page.mouse.move(nextX, nextY);
+        if (step < steps) await page.waitForTimeout(CURSOR_FRAME_MS);
+      }
+      await page.waitForTimeout(CURSOR_SETTLE_MS);
+      this.cursorPositions.set(racerId, { x, y });
+      return { x, y, viewportWidth, viewportHeight, action };
+    } catch {
+      // Pointer movement is visual evidence and must never block the action.
+      return undefined;
+    }
   }
 
   private async evaluateDom(page: Page, script: string): Promise<unknown> {
@@ -632,32 +773,32 @@ async function readTarget(target: Locator): Promise<ActionEvidence["target"] | u
   }
 }
 
-/**
- * Moves the real Playwright pointer to the same center point used by the
- * default locator click before executing the action. Steel headful sessions
- * can then render the system cursor, while the returned position lets the
- * spectator UI draw a cursor indicator even when a synthetic CDP pointer is
- * not rendered by the viewer.
- */
-async function moveCursorToTarget(
+function initialCursorPoint(page: Page): CursorPoint {
+  const viewport = readViewportSize(page);
+  return {
+    x: Math.min(CURSOR_INITIAL_X, Math.max(0, (viewport?.width ?? 800) - 1)),
+    y: Math.min(CURSOR_INITIAL_Y, Math.max(0, (viewport?.height ?? 600) - 1)),
+  };
+}
+
+function readViewportSize(page: Page): { width: number; height: number } | null {
+  return typeof page.viewportSize === "function" ? page.viewportSize() : null;
+}
+
+async function movePageCursor(
   page: Page,
-  target: Locator,
+  x: number,
+  y: number,
   action: CursorPosition["action"],
-): Promise<CursorPosition | undefined> {
-  try {
-    if (typeof target.boundingBox !== "function" || !page.mouse) return undefined;
-    const box = await target.boundingBox();
-    if (!box || box.width <= 0 || box.height <= 0) return undefined;
-    const viewport = page.viewportSize();
-    const x = box.x + box.width / 2;
-    const y = box.y + box.height / 2;
-    const viewportWidth = viewport?.width ?? Math.max(1, Math.ceil(box.x + box.width));
-    const viewportHeight = viewport?.height ?? Math.max(1, Math.ceil(box.y + box.height));
-    await page.mouse.move(x, y, { steps: CURSOR_MOVE_STEPS });
-    await page.waitForTimeout(CURSOR_SETTLE_MS);
-    return { x, y, viewportWidth, viewportHeight, action };
-  } catch {
-    // Pointer movement is visual evidence and must never block the action.
-    return undefined;
-  }
+  pulse: boolean,
+): Promise<void> {
+  if (typeof page.evaluate !== "function") return;
+  await page.evaluate(
+    ({ x: nextX, y: nextY, action: nextAction, pulse: shouldPulse }) => {
+      const api = (window as Window & { __arenaAgentCursor?: PageCursorApi }).__arenaAgentCursor;
+      if (!api) return;
+      api.move(nextX, nextY, nextAction, shouldPulse);
+    },
+    { x, y, action, pulse },
+  );
 }

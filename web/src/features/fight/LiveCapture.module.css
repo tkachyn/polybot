@@ -30,36 +30,6 @@
   user-select: none;
 }
 
-.cursorIndicator {
-  position: absolute;
-  z-index: 2;
-  width: 24px;
-  height: 24px;
-  margin: -12px 0 0 -12px;
-  pointer-events: none;
-  transition: left 220ms ease-out, top 220ms ease-out;
-}
-
-.cursorDot {
-  position: absolute;
-  top: 8px;
-  left: 8px;
-  width: 8px;
-  height: 8px;
-  border: 2px solid var(--color-surface);
-  border-radius: 50%;
-  background: var(--color-negative);
-  box-shadow: 0 0 0 1px rgb(0 0 0 / 45%);
-}
-
-.cursorPulse {
-  position: absolute;
-  inset: 1px;
-  border: 2px solid var(--color-negative);
-  border-radius: 50%;
-  animation: cursorPulse 850ms ease-out both;
-}
-
 .placeholder {
   display: flex;
   flex-direction: column;
@@ -149,27 +119,5 @@
 @keyframes spin {
   to {
     transform: rotate(360deg);
-  }
-}
-
-@keyframes cursorPulse {
-  from {
-    opacity: 0.9;
-    transform: scale(0.45);
-  }
-  to {
-    opacity: 0;
-    transform: scale(1.25);
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .cursorIndicator {
-    transition: none;
-  }
-
-  .cursorPulse {
-    animation: none;
-    opacity: 0.75;
   }
 }
