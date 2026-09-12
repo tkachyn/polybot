@@ -425,7 +425,7 @@ export class RaceCoordinator {
     }
     const idempotencyKey = clientOrderId === undefined
       ? undefined
-      : `${userId} ${clientOrderId}`;
+      : `${userId}\u0000${clientOrderId}`;
     const previous = idempotencyKey ? this.orderReceipts.get(idempotencyKey) : undefined;
     if (previous) {
       return { ...previous };
