@@ -24,8 +24,9 @@ test("buying shares shifts normalized prices", () => {
   assert.equal(market.balance("spectator-1"), 7.5);
 
   const prices = market.pricesSnapshot();
-  assert.equal(prices["racer-1"], 1);
-  assert.equal(prices["racer-2"] + prices["racer-3"] + prices["racer-4"], 0);
+  assert.equal(prices["racer-1"], 0.268293);
+  assert.equal(prices["racer-2"], 0.243902);
+  assert.equal(Object.values(prices).reduce((sum, price) => sum + price, 0), 1);
 });
 
 test("sells positions at the current price", () => {
@@ -34,8 +35,8 @@ test("sells positions at the current price", () => {
   market.buy("spectator-1", "racer-1", 2);
 
   const receipt = market.sell("spectator-1", "racer-1", 1);
-  assert.equal(receipt.price, 1);
-  assert.equal(receipt.total, 1);
+  assert.equal(receipt.price, 0.253731);
+  assert.equal(receipt.total, 0.253731);
   assert.equal(market.position("spectator-1", "racer-1").quantity, 1);
 });
 

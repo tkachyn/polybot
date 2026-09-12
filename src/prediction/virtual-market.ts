@@ -37,11 +37,19 @@ export class VirtualPredictionMarket {
   private readonly balances = new Map<string, number>();
   private readonly positions = new Map<string, PredictionPosition>();
   private readonly demand = new Map<string, number>();
+  private readonly baseLiquidity: number;
   private prices: Record<string, number>;
 
-  constructor(racerIds: readonly string[]) {
+  constructor(
+    racerIds: readonly string[],
+    options: { baseLiquidity?: number } = {},
+  ) {
     if (racerIds.length !== 4 || new Set(racerIds).size !== 4) {
       throw new Error("A prediction market requires four unique racers");
+    }
+    this.baseLiquidity = options.baseLiquidity ?? 100;
+    if (!Number.isFinite(this.baseLiquidity) || this.baseLiquidity <= 0) {
+      throw new Error("baseLiquidity must be a positive number");
     }
     this.racerIds = [...racerIds];
     for (const racerId of racerIds) {
@@ -183,14 +191,12 @@ export class VirtualPredictionMarket {
   }
 
   private calculatePrices(): Record<string, number> {
-    const totalDemand = [...this.demand.values()].reduce((sum, value) => sum + value, 0);
-    if (totalDemand === 0) {
-      return Object.fromEntries(this.racerIds.map((racerId) => [racerId, 0.25]));
-    }
+    const totalDemand = this.racerIds.length * this.baseLiquidity +
+      [...this.demand.values()].reduce((sum, value) => sum + value, 0);
 
     const raw = this.racerIds.map((racerId) => ({
       racerId,
-      price: (this.demand.get(racerId) ?? 0) / totalDemand,
+      price: (this.baseLiquidity + (this.demand.get(racerId) ?? 0)) / totalDemand,
     }));
     const rounded = raw.map(({ racerId, price }) => [racerId, round(price)] as const);
     const difference = round(1 - rounded.reduce((sum, [, price]) => sum + price, 0));

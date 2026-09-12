@@ -19,7 +19,7 @@ This document covers backend and race logic only. Frontend and spectator UI are 
 - Progress model: semantic checkpoint verification, not tool-call count or page count
 - Master behavior: one obstacle policy per stage, reused for every racer who reaches that stage
 - Winner: first racer whose final task state passes deterministic verification
-- Post-finish behavior: record the winner immediately, then optionally allow other racers to continue until a short grace period or the 180-second deadline
+- Post-finish behavior: record the first verified winner, freeze the market, stop the remaining racers, and release all Steel sessions
 
 ## Relationship to BrowserBrawl
 
@@ -651,19 +651,20 @@ When a racer finishes:
 1. The verifier confirms the final task state.
 2. The orchestrator records the finish timestamp.
 3. If no winner exists, the racer becomes the winner.
-4. The remaining racers may continue for a short grace period or until the hard deadline.
-5. All sessions are released after final event persistence.
+4. The market resolves using that verified winner.
+5. The remaining racers are stopped.
+6. All sessions are released after final event persistence.
 
 Example result:
 
 ```text
 Racer 3: winner, finished at 121.4 seconds
-Racer 1: completed, finished at 139.8 seconds
-Racer 4: failed at checkpoint 3
-Racer 2: timed out at 180 seconds
+Racer 1: stopped at checkpoint 3
+Racer 4: stopped at checkpoint 2
+Racer 2: stopped at checkpoint 2
 ```
 
-This preserves the race winner while retaining useful recovery and completion data for every racer.
+If nobody has finished at 180 seconds, active racers continue without new obstacles or market trades until one finishes or the 300-second safety cap is reached.
 
 ## Failure handling
 
@@ -676,7 +677,8 @@ The orchestrator should handle these cases explicitly:
 - Navigation during injection: retry after the new document is ready
 - Duplicate checkpoint event: ignore after the atomic claim
 - Master LLM timeout: use a deterministic fallback policy for that checkpoint
-- Race deadline: stop new obstacles and mark unfinished racers timed out
+- Target duration: stop new obstacles and market trades while active racers continue
+- Absolute deadline: stop unfinished racers and mark the race unresolved
 - Process crash: persist the last known event and release the Steel session during recovery
 
 The race should never depend on the master LLM responding within the critical path forever. Every master call needs a short timeout and a fallback.
@@ -697,7 +699,43 @@ Build in this order:
 
 The core success criterion is:
 
-> Four agents start from the same course seed, progress independently, receive three equivalent obstacles at their own checkpoint arrival times, recover inside their own Steel sessions, and produce a deterministic winner plus a complete event log within 180 seconds.
+> Four agents start from the same course seed, progress independently, receive equivalent obstacles at their own checkpoint arrival times when obstacles are enabled, and produce a deterministic winner plus a complete event log. At 180 seconds hazards freeze; at 300 seconds the unresolved safety cap applies.
+
+## Implemented backend contract
+
+The repository currently implements:
+
+- Four-racer race state and readiness barrier
+- Independent, idempotent checkpoint progression
+- Deterministic course-state verification through an HTTP gateway
+- Playwright competitor runner with bounded semantic actions
+- Steel session creation and CDP connections
+- Per-racer CDP command serialization
+- No-op and master-selected obstacle providers
+- Bounded DOM obstacle compilation and application
+- Anthropic tool-based adapters for competitor and master decisions
+- Master timeouts with deterministic fallback policies
+- Virtual prediction-market funding, buying, selling, freezing, and resolution
+- Automatic three-minute hazard and market freeze
+- Five-minute unresolved safety cap
+- Append-only JSONL race event persistence
+- HTTP routes for the separate frontend
+- Four-session Steel smoke-test command
+
+Core HTTP routes:
+
+```text
+POST /races
+GET  /races/:raceId
+GET  /races/:raceId/events
+POST /races/:raceId/checkpoints
+POST /races/:raceId/finish
+POST /races/:raceId/market/fund
+POST /races/:raceId/market/buy
+POST /races/:raceId/market/sell
+```
+
+The actual course content and final obstacle definitions remain deliberately configurable. A live infrastructure check runs with `npm run smoke:steel` when `STEEL_API_KEY` is available.
 
 ## Version-control workflow
 

@@ -62,6 +62,11 @@ export function buildApi(options: ServerOptions): FastifyInstance {
     async (request) => registry.get(request.params.raceId).snapshot(),
   );
 
+  app.get<{ Params: { raceId: string } }>(
+    "/races/:raceId/events",
+    async (request) => registry.get(request.params.raceId).events(),
+  );
+
   app.post<{
     Params: { raceId: string };
     Body: { racerId?: string; checkpoint?: number; now?: number };

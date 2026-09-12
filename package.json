@@ -7,6 +7,8 @@
     "build": "tsc -p tsconfig.json",
     "start": "node dist/src/server.js",
     "dev": "node --import tsx src/server.ts",
+    "smoke:steel": "node --import tsx scripts/steel-smoke.ts",
+    "check": "npm test && npm run build",
     "test": "node --import tsx --test test/**/*.test.ts"
   },
   "devDependencies": {

@@ -50,6 +50,11 @@ test("creates, progresses, trades, and resolves a race through the API", async (
     },
   });
   assert.equal(created.statusCode, 201);
+  assert.equal(created.json().sessions.length, 4);
+  assert.deepEqual(
+    created.json().sessions.map((session: { racerId: string }) => session.racerId),
+    ["racer-1", "racer-2", "racer-3", "racer-4"],
+  );
 
   const funded = await app.inject({
     method: "POST",
@@ -82,5 +87,15 @@ test("creates, progresses, trades, and resolves a race through the API", async (
   assert.equal(finished.statusCode, 200);
   assert.equal(finished.json().race.winnerRacerId, "racer-1");
   assert.equal(finished.json().market.status, "resolved");
+
+  const events = await app.inject({
+    method: "GET",
+    url: "/races/race-api/events",
+  });
+  assert.equal(events.statusCode, 200);
+  assert.equal(
+    events.json().some((event: { type: string }) => event.type === "race_finished"),
+    true,
+  );
   await app.close();
 });

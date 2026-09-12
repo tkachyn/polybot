@@ -23,6 +23,11 @@ export type CreateRaceInput = {
 export type RaceSnapshot = {
   race: Race;
   racers: Racer[];
+  sessions: Array<{
+    racerId: string;
+    steelSessionId: string;
+    viewerUrl?: string;
+  }>;
   market: {
     status: string;
     prices: Record<string, number>;
@@ -145,9 +150,11 @@ export class RaceCoordinator {
     if (won) {
       this.market.freeze();
       this.market.resolve(racerId);
+      await this.persistNewEvents();
       await this.stopRacers();
       await this.dependencies.sessionManager.releaseAll();
       this.stopped = true;
+      return;
     }
     await this.persistNewEvents();
   }
@@ -178,12 +185,21 @@ export class RaceCoordinator {
     return {
       race: structuredClone(this.engine.race),
       racers: [...this.engine.racers.values()].map((racer) => structuredClone(racer)),
+      sessions: [...this.sessions.values()].map((session) => ({
+        racerId: session.racerId,
+        steelSessionId: session.steelSessionId,
+        viewerUrl: session.viewerUrl,
+      })),
       market: {
         status: this.market.status,
         prices: this.market.pricesSnapshot(),
         winnerRacerId: this.market.winnerRacerId,
       },
     };
+  }
+
+  async events() {
+    return this.dependencies.eventStore.list(this.engine.race.id);
   }
 
   async shutdown(): Promise<void> {
@@ -220,6 +236,7 @@ export class RaceCoordinator {
       if (this.market.status !== "resolved" && this.market.status !== "unresolved") {
         this.market.markUnresolved();
       }
+      await this.persistNewEvents();
       await this.stopRacers();
       await this.dependencies.sessionManager.releaseAll();
       this.stopped = true;
