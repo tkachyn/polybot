@@ -1,9 +1,11 @@
-import type { Page } from "playwright";
+import type { Locator, Page } from "playwright";
+import type { BlockedBy } from "../api/dto.js";
 import type {
+  ActionEvidence,
   CompetitorAgentRunner,
   CompetitorContext,
 } from "../application/contracts.js";
-import { describeDecision } from "./competitor-decision.js";
+import { describeDecision, normalizeLabel } from "./competitor-decision.js";
 
 export type BrowserObservation = {
   url: string;
@@ -14,14 +16,18 @@ export type BrowserObservation = {
     role: string | null;
     arenaRole: string | null;
     text: string;
+    /** Native `disabled`, or `aria-disabled="true"`. */
     disabled: boolean;
+    /** Rendered with a non-empty box and not `visibility: hidden`. */
+    visible: boolean;
   }>;
 };
 
 export type AgentDecision =
   | { type: "inspect" }
-  | { type: "click"; targetRole: string }
-  | { type: "type"; targetRole: string; text: string }
+  /** `label` picks, by visible text, among controls that share `targetRole`. */
+  | { type: "click"; targetRole: string; label?: string }
+  | { type: "type"; targetRole: string; text: string; label?: string }
   | { type: "navigate"; url: string }
   | { type: "wait"; durationMs: number }
   | { type: "checkpoint"; checkpoint: number }
@@ -51,10 +57,33 @@ export type PlaywrightCompetitorRunnerOptions = {
   frameIntervalMs?: number;
   /** JPEG quality, 0-100. Default 55. */
   frameQuality?: number;
+  /**
+   * Timeout for each click and fill. Default 5000 ms, so a blocked control
+   * fails fast instead of waiting out Playwright's 30 s auto-wait.
+   */
+  actionTimeoutMs?: number;
 };
 
 export const DEFAULT_FRAME_INTERVAL_MS = 1_500;
 export const DEFAULT_FRAME_QUALITY = 55;
+export const DEFAULT_ACTION_TIMEOUT_MS = 5_000;
+/** Reading ground-truth evidence must never hold up the racer. */
+const EVIDENCE_TIMEOUT_MS = 1_000;
+/** Longest wait for a navigation started by an action before syncing progress. */
+const SETTLE_TIMEOUT_MS = 3_000;
+const EVIDENCE_TEXT_MAX = 120;
+
+/** One executed decision, as the runner reports and remembers it. */
+type StepOutcome = {
+  finished: boolean;
+  evidence: ActionEvidence;
+  /** Page URL after the step, when known. */
+  url?: string;
+  /** Full error text, for telemetry only. */
+  error?: string;
+  /** The same failure as the model may see it: no call log, nothing hidden. */
+  modelError?: string;
+};
 
 type FrameCapture = {
   timer?: ReturnType<typeof setInterval>;
@@ -67,9 +96,14 @@ export class PlaywrightCompetitorRunner implements CompetitorAgentRunner {
   private readonly controllers = new Map<string, AbortController>();
   private readonly captures = new Map<string, FrameCapture>();
   private readonly maxActions: number;
+  private readonly actionTimeoutMs: number;
 
   constructor(private readonly options: PlaywrightCompetitorRunnerOptions) {
     this.maxActions = options.maxActions ?? 60;
+    this.actionTimeoutMs = options.actionTimeoutMs ?? DEFAULT_ACTION_TIMEOUT_MS;
+    if (!Number.isFinite(this.actionTimeoutMs) || this.actionTimeoutMs <= 0) {
+      throw new Error("actionTimeoutMs must be a positive number");
+    }
     if (!options.task) throw new Error("Competitor task is required");
     if (!options.startUrl) throw new Error("Competitor start URL is required");
     if (!options.model && !options.modelForRacer) {
@@ -116,20 +150,25 @@ export class PlaywrightCompetitorRunner implements CompetitorAgentRunner {
         if (controller.signal.aborted) return;
         const step = action + 1;
 
-        try {
-          const finished = await this.execute(page, context, decision);
-          history.push({ decision });
-          this.report(context, page, decision, step);
-          if (finished) return;
-          // A site adapter can prove completion after any action. Keep the
-          // explicit finish tool as a fallback, but do not require the model
-          // to notice a success page and emit a second decision.
-          if (context.checkFinish && await context.checkFinish()) return;
-        } catch (error) {
-          const message = error instanceof Error ? error.message : String(error);
-          history.push({ decision, error: message });
-          this.report(context, page, decision, step, message);
-        }
+        const outcome = await this.attempt(page, context, decision);
+        history.push(
+          outcome.error === undefined
+            ? { decision }
+            : { decision, error: outcome.modelError ?? outcome.error },
+        );
+        this.report(context, decision, step, outcome);
+        // Let a navigation the action started commit first, so a sabotage
+        // fired by the resulting checkpoint lands on the new page instead of
+        // one that is being torn down.
+        await this.settle(page);
+        // Progress comes from the course's ground truth after every action,
+        // successful or not. Explicit checkpoint decisions remain a fallback.
+        await this.syncProgress(context);
+        if (outcome.finished) return;
+        // A site adapter can prove completion after any action. Keep the
+        // explicit finish tool as a fallback, but do not require the model
+        // to notice a success page and emit a second decision.
+        if (await this.verifiedFinish(context)) return;
         await this.captureFrame(page, context, capture);
       }
       throw new Error(`${context.racerId} exceeded ${this.maxActions} actions`);
@@ -152,27 +191,21 @@ export class PlaywrightCompetitorRunner implements CompetitorAgentRunner {
 
   private report(
     context: CompetitorContext,
-    page: Page,
     decision: AgentDecision,
     step: number,
-    error?: string,
+    outcome: StepOutcome,
   ): void {
     if (!context.reportAction) return;
-    let url: string | undefined;
-    try {
-      url = page.url();
-    } catch {
-      url = undefined;
-    }
     try {
       context.reportAction({
-        kind: error === undefined ? "action" : "error",
+        kind: outcome.error === undefined ? "action" : "error",
         text: describeDecision(decision),
-        url,
+        url: outcome.url,
         step,
         maxSteps: this.maxActions,
         signature: JSON.stringify(decision),
-        ...(error === undefined ? {} : { error }),
+        ...(outcome.error === undefined ? {} : { error: outcome.error }),
+        ...(Object.keys(outcome.evidence).length === 0 ? {} : { evidence: outcome.evidence }),
       });
     } catch {
       // Telemetry must never break the competitor loop.
@@ -233,6 +266,7 @@ export class PlaywrightCompetitorRunner implements CompetitorAgentRunner {
         elements.slice(0, 100).map((element) => {
           const html = element as HTMLElement;
           const control = element as HTMLInputElement;
+          const box = element.getBoundingClientRect();
           return {
             tag: element.tagName.toLowerCase(),
             role: element.getAttribute("role"),
@@ -240,7 +274,11 @@ export class PlaywrightCompetitorRunner implements CompetitorAgentRunner {
             text: (html.innerText || control.value || element.getAttribute("aria-label") || "")
               .trim()
               .slice(0, 300),
-            disabled: "disabled" in control ? Boolean(control.disabled) : false,
+            disabled: ("disabled" in control && Boolean(control.disabled)) ||
+              element.getAttribute("aria-disabled") === "true",
+            // What a user could see; a covered but rendered control is visible.
+            visible: box.width > 0 && box.height > 0 &&
+              window.getComputedStyle(element).visibility !== "hidden",
           };
         }),
       )
@@ -257,17 +295,26 @@ export class PlaywrightCompetitorRunner implements CompetitorAgentRunner {
     page: Page,
     context: CompetitorContext,
     decision: AgentDecision,
+    evidence: ActionEvidence,
   ): Promise<boolean> {
     switch (decision.type) {
       case "inspect":
         return false;
-      case "click":
-        await page.locator(this.roleSelector(decision.targetRole)).first().click();
+      case "click": {
+        const target = await this.resolveTarget(page, decision.targetRole, decision.label);
+        const read = await readTarget(target);
+        if (read) evidence.target = read;
+        await target.click({ timeout: this.actionTimeoutMs });
         return false;
-      case "type":
+      }
+      case "type": {
         if (decision.text.length > 2_000) throw new Error("Text input is too long");
-        await page.locator(this.roleSelector(decision.targetRole)).first().fill(decision.text);
+        const target = await this.resolveTarget(page, decision.targetRole, decision.label);
+        const read = await readTarget(target);
+        if (read) evidence.target = read;
+        await target.fill(decision.text, { timeout: this.actionTimeoutMs });
         return false;
+      }
       case "navigate": {
         const target = new URL(decision.url, this.options.startUrl);
         if (target.origin !== new URL(this.options.startUrl).origin) {
@@ -303,5 +350,189 @@ export class PlaywrightCompetitorRunner implements CompetitorAgentRunner {
     }
     const escaped = targetRole.replaceAll("\\", "\\\\").replaceAll('"', '\\"');
     return `[data-arena-role="${escaped}"]`;
+  }
+
+  /** Executes one decision and collects browser evidence around it. */
+  private async attempt(
+    page: Page,
+    context: CompetitorContext,
+    decision: AgentDecision,
+  ): Promise<StepOutcome> {
+    const evidence: ActionEvidence = {};
+    const before = currentUrl(page);
+    let finished = false;
+    let failed = false;
+    let failure: unknown;
+    try {
+      finished = await this.execute(page, context, decision, evidence);
+    } catch (error) {
+      failed = true;
+      failure = error;
+    }
+    const url = currentUrl(page);
+    if (before !== undefined && url !== undefined) evidence.navigated = url !== before;
+    if (!failed) return { finished, evidence, url };
+    const error = failure instanceof Error ? failure.message : String(failure);
+    const blockedBy = classifyBlockedBy(failure);
+    if (blockedBy) evidence.blockedBy = blockedBy;
+    return {
+      finished: false,
+      evidence,
+      url,
+      error,
+      modelError: modelFacingError(failure, error, blockedBy),
+    };
+  }
+
+  /**
+   * The first control with `targetRole`, narrowed by visible label (a
+   * case-insensitive substring) when one is given. Fails fast when nothing
+   * matches instead of waiting for a timeout.
+   */
+  private async resolveTarget(
+    page: Page,
+    targetRole: string,
+    label: string | undefined,
+  ): Promise<Locator> {
+    const wanted = normalizeLabel(label);
+    const all = page.locator(this.roleSelector(targetRole));
+    const matches = wanted === undefined ? all : all.filter({ hasText: wanted });
+    if (await matches.count() === 0) {
+      throw new ActionBlockedError(
+        "missing",
+        wanted === undefined
+          ? `No control has data-arena-role "${targetRole}"`
+          : `No control with data-arena-role "${targetRole}" shows the label "${wanted}"`,
+      );
+    }
+    return matches.first();
+  }
+
+  /** Waits (bounded) for the current document to be interactive. */
+  private async settle(page: Page): Promise<void> {
+    try {
+      await page.waitForLoadState("domcontentloaded", { timeout: SETTLE_TIMEOUT_MS });
+    } catch {
+      // A slow or failed load is the next action's problem, not the sync's.
+    }
+  }
+
+  private async syncProgress(context: CompetitorContext): Promise<void> {
+    if (!context.syncProgress) return;
+    try {
+      await context.syncProgress();
+    } catch {
+      // Contractually never throws; a failed sync must not end the run.
+    }
+  }
+
+  private async verifiedFinish(context: CompetitorContext): Promise<boolean> {
+    if (!context.checkFinish) return false;
+    try {
+      return await context.checkFinish();
+    } catch {
+      return false;
+    }
+  }
+}
+
+/** A browser action that could not start, with its classification. */
+export class ActionBlockedError extends Error {
+  constructor(readonly blockedBy: BlockedBy, message: string) {
+    super(message);
+    this.name = "ActionBlockedError";
+  }
+}
+
+// Playwright's call log is chronological, so the latest reason wins.
+const BLOCKED_PATTERNS: ReadonlyArray<readonly [BlockedBy, RegExp]> = [
+  ["modal", /intercepts pointer events/gi],
+  ["disabled", /element is (?:not enabled|not editable|disabled)/gi],
+  ["hidden", /element is not visible/gi],
+];
+
+/**
+ * Classifies a failed action from the browser error: `modal` (another element
+ * intercepts pointer events), `disabled`, `hidden`, `missing` (no element), or
+ * `timeout` for any other Playwright TimeoutError. Undefined otherwise.
+ */
+export function classifyBlockedBy(error: unknown): BlockedBy | undefined {
+  if (error instanceof ActionBlockedError) return error.blockedBy;
+  const message = error instanceof Error ? error.message : String(error ?? "");
+  let latest: { blockedBy: BlockedBy; index: number } | undefined;
+  for (const [blockedBy, pattern] of BLOCKED_PATTERNS) {
+    for (const match of message.matchAll(pattern)) {
+      const index = match.index ?? 0;
+      if (!latest || index > latest.index) latest = { blockedBy, index };
+    }
+  }
+  if (latest) return latest.blockedBy;
+  if (!(error instanceof Error) || error.name !== "TimeoutError") return undefined;
+  // The locator never resolved: the element disappeared before the action.
+  if (message.includes("waiting for locator(") && !message.includes("locator resolved to")) {
+    return "missing";
+  }
+  return "timeout";
+}
+
+const PERCEIVABLE_REASONS: Partial<Record<BlockedBy, string>> = {
+  modal: "Another element is covering the control.",
+  disabled: "The control is disabled.",
+  hidden: "The control is not visible.",
+  missing: "No matching control is on the page.",
+};
+
+/**
+ * What the model may learn from a failure: the error's headline plus a reason
+ * a user could perceive. Playwright's call log is dropped because it quotes
+ * element markup, which can carry hidden attributes such as the decoy flag.
+ */
+function modelFacingError(
+  failure: unknown,
+  message: string,
+  blockedBy: BlockedBy | undefined,
+): string {
+  if (failure instanceof ActionBlockedError) return message;
+  const headline = (message.split("\n", 1)[0] ?? "")
+    .replace(/\[[0-9;]*m/g, "")
+    .replace(/<[^>]*\b(?:data-arena-decoy|data-arena-disruption-id|arena-decoy-)[^>]*>/g, "<element>")
+    .replace(/\s*\bdata-arena-(?:decoy|disruption-id)(?:="[^"]*")?/g, "")
+    .trim();
+  const reason = blockedBy ? PERCEIVABLE_REASONS[blockedBy] : undefined;
+  return reason ? `${headline} ${reason}`.trim() : headline;
+}
+
+function currentUrl(page: Page): string | undefined {
+  try {
+    return page.url();
+  } catch {
+    return undefined;
+  }
+}
+
+/** Ground truth about the resolved element; undefined when it can't be read. */
+async function readTarget(target: Locator): Promise<ActionEvidence["target"] | undefined> {
+  try {
+    return await target.evaluate(
+      (element, max) => {
+        const html = element as HTMLElement;
+        const label = String(
+          html.innerText ||
+            (element as HTMLInputElement).value ||
+            element.getAttribute("aria-label") ||
+            element.textContent ||
+            "",
+        ).replace(/\s+/g, " ").trim().slice(0, max).trim();
+        return {
+          role: element.getAttribute("data-arena-role"),
+          text: label.length > 0 ? label : null,
+          decoy: element.getAttribute("data-arena-decoy") === "true",
+        };
+      },
+      EVIDENCE_TEXT_MAX,
+      { timeout: EVIDENCE_TIMEOUT_MS },
+    );
+  } catch {
+    return undefined;
   }
 }
