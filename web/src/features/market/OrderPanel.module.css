@@ -162,6 +162,17 @@
     color var(--duration-fast) var(--ease-standard);
 }
 
+@media (pointer: coarse) {
+  .amountRow {
+    flex-wrap: wrap;
+  }
+
+  .inputWrap,
+  .chip {
+    min-height: 44px;
+  }
+}
+
 .chip:hover:not(:disabled) {
   border-color: var(--color-edge);
   color: var(--color-text);

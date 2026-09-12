@@ -120,3 +120,11 @@
     transform: rotate(360deg);
   }
 }
+
+@media (pointer: coarse) {
+  .sm,
+  .md,
+  .lg {
+    min-height: 44px;
+  }
+}

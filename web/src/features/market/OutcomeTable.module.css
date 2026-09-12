@@ -134,3 +134,13 @@
 .price:disabled {
   opacity: 0.45;
 }
+
+@media (pointer: coarse) {
+  .row {
+    height: 56px;
+  }
+
+  .price {
+    height: 44px;
+  }
+}
