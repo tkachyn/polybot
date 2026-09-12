@@ -7,6 +7,11 @@ import type {
   SabotageTier,
   SabotageTrigger,
 } from "../domain/types.js";
+import {
+  sabotagePreset,
+  SABOTAGE_PRESETS,
+  type SabotagePresetId,
+} from "../domain/sabotage-presets.js";
 import { validateDisruptionCommand } from "../infra/cdp-obstacle-provider.js";
 
 const ALLOWED_HAZARDS: DisruptionCommand["hazardType"][] = [
@@ -34,7 +39,7 @@ export interface RaceObservationSource {
 }
 
 export interface MasterPolicyModel {
-  selectObstacle(input: {
+  selectObstacle?(input: {
     observation: MasterRaceObservation;
     allowedHazards: DisruptionCommand["hazardType"][];
   }): Promise<DisruptionCommand>;
@@ -43,6 +48,11 @@ export interface MasterPolicyModel {
     allowedHazards: DisruptionCommand["hazardType"][];
     allowedTiers: SabotageTier[];
   }): Promise<{ tier: SabotageTier; policy: DisruptionCommand }>;
+  selectSabotageSequence?(input: {
+    observation: MasterRaceObservation;
+    checkpoints: [number, number, number];
+    allowedPresetIds: readonly SabotagePresetId[];
+  }): Promise<{ presetIds: [SabotagePresetId, SabotagePresetId, SabotagePresetId] }>;
 }
 
 export class MasterObstacleProvider implements ObstacleProvider {
@@ -128,6 +138,17 @@ export class MasterObstacleProvider implements ObstacleProvider {
   }): Promise<SabotagePlan | null> {
     try {
       const observation = await this.observations.observe(input.raceId, input.trigger.checkpoint);
+      if (this.model.selectSabotageSequence && input.checkpointCount >= 4) {
+        const checkpoints: [number, number, number] = [2, 3, 4];
+        const selected = await this.withTimeout(
+          this.model.selectSabotageSequence({
+            observation,
+            checkpoints,
+            allowedPresetIds: SABOTAGE_PRESETS.map((preset) => preset.id),
+          }),
+        );
+        return freezePlan(buildSequencePlan(input, selected.presetIds));
+      }
       const selected = await this.withTimeout(
         this.model.selectSabotage
           ? this.model.selectSabotage({
@@ -155,6 +176,9 @@ export class MasterObstacleProvider implements ObstacleProvider {
         source: "model",
       });
     } catch {
+      if (this.model.selectSabotageSequence && input.checkpointCount >= 4) {
+        return freezePlan(buildSequencePlan(input, fallbackPresetSequence(input.seed)));
+      }
       const tier = this.legacyFallback ? "basic" : fallbackTier(input.seed);
       const policy = this.fallbackPolicies[tier];
       validateSelectedPlan({ tier, policy });
@@ -225,5 +249,58 @@ function freezePlan(plan: SabotagePlan): SabotagePlan {
     ...plan,
     trigger: Object.freeze({ ...plan.trigger }),
     policy: Object.freeze({ ...plan.policy }),
+    ...(plan.steps
+      ? {
+          steps: Object.freeze(plan.steps.map((step) => Object.freeze({
+            ...step,
+            policy: Object.freeze({ ...step.policy }),
+          }))),
+        }
+      : {}),
   }) as SabotagePlan;
+}
+
+function buildSequencePlan(
+  input: {
+    raceId: string;
+    trigger: SabotageTrigger;
+  },
+  presetIds: readonly string[],
+): SabotagePlan {
+  if (presetIds.length !== 3 || new Set(presetIds).size !== 3) {
+    throw new Error("Master must select three different sabotage presets");
+  }
+  const steps = presetIds.map((presetId, index) => {
+    const preset = sabotagePreset(presetId);
+    if (!preset) throw new Error(`Unknown sabotage preset: ${presetId}`);
+    return {
+      stepId: preset.id,
+      checkpoint: index + 2,
+      tier: preset.tier,
+      policy: { ...preset.policy },
+      selectedAt: Date.now(),
+    };
+  });
+  return {
+    raceId: input.raceId,
+    tier: steps[0].tier,
+    trigger: { ...input.trigger, checkpoint: 2 },
+    policy: { ...steps[0].policy },
+    selectedAt: Date.now(),
+    source: "model",
+    steps,
+  };
+}
+
+function fallbackPresetSequence(seed: string): [SabotagePresetId, SabotagePresetId, SabotagePresetId] {
+  const offset = [...seed].reduce((sum, character) => sum + character.charCodeAt(0), 0) %
+    SABOTAGE_PRESETS.length;
+  const ids = SABOTAGE_PRESETS
+    .filter((preset) => preset.id !== "cover-with-modal")
+    .map((preset) => preset.id);
+  return [
+    ids[offset % ids.length] as SabotagePresetId,
+    ids[(offset + 1) % ids.length] as SabotagePresetId,
+    ids[(offset + 2) % ids.length] as SabotagePresetId,
+  ];
 }

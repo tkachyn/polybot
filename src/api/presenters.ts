@@ -34,6 +34,7 @@ import type {
   RaceStatusDTO,
   SabotageDetail,
   SabotageSummary,
+  SabotageStepSummary,
   ServerMeta,
   ServerMode,
 } from "./dto.js";
@@ -172,6 +173,21 @@ function sabotageSummary(view: FightView): SabotageSummary | null {
     state: sabotage.state,
     firedAt: sabotage.firedAt,
     tier: revealed ? sabotage.tier : null,
+    steps: revealed ? sabotage.steps.map(stepSummary) : [],
+  };
+}
+
+function stepSummary(step: SabotageStatus["steps"][number]): SabotageStepSummary {
+  return {
+    index: step.index,
+    stepId: step.stepId,
+    checkpoint: step.checkpoint,
+    checkpointLabel: step.checkpointLabel,
+    state: step.state,
+    firedAt: step.firedAt,
+    recoveredAt: step.recoveredAt,
+    hitRacerIds: [...step.hitRacerIds],
+    hazardType: step.policy.hazardType,
   };
 }
 
@@ -184,6 +200,7 @@ function sabotageDetail(view: FightView): SabotageDetail | null {
     detail: summary.revealed ? sabotage.plan.detail ?? null : null,
     hazardType: summary.revealed ? sabotage.policy?.hazardType ?? null : null,
     hitRacerIds: [...sabotage.hitRacerIds],
+    steps: summary.steps,
   };
 }
 

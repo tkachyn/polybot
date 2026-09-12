@@ -16,6 +16,18 @@ inside the backend.
 }
 ```
 
+Completion is verifier-backed: the runner invokes the course adapter after
+each browser action, so a site-specific verifier can finish the racer as soon
+as the success state is proven. Keep the model's explicit `finish` decision as
+a fallback. Ordered sabotage state is available at
+`fight.sabotage.steps`; each step has its checkpoint, preset id, state,
+timestamps, and hit racers.
+
+The initial preset catalog is `shift-primary-action`, `plant-decoy-control`,
+`disable-primary-action`, `rename-primary-action`, and `cover-with-modal`.
+Future site adapters should keep the same semantic target-role contract and
+add site-specific presets only through the bounded server-side catalog.
+
 For a live Steel fight, render `viewerUrl` in an iframe:
 
 ```tsx

@@ -191,6 +191,17 @@ function sabotageFor(template: PlaceholderTemplate, firedAt: number | null): Sab
     state: template.fired ? "fired" : template.status === "resolved" ? "expired" : "armed",
     firedAt: template.fired ? firedAt : null,
     tier: null,
+    steps: [{
+      index: 1,
+      stepId: "preview-step-1",
+      checkpoint: template.sabotageCheckpoint,
+      checkpointLabel: template.checkpointLabel,
+      state: template.fired ? "fired" : template.status === "resolved" ? "expired" : "armed",
+      firedAt: template.fired ? firedAt : null,
+      recoveredAt: null,
+      hitRacerIds: [],
+      hazardType: null,
+    }],
   };
 }
 

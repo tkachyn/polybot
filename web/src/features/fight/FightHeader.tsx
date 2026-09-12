@@ -138,6 +138,21 @@ export function SabotageStrip({ fight, roster }: { fight: FightDetail; roster: R
         </span>
       </span>
       <SabotageStateView sabotage={sabotage} fight={fight} roster={roster} />
+      {sabotage.revealed && sabotage.steps.length > 1 && (
+        <div className={styles.sabSteps} aria-label="Ordered sabotage sequence">
+          {sabotage.steps.map((step) => (
+            <span
+              key={step.stepId}
+              className={cx(styles.sabStep, step.state === "fired" && styles.sabStepFired, step.state === "recovered" && styles.sabStepRecovered)}
+              title={`${step.stepId} at ${step.checkpointLabel}`}
+            >
+              <span className="num">{step.index}</span>
+              <span>{step.checkpointLabel}</span>
+              <span className={styles.sabMuted}>{step.state}</span>
+            </span>
+          ))}
+        </div>
+      )}
     </section>
   );
 }

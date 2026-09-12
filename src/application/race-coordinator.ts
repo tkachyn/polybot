@@ -142,7 +142,20 @@ export type SabotageStatus = {
   /** First time the sabotage was applied to any agent. */
   firedAt: number | null;
   hitRacerIds: string[];
+  steps: SabotageStepStatus[];
   state: SabotageState;
+};
+
+export type SabotageStepStatus = {
+  index: number;
+  stepId: string;
+  checkpoint: number;
+  checkpointLabel: string;
+  state: "armed" | "fired" | "recovered" | "expired";
+  firedAt: number | null;
+  recoveredAt: number | null;
+  hitRacerIds: string[];
+  policy: DisruptionCommand;
 };
 
 /** Weight deltas per race event, as multiples of base liquidity L. */
@@ -150,6 +163,7 @@ export const CONFIDENCE_SIGNALS = {
   checkpoint: 0.35,
   sabotageHit: -0.25,
   recovery: 0.1,
+  completion: 0.5,
 } as const;
 
 /** While live, tick appends a price point when the last is this old. */
@@ -185,6 +199,7 @@ export class RaceCoordinator {
   private sabotageFiredAt: number | null = null;
   private readonly sabotageHits: string[] = [];
   private readonly sessions = new Map<string, RacerSessionHandle>();
+  private readonly releasedRacers = new Set<string>();
   private readonly runnerTasks = new Map<string, Promise<void>>();
   private readonly orderReceipts = new Map<string, OrderReceipt>();
   private readonly listeners = new Set<RaceChangeListener>();
@@ -193,6 +208,9 @@ export class RaceCoordinator {
   private persisting: Promise<void> = Promise.resolve();
   private closedAtValue: number | null = null;
   private stopped = false;
+  private cleanupComplete = false;
+  private cleanupInFlight?: Promise<void>;
+  private lifecycleQueue: Promise<void> = Promise.resolve();
   private readonly competitorModels: Record<string, string>;
 
   constructor(
@@ -204,7 +222,7 @@ export class RaceCoordinator {
 
     if (dependencies.obstacleProvider) {
       const checkpoint = this.fightMeta.sabotage?.checkpoint ??
-        Math.min(DEFAULT_SABOTAGE_CHECKPOINT, input.checkpointCount);
+        (input.checkpointCount >= 4 ? 2 : Math.min(DEFAULT_SABOTAGE_CHECKPOINT, input.checkpointCount));
       this.sabotageBrief = this.fightMeta.sabotage
         ? { ...this.fightMeta.sabotage }
         : { checkpoint, summary: sabotagePlaceholder(this.checkpointLabel(checkpoint)) };
@@ -301,10 +319,15 @@ export class RaceCoordinator {
           reportCheckpoint: (checkpoint) =>
             this.recordCheckpoint(session.racerId, checkpoint),
           reportFinish: () => this.recordFinish(session.racerId),
+          checkFinish: () => this.checkFinish(session.racerId),
         };
         const task = this.dependencies.agentRunner
           .run(context)
-          .catch((error: unknown) => this.handleRunnerFailure(session.racerId, error));
+          .then(() => this.handleRunnerCompletion(session.racerId))
+          .catch((error: unknown) => this.handleRunnerFailure(session.racerId, error))
+          .finally(() => {
+            this.runnerTasks.delete(session.racerId);
+          });
         this.runnerTasks.set(session.racerId, task);
       }
 
@@ -320,6 +343,16 @@ export class RaceCoordinator {
     checkpoint: number,
     now = Date.now(),
   ): Promise<void> {
+    return this.enqueueLifecycle(() =>
+      this.recordCheckpointInternal(racerId, checkpoint, now),
+    );
+  }
+
+  private async recordCheckpointInternal(
+    racerId: string,
+    checkpoint: number,
+    now: number,
+  ): Promise<void> {
     const session = this.getSession(racerId);
     const verified = await this.dependencies.courseVerifier.verifyCheckpoint({
       raceId: this.engine.race.id,
@@ -334,7 +367,8 @@ export class RaceCoordinator {
     }
 
     const plan = this.engine.race.sabotagePlan;
-    if (plan && checkpoint === plan.trigger.checkpoint) {
+    const sabotageStep = plan?.steps?.find((step) => step.checkpoint === checkpoint);
+    if (plan && (sabotageStep || checkpoint === plan.trigger.checkpoint)) {
       const openingVerified = await this.dependencies.courseVerifier.verifyTargetOpening({
         raceId: this.engine.race.id,
         racerId,
@@ -361,6 +395,36 @@ export class RaceCoordinator {
   }
 
   async recordFinish(racerId: string, now = Date.now()): Promise<void> {
+    return this.enqueueLifecycle(() => this.recordFinishInternal(racerId, now));
+  }
+
+  /**
+   * Attempts verifier-backed completion after an arbitrary browser action.
+   * Returning false is normal while the task is still in progress.
+   */
+  private async checkFinish(racerId: string, now = Date.now()): Promise<boolean> {
+    if (this.stopped) return this.engine.racers.get(racerId)?.status === "finished";
+    const racer = this.engine.racers.get(racerId);
+    if (!racer || racer.status === "failed" || racer.status === "timed_out") return false;
+    if (racer.status === "finished") return true;
+    try {
+      const session = this.getSession(racerId);
+      const verified = await this.dependencies.courseVerifier.verifyFinish({
+        raceId: this.engine.race.id,
+        racerId,
+        courseId: this.engine.race.courseId,
+        seed: this.engine.race.seed,
+        session,
+      });
+      if (!verified) return false;
+      await this.recordFinish(racerId, now);
+      return this.engine.racers.get(racerId)?.status === "finished";
+    } catch {
+      return false;
+    }
+  }
+
+  private async recordFinishInternal(racerId: string, now: number): Promise<void> {
     const session = this.getSession(racerId);
     const verified = await this.dependencies.courseVerifier.verifyFinish({
       raceId: this.engine.race.id,
@@ -375,24 +439,30 @@ export class RaceCoordinator {
 
     const won = this.engine.finishRacer(racerId, now);
     const changes = createChanges();
+    // Process the verified completion while the market is still open so the
+    // final confidence signal is reflected in the last live quote.
+    this.processEngineEvents(now, changes);
     if (won) {
       this.market.freeze();
       this.market.resolve(racerId, now);
       this.addSettledAccounts(changes);
     }
-    this.processEngineEvents(now, changes);
-    await this.synchronizeLifecycle(now, changes);
-    await this.persistNewEvents();
-    if (won && !this.stopped) {
-      await this.stopRacers();
-      await this.dependencies.sessionManager.releaseAll();
-      await this.cleanupObstacleProvider();
-      this.stopped = true;
+    try {
+      await this.synchronizeLifecycle(now, changes);
+      await this.persistNewEvents();
+    } finally {
+      if (won && !this.stopped) {
+        await this.shutdownRace();
+      }
+      this.flush(changes);
     }
-    this.flush(changes);
   }
 
   async tick(now = Date.now()): Promise<void> {
+    return this.enqueueLifecycle(() => this.tickInternal(now));
+  }
+
+  private async tickInternal(now: number): Promise<void> {
     this.engine.tick(now);
     const changes = createChanges();
     this.processEngineEvents(now, changes);
@@ -534,7 +604,11 @@ export class RaceCoordinator {
     }
     const session = this.sessions.get(racerId);
     if (!session) return { status: "pending", viewerUrl: null };
-    if (this.stopped || ["finished", "timed_out"].includes(this.engine.race.status)) {
+    if (
+      this.releasedRacers.has(racerId) ||
+      this.stopped ||
+      ["finished", "timed_out"].includes(this.engine.race.status)
+    ) {
       return { status: "released", viewerUrl: null };
     }
     if (!session.viewerUrl) return { status: "unavailable", viewerUrl: null };
@@ -562,6 +636,46 @@ export class RaceCoordinator {
           raceStatus === "timed_out"
         ? "expired"
         : "armed";
+    const steps = armedPlan
+      ? (armedPlan.steps ?? [{
+          stepId: "legacy-step-1",
+          checkpoint: armedPlan.trigger.checkpoint,
+          tier: armedPlan.tier,
+          policy: armedPlan.policy,
+          selectedAt: armedPlan.selectedAt,
+        }]).map((step, index) => {
+          const applied = this.engine.events.filter((event) =>
+            event.type === "sabotage_applied" &&
+            (event.metadata?.stepId === step.stepId ||
+              (!armedPlan.steps && event.metadata?.tier === step.tier)),
+          );
+          const recovered = this.engine.events.filter((event) =>
+            event.type === "sabotage_recovered" &&
+            (event.metadata?.stepId === step.stepId || !armedPlan.steps),
+          );
+          const firedAt = applied[0]?.occurredAt ?? null;
+          const recoveredAt = recovered.length > 0
+            ? recovered[recovered.length - 1]?.occurredAt ?? null
+            : null;
+          return {
+            index: index + 1,
+            stepId: step.stepId,
+            checkpoint: step.checkpoint,
+            checkpointLabel: this.checkpointLabel(step.checkpoint),
+            state: firedAt === null
+              ? (raceStatus === "hazards_frozen" || raceStatus === "finished" || raceStatus === "timed_out"
+                ? "expired"
+                : "armed")
+              : recovered.length >= applied.length
+                ? "recovered"
+                : "fired",
+            firedAt,
+            recoveredAt,
+            hitRacerIds: [...new Set(applied.map((event) => event.racerId).filter(Boolean) as string[])],
+            policy: { ...step.policy },
+          } satisfies SabotageStepStatus;
+        })
+      : [];
     return {
       plan: structuredClone(plan),
       checkpointLabel: this.checkpointLabel(plan.checkpoint),
@@ -571,6 +685,7 @@ export class RaceCoordinator {
       armedAt: this.sabotageArmedAt,
       firedAt: this.sabotageFiredAt,
       hitRacerIds: [...this.sabotageHits],
+      steps,
       state,
     };
   }
@@ -604,12 +719,31 @@ export class RaceCoordinator {
   }
 
   async shutdown(): Promise<void> {
-    if (!this.stopped) {
-      await this.stopRacers();
-      await this.dependencies.sessionManager.releaseAll();
-    }
-    await this.cleanupObstacleProvider();
+    await this.shutdownRace();
+  }
+
+  private enqueueLifecycle<T>(operation: () => Promise<T>): Promise<T> {
+    const run = this.lifecycleQueue.then(operation, operation);
+    this.lifecycleQueue = run.then(() => undefined, () => undefined);
+    return run;
+  }
+
+  private async shutdownRace(): Promise<void> {
     this.stopped = true;
+    if (this.cleanupComplete) return;
+    if (this.cleanupInFlight) return this.cleanupInFlight;
+    const cleanup = (async () => {
+      await this.stopRacers();
+      const results = await Promise.allSettled([
+        this.dependencies.sessionManager.releaseAll(),
+        this.cleanupObstacleProvider(),
+      ]);
+      this.cleanupComplete = results.every((result) => result.status === "fulfilled");
+    })();
+    this.cleanupInFlight = cleanup.finally(() => {
+      this.cleanupInFlight = undefined;
+    });
+    return this.cleanupInFlight;
   }
 
   private async cleanupObstacleProvider(): Promise<void> {
@@ -671,6 +805,7 @@ export class RaceCoordinator {
     if (plan && this.engine.race.status === "starting") {
       try {
         validateDisruptionCommand(plan.policy);
+        for (const step of plan.steps ?? []) validateDisruptionCommand(step.policy);
         this.engine.armSabotage(plan, now);
         armed = this.engine.race.sabotagePlan ?? null;
       } catch {
@@ -867,6 +1002,7 @@ export class RaceCoordinator {
           text: "Finished: final task state verified",
           at,
         });
+        this.market.adjustConfidence(racerId, CONFIDENCE_SIGNALS.completion * liquidity);
         return;
       default:
         return;
@@ -908,11 +1044,13 @@ export class RaceCoordinator {
         this.addSettledAccounts(changes);
       }
       this.closedAtValue ??= now;
-      await this.persistNewEvents();
-      await this.stopRacers();
-      await this.dependencies.sessionManager.releaseAll();
-      await this.cleanupObstacleProvider();
-      this.stopped = true;
+      try {
+        await this.persistNewEvents();
+      } finally {
+        // Persistence failures must not strand browser sessions. A later
+        // shutdown call remains safe because cleanup is idempotent.
+        await this.shutdownRace();
+      }
     }
   }
 
@@ -960,23 +1098,45 @@ export class RaceCoordinator {
   }
 
   private async stopRacers(): Promise<void> {
-    await Promise.allSettled(
+    const stops = Promise.allSettled(
       [...this.engine.racers.keys()].map((racerId) =>
         this.dependencies.agentRunner.stop(racerId),
       ),
     );
+    await Promise.race([stops, delay(1_000)]);
+    await Promise.race([
+      Promise.allSettled([...this.runnerTasks.values()]),
+      delay(1_000),
+    ]);
   }
 
   private async handleRunnerFailure(racerId: string, error: unknown): Promise<void> {
+    return this.enqueueLifecycle(() => this.handleRunnerFailureInternal(racerId, error));
+  }
+
+  private async handleRunnerFailureInternal(racerId: string, error: unknown): Promise<void> {
     // Runners commonly reject once they are stopped; that is not a failure.
     if (this.stopped) return;
     const reason = error instanceof Error ? error.message : String(error);
     try {
       this.engine.failRacer(racerId, reason);
+      this.releasedRacers.add(racerId);
+      await this.dependencies.sessionManager.release(racerId).catch(() => undefined);
+      const active = [...this.engine.racers.values()].some(
+        (racer) => racer.status === "running" || racer.status === "recovering",
+      );
+      if (!active) this.engine.abort("all_racers_failed");
       await this.afterEngineMutation(Date.now());
     } catch {
       // The runner task must never reject unhandled.
     }
+  }
+
+  private async handleRunnerCompletion(racerId: string): Promise<void> {
+    if (this.stopped) return;
+    const racer = this.engine.racers.get(racerId);
+    if (!racer || ["finished", "failed", "timed_out"].includes(racer.status)) return;
+    await this.handleRunnerFailure(racerId, new Error("competitor runner exited before completion"));
   }
 
   /** Serialised so concurrent callers never append an event twice. */
@@ -991,4 +1151,11 @@ export class RaceCoordinator {
     this.persisting = run.catch(() => undefined);
     return run;
   }
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(resolve, ms);
+    timer.unref?.();
+  });
 }

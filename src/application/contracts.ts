@@ -47,6 +47,8 @@ export type CompetitorContext = {
   session: RacerSessionHandle;
   reportCheckpoint(checkpoint: number): Promise<void>;
   reportFinish(): Promise<void>;
+  /** Verifier-backed completion check after a browser action. */
+  checkFinish?(): Promise<boolean>;
   /** Telemetry sink. Never throws. */
   reportAction?(report: AgentActionReport): void;
   /** Frame sink. Never throws. */

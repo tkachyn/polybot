@@ -43,6 +43,7 @@ export type MarketStatusDTO = "open" | "frozen" | "resolved" | "unresolved";
 export type RunStatus = "run" | "warn" | "bad";
 
 export type SabotageState = "armed" | "fired" | "expired";
+export type SabotageStepState = "armed" | "fired" | "recovered" | "expired";
 
 export type SabotageTier = "basic" | "intermediate" | "difficult";
 
@@ -102,6 +103,20 @@ export type SabotageSummary = {
   firedAt: number | null;
   /** Tier of the armed race-wide plan. Null until armed or when not revealed. */
   tier: SabotageTier | null;
+  /** Ordered master-selected steps, each triggered independently per racer. */
+  steps: SabotageStepSummary[];
+};
+
+export type SabotageStepSummary = {
+  index: number;
+  stepId: string;
+  checkpoint: number;
+  checkpointLabel: string;
+  state: SabotageStepState;
+  firedAt: number | null;
+  recoveredAt: number | null;
+  hitRacerIds: string[];
+  hazardType: HazardType | null;
 };
 
 export type FightSummary = {

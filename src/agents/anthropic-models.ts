@@ -44,7 +44,7 @@ export class AnthropicMasterPolicyModel implements MasterPolicyModel {
   }
 
   async selectObstacle(
-    input: Parameters<MasterPolicyModel["selectObstacle"]>[0],
+    input: Parameters<NonNullable<MasterPolicyModel["selectObstacle"]>>[0],
   ): Promise<DisruptionCommand> {
     const response = await this.client.messages.create({
       model: this.options.model,

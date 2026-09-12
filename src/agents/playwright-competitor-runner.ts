@@ -121,6 +121,10 @@ export class PlaywrightCompetitorRunner implements CompetitorAgentRunner {
           history.push({ decision });
           this.report(context, page, decision, step);
           if (finished) return;
+          // A site adapter can prove completion after any action. Keep the
+          // explicit finish tool as a fallback, but do not require the model
+          // to notice a success page and emit a second decision.
+          if (context.checkFinish && await context.checkFinish()) return;
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
           history.push({ decision, error: message });

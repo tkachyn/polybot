@@ -49,6 +49,12 @@ class FakeRunner implements CompetitorAgentRunner {
   }
 }
 
+class ExitingRunner extends FakeRunner {
+  override async run(): Promise<void> {
+    throw new Error("runner exited");
+  }
+}
+
 class FakeVerifier implements CourseVerifier {
   async verifyTargetOpening(): Promise<boolean> {
     return true;
@@ -63,9 +69,21 @@ class FakeVerifier implements CourseVerifier {
   }
 }
 
-function createCoordinator() {
+function createCoordinator(): {
+  coordinator: RaceCoordinator;
+  sessions: FakeSessions;
+  runner: FakeRunner;
+  events: InMemoryRaceEventStore;
+};
+function createCoordinator<T extends CompetitorAgentRunner>(runner: T): {
+  coordinator: RaceCoordinator;
+  sessions: FakeSessions;
+  runner: T;
+  events: InMemoryRaceEventStore;
+};
+function createCoordinator<T extends CompetitorAgentRunner>(runner?: T) {
+  const actualRunner = runner ?? new FakeRunner();
   const sessions = new FakeSessions();
-  const runner = new FakeRunner();
   const events = new InMemoryRaceEventStore();
   const coordinator = new RaceCoordinator(
     {
@@ -78,12 +96,12 @@ function createCoordinator() {
     },
     {
       sessionManager: sessions,
-      agentRunner: runner,
+      agentRunner: actualRunner,
       courseVerifier: new FakeVerifier(),
       eventStore: events,
     },
   );
-  return { coordinator, sessions, runner, events };
+  return { coordinator, sessions, runner: actualRunner, events };
 }
 
 test("prepares four sessions before starting all racers", async () => {
@@ -123,6 +141,30 @@ test("verifies checkpoints and resolves the market with the winner", async () =>
   assert.equal(sessions.released, true);
   assert.equal(runner.stopped.length, 4);
   assert.equal((await events.list("race-1")).at(-1)?.type, "race_finished");
+});
+
+test("auto-finishes when the verifier confirms the final browser state", async () => {
+  const { coordinator, runner } = createCoordinator();
+  const startedAt = Date.now();
+  await coordinator.prepareAndStart(startedAt);
+  for (let checkpoint = 1; checkpoint <= 3; checkpoint += 1) {
+    await coordinator.recordCheckpoint("racer-1", checkpoint, startedAt + checkpoint);
+  }
+
+  const completed = await runner.running.get("racer-1")?.checkFinish?.();
+  assert.equal(completed, true);
+  assert.equal(coordinator.engine.race.winnerRacerId, "racer-1");
+  assert.equal(coordinator.market.status, "resolved");
+});
+
+test("ends and releases the race when every runner fails", async () => {
+  const runner = new ExitingRunner();
+  const { coordinator, sessions } = createCoordinator(runner);
+  await coordinator.prepareAndStart(Date.now());
+  await new Promise((resolve) => setTimeout(resolve, 1_200));
+  assert.equal(coordinator.engine.race.status, "timed_out");
+  assert.equal(coordinator.market.status, "unresolved");
+  assert.equal(sessions.released, true);
 });
 
 test("freezes trading at three minutes but keeps racers active", async () => {

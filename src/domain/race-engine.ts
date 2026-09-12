@@ -6,6 +6,7 @@ import type {
   Racer,
   RecoveryCause,
   SabotagePlan,
+  SabotageStep,
 } from "./types.js";
 
 export type RaceEngineOptions = {
@@ -61,6 +62,7 @@ export class RaceEngine {
             racerId,
             checkpoint: 0,
             status: "starting",
+            sabotageStep: 0,
           } satisfies Racer,
         ];
       }),
@@ -76,12 +78,15 @@ export class RaceEngine {
     if (plan.raceId !== this.race.id) {
       throw new Error("Sabotage plan belongs to a different race");
     }
-    if (
-      !Number.isInteger(plan.trigger.checkpoint) ||
-      plan.trigger.checkpoint < 1 ||
-      plan.trigger.checkpoint > this.race.checkpointCount
-    ) {
-      throw new Error("Sabotage trigger checkpoint is outside the course");
+    const steps = normalizeSabotageSteps(plan);
+    for (const step of steps) {
+      if (
+        !Number.isInteger(step.checkpoint) ||
+        step.checkpoint < 1 ||
+        step.checkpoint > this.race.checkpointCount
+      ) {
+        throw new Error("Sabotage trigger checkpoint is outside the course");
+      }
     }
     if (this.race.sabotagePlan) {
       if (JSON.stringify(this.race.sabotagePlan) !== JSON.stringify(plan)) {
@@ -93,8 +98,17 @@ export class RaceEngine {
       ...plan,
       trigger: Object.freeze({ ...plan.trigger }),
       policy: Object.freeze({ ...plan.policy }),
+      ...(plan.steps
+        ? {
+            steps: Object.freeze(steps.map((step) => Object.freeze({
+              ...step,
+              policy: Object.freeze({ ...step.policy }),
+            }))),
+          }
+        : {}),
     }) as SabotagePlan;
     this.race.sabotagePlan = immutablePlan;
+    this.race.sabotageSteps = immutablePlan.steps;
     this.emit({
       type: "sabotage_armed",
       occurredAt: now,
@@ -180,30 +194,39 @@ export class RaceEngine {
     });
 
     const plan = this.race.sabotagePlan;
+    const step = plan ? this.sabotageSteps()[racer.sabotageStep] : undefined;
     if (
       !plan ||
-      checkpoint !== plan.trigger.checkpoint ||
+      !step ||
+      checkpoint !== step.checkpoint ||
       this.race.status === "hazards_frozen" ||
-      this.claimedSabotage.has(racerId)
+      this.claimedSabotage.has(`${racerId}:${step.stepId}`)
     ) {
       return { claimed: true, obstacleApplied: false };
     }
 
-    this.claimedSabotage.add(racerId);
+    this.claimedSabotage.add(`${racerId}:${step.stepId}`);
+    racer.sabotageStep += 1;
+    const sequenced = Boolean(plan.steps);
+    const disruptionId = `disruption-${this.race.id}-${racerId}-${racer.sabotageStep}-${step.stepId}`;
+    const appliedPolicy = sequenced
+      ? { ...step.policy, disruptionId }
+      : step.policy;
     this.emit({
       type: "sabotage_triggered",
       racerId,
       checkpoint,
       occurredAt: now,
       metadata: {
-        tier: plan.tier,
-        trigger: plan.trigger,
+        tier: step.tier,
+        trigger: sequenced ? { ...plan.trigger, checkpoint: step.checkpoint } : plan.trigger,
+        ...(sequenced ? { stepId: step.stepId, step: racer.sabotageStep } : {}),
       },
     });
 
     let result;
     try {
-      result = await this.obstacleProvider.apply(racerId, plan.policy);
+      result = await this.obstacleProvider.apply(racerId, appliedPolicy);
     } catch (error) {
       this.emit({
         type: "sabotage_misfired",
@@ -211,7 +234,8 @@ export class RaceEngine {
         checkpoint,
         occurredAt: now,
         metadata: {
-          tier: plan.tier,
+          tier: step.tier,
+          ...(sequenced ? { stepId: step.stepId } : {}),
           reason: error instanceof Error ? error.message : String(error),
         },
       });
@@ -221,13 +245,17 @@ export class RaceEngine {
     // being applied; only a still-running racer enters recovery.
     if (result.applied && !this.isOver() && racer.status === "running") {
       racer.status = "recovering";
-      racer.recoverAt = now + plan.policy.durationMs;
+      racer.recoverAt = now + step.policy.durationMs;
       this.emit({
         type: "sabotage_applied",
         racerId,
         checkpoint,
         occurredAt: now,
-        metadata: { tier: plan.tier, policy: plan.policy },
+        metadata: {
+          tier: step.tier,
+          policy: appliedPolicy,
+          ...(sequenced ? { stepId: step.stepId, step: racer.sabotageStep } : {}),
+        },
       });
       return { claimed: true, obstacleApplied: true };
     }
@@ -237,7 +265,8 @@ export class RaceEngine {
       checkpoint,
       occurredAt: now,
       metadata: {
-        tier: plan.tier,
+        tier: step.tier,
+        ...(sequenced ? { stepId: step.stepId } : {}),
         reason: result.applied ? "racer_not_running" : result.reason ?? "not_applied",
       },
     });
@@ -252,11 +281,18 @@ export class RaceEngine {
     }
     racer.status = "running";
     racer.recoverAt = undefined;
+    const step = this.sabotageSteps()[Math.max(0, racer.sabotageStep - 1)];
     this.emit({
       type: "sabotage_recovered",
       racerId,
       occurredAt: now,
-      metadata: { checkpoint: racer.checkpoint, cause },
+      metadata: {
+        checkpoint: racer.checkpoint,
+        cause,
+        ...(this.race.sabotagePlan?.steps && step
+          ? { stepId: step.stepId, step: racer.sabotageStep }
+          : {}),
+      },
     });
   }
 
@@ -380,6 +416,11 @@ export class RaceEngine {
     return racer;
   }
 
+  private sabotageSteps(): readonly SabotageStep[] {
+    return this.race.sabotageSteps ??
+      (this.race.sabotagePlan ? normalizeSabotageSteps(this.race.sabotagePlan) : []);
+  }
+
   private emit(
     event: Omit<RaceEvent, "id" | "raceId">,
   ): void {
@@ -389,4 +430,20 @@ export class RaceEngine {
       ...event,
     });
   }
+}
+
+function normalizeSabotageSteps(plan: SabotagePlan): SabotageStep[] {
+  if (plan.steps && plan.steps.length > 0) {
+    return plan.steps.map((step, index) => ({
+      ...step,
+      stepId: step.stepId || `step-${index + 1}`,
+    }));
+  }
+  return [{
+    stepId: "legacy-step-1",
+    checkpoint: plan.trigger.checkpoint,
+    tier: plan.tier,
+    policy: plan.policy,
+    selectedAt: plan.selectedAt,
+  }];
 }

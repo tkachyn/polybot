@@ -9,7 +9,7 @@ This document binds the Sabotage Markets UI (`docs/sabotage-markets-handoff.md`)
 | Outcomes | YES and NO per agent | Buy/sell one share per racer | Added `side: "yes" \| "no"`. NO on X costs `1 - p(X)` and pays 1 if X does not win. It is priced as a basket: one share of each of the other three racers. |
 | Money | $ balance, deposit/withdraw, methods | Virtual credits only, no cash | The UI keeps $ formatting but every amount is a virtual credit. Deposit and withdraw move virtual credits. The only enabled method is `virtual`; other methods are shown as unavailable. |
 | Wallet scope | One balance across fights | Balance per market | Added a shared `CreditLedger` injected into every market. Settlements pay directly into the wallet. |
-| Sabotage | One sabotage per fight at a named checkpoint, revealed to bettors upfront, armed → fired | One immutable race-wide plan with a tier (basic, intermediate, difficult), fired per racer at the first verified target-opening milestone | The engine's `SabotagePlan` (tier, trigger checkpoint, policy, source) is the source of truth. It is armed once, before the fight goes live: the policy is the fixed `sabotage.policy` (source `operator`), else the master's `armRace` choice (`model`, with a deterministic `fallback`). Its trigger checkpoint is `sabotage.checkpoint`, default 1. It fires independently for each agent whose verified report of that checkpoint also verifies the target opening. The bettor-facing text (`summary`, `detail`) is presentation metadata (`SabotageBrief`) on the fight. |
+| Sabotage | One sabotage per fight at a named checkpoint, revealed to bettors upfront, armed → fired | One immutable ordered race-wide sequence, fired independently per racer after each verified checkpoint and recovery | The engine's `SabotagePlan` is the source of truth. When the course has at least four checkpoints, the master selects three bounded preset ids for checkpoints 2, 3, and 4. Every racer sees the same order, but triggers each step independently; a racer must recover before the next step can apply. Legacy/operator plans remain supported as one-step plans. |
 | Duration | 30-minute cap | 180 s target, 300 s cap | Durations are per race and supplied by the backend (`freezesAt`, `closesAt`). The UI never hard-codes them. |
 | Void | Rules undefined | Cap reached → unresolved, credits returned | A voided fight refunds each open position at its average price. The history shows a `refund` entry. |
 | Capture | Undecided | Steel viewer URL | Live mode exposes a read-only Steel debug viewer in `agent.browserView` (`interactive=false`, `showControls=false`); simulated mode and viewer failures use periodic frames. The UI must keep the frame path as a fallback and must not reset the viewer iframe while polling. |
@@ -42,9 +42,9 @@ The existing fields are unchanged. These optional fields were added and are vali
 }
 ```
 
-If `obstaclesEnabled` is true and `sabotage` is omitted, a default plan is armed at checkpoint 1. Its summary is generated from the armed hazard and capped at 70 chars.
+If `obstaclesEnabled` is true and `sabotage` is omitted, a default sequence is armed at checkpoints 2, 3, and 4 when the course supports it. Its summary is generated from the first armed hazard and capped at 70 chars.
 
-Engine events (`GET /races/:raceId/events`): `sabotage_armed` once before the start, then per racer `sabotage_triggered` followed by `sabotage_applied` or `sabotage_misfired`, and `sabotage_recovered` when an applied sabotage's `durationMs` elapses (`metadata.cause` is `duration` or `manual`). A racer in `recovering` cannot report a checkpoint or finish until then.
+Engine events (`GET /races/:raceId/events`): `sabotage_armed` once before the start, then per racer and ordered step `sabotage_triggered` followed by `sabotage_applied` or `sabotage_misfired`, and `sabotage_recovered` when an applied sabotage's `durationMs` elapses (`metadata.cause` is `duration` or `manual`). Sequence events include `metadata.stepId` and `metadata.step`. A racer in `recovering` cannot report a checkpoint or finish until then. Completion is verifier-backed after every browser action; an explicit model `finish` remains a fallback.
 
 The default roster, in racer order, is: `gpt` "GPT-5.2" (openai), `claude` "Claude Opus 4.6" (anthropic), `gemini` "Gemini 3 Pro" (google), `grok` "Grok 4.1" (xai).
 
@@ -134,6 +134,7 @@ Clients treat `snapshot` as a full replace. They append `price` points whose `t`
   | Checkpoint | `+0.35·L` |
   | Sabotage hit | `−0.25·L` |
   | Recovery | `+0.10·L` |
+  | Verified completion | `+0.50·L` |
   | Failure | Collapses to the floor |
 
   Weights are floored at `0.02·L`. Prices are normalised to sum to exactly 1.

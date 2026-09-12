@@ -14,6 +14,10 @@ import {
 import type { MasterPolicyModel } from "./master-obstacle-provider.js";
 import type { DisruptionCommand, SabotageTier } from "../domain/types.js";
 import { validateDisruptionCommand } from "../infra/cdp-obstacle-provider.js";
+import {
+  SABOTAGE_PRESET_IDS,
+  type SabotagePresetId,
+} from "../domain/sabotage-presets.js";
 
 const browserActionTool = {
   type: "function" as const,
@@ -107,7 +111,8 @@ abstract class OpenRouterModelBase {
     tool:
       | typeof browserActionTool
       | ReturnType<typeof obstacleTool>
-      | ReturnType<typeof sabotageTool>,
+      | ReturnType<typeof sabotageTool>
+      | ReturnType<typeof sabotageSequenceTool>,
   ): Promise<unknown> {
     this.options.budget?.assertAvailable();
     const response = await this.client.chat.completions.create({
@@ -176,6 +181,29 @@ function sabotageTool(
   };
 }
 
+function sabotageSequenceTool() {
+  return {
+    type: "function" as const,
+    function: {
+      name: "choose_sabotage_sequence",
+      description: "Choose exactly three ordered preset sabotage ids for checkpoints 2, 3, and 4.",
+      parameters: {
+        type: "object",
+        properties: {
+          presetIds: {
+            type: "array",
+            minItems: 3,
+            maxItems: 3,
+            items: { type: "string", enum: SABOTAGE_PRESET_IDS },
+          },
+        },
+        required: ["presetIds"],
+        additionalProperties: false,
+      },
+    },
+  };
+}
+
 export class OpenRouterCompetitorDecisionModel
   extends OpenRouterModelBase
   implements CompetitorDecisionModel
@@ -196,7 +224,7 @@ export class OpenRouterMasterPolicyModel
   implements MasterPolicyModel
 {
   async selectObstacle(
-    input: Parameters<MasterPolicyModel["selectObstacle"]>[0],
+    input: Parameters<NonNullable<MasterPolicyModel["selectObstacle"]>>[0],
   ): Promise<DisruptionCommand> {
     const value = await this.call(
       "You are the race director for a browser-agent arena. Select one bounded DOM obstacle. Keep the race fair and use only the provided semantic target roles. Never emit JavaScript.",
@@ -219,5 +247,25 @@ export class OpenRouterMasterPolicyModel
     const { tier, ...policy } = value;
     validateDisruptionCommand(policy);
     return { tier, policy };
+  }
+
+  async selectSabotageSequence(
+    input: Parameters<NonNullable<MasterPolicyModel["selectSabotageSequence"]>>[0],
+  ): Promise<{ presetIds: [SabotagePresetId, SabotagePresetId, SabotagePresetId] }> {
+    const value = await this.call(
+      "You are the race director for a browser-agent arena. Choose exactly three different bounded sabotage presets. They will be applied in the fixed order at checkpoints 2, 3, and 4, independently for each racer, and the next step waits for recovery. Choose fair, varied hazards. Never emit JavaScript.",
+      input,
+      sabotageSequenceTool(),
+    ) as { presetIds: string[] };
+    if (
+      value.presetIds.length !== 3 ||
+      new Set(value.presetIds).size !== 3 ||
+      value.presetIds.some((id) => !SABOTAGE_PRESET_IDS.includes(id as SabotagePresetId))
+    ) {
+      throw new Error("OpenRouter returned an invalid sabotage sequence");
+    }
+    return {
+      presetIds: value.presetIds as [SabotagePresetId, SabotagePresetId, SabotagePresetId],
+    };
   }
 }

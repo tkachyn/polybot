@@ -80,6 +80,30 @@ test("prepares a seeded racer URL and reports verified progress", async () => {
   assert.match(page.navigations[0], /seed=seed-1/);
 });
 
+test("stops immediately when the verifier proves completion after an action", async () => {
+  const page = new FakePage();
+  const runner = new PlaywrightCompetitorRunner({
+    task: "Complete the course",
+    startUrl: "https://course.test/start",
+    model: new SequenceModel([{ type: "click", targetRole: "primary-action" }]),
+  });
+  const base = contextFor(page);
+  let checks = 0;
+  let explicitFinish = false;
+  await runner.prepare(base);
+  await runner.run({
+    ...base,
+    async reportCheckpoint() {},
+    async reportFinish() { explicitFinish = true; },
+    async checkFinish() {
+      checks += 1;
+      return true;
+    },
+  });
+  assert.equal(checks, 1);
+  assert.equal(explicitFinish, false);
+});
+
 test("resolves a distinct model for each racer", async () => {
   const page = new FakePage();
   const selected: string[] = [];

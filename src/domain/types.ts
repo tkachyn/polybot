@@ -15,6 +15,14 @@ export type SabotageTrigger = {
   milestone: "first_verified_checkpoint";
 };
 
+export type SabotageStep = {
+  stepId: string;
+  checkpoint: number;
+  tier: SabotageTier;
+  policy: DisruptionCommand;
+  selectedAt: number;
+};
+
 export type SabotagePlan = {
   raceId: string;
   tier: SabotageTier;
@@ -23,6 +31,8 @@ export type SabotagePlan = {
   selectedAt: number;
   /** "operator" when the fight supplied a fixed policy. */
   source: "model" | "fallback" | "operator";
+  /** Ordered steps selected for this race. Omitted for legacy single-step plans. */
+  steps?: readonly SabotageStep[];
 };
 
 export type RacerStatus =
@@ -47,6 +57,7 @@ export type Race = {
   targetDurationAt?: number;
   absoluteDeadlineAt?: number;
   sabotagePlan?: SabotagePlan;
+  sabotageSteps?: readonly SabotageStep[];
   winnerRacerId?: string;
   finishedAt?: number;
 };
@@ -61,6 +72,8 @@ export type Racer = {
   finishedAt?: number;
   /** Set while `recovering`: when the applied sabotage's duration elapses. */
   recoverAt?: number;
+  /** Number of ordered sabotage steps already claimed by this racer. */
+  sabotageStep: number;
 };
 
 /** Why a racer left `recovering` (sabotage_recovered metadata.cause). */
