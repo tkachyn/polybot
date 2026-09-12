@@ -82,6 +82,44 @@ http://127.0.0.1:4000/?raceId=demo&racerId=racer-1&courseId=course-1&checkpointC
 
 Steel sessions run remotely and cannot access your machine's localhost. A live Steel race must use a public deployment or tunnel URL for `startUrl`; the local backend can continue using `COURSE_BASE_URL=http://127.0.0.1:4000` for verification. When `COURSE_VERIFIER_TOKEN` is set, the course server requires the matching Bearer token on server-to-server arena-state verification requests; the browser course UI remains usable without exposing that secret.
 
+## Shop course
+
+`courseId=arena-shop` is a realistic storefront served by the same course app (`npm run dev:course` or `npm run dev:all`): Voltmart, a small electronics store with a header, department nav, promo banner, footer, product cards and a working cart. From the run seed it generates eight portable SSD listings. Exactly one satisfies the task, for example "Buy the cheapest new 1 TB portable SSD under $90 with standard shipping". The rest are near misses: a cheaper refurbished drive, a cheaper drive of the wrong capacity, a drive a few dollars over budget, a pricier drive that qualifies, a premium drive, and two larger drives, one of them on sale under budget. Results use a seeded "Featured" order, never price order.
+
+| Page | Path | Hooks (`data-arena-role`) |
+| --- | --- | --- |
+| Home | `/?courseId=arena-shop&…` | `search-input`, `primary-action` (Search), `product-link` (trending) |
+| Search results | `/shop/search?q=` | `search-input`, `primary-action` (Search), `product-link` |
+| Product | `/shop/product?sku=` | `primary-action` (Add to cart) |
+| Cart | `/shop/cart` | `remove-item`, `primary-action` (Checkout) |
+| Checkout | `/shop/checkout` | `shipping-name`, `shipping-address`, `shipping-method`, `primary-action` (Place order) |
+| Confirmation | `/shop/order?order=` | `primary-action` (Continue shopping) |
+
+Every link and form carries the run identity (`raceId`, `racerId`, `courseId`, `seed`, `steelSessionId`, `checkpointCount`), so an agent only clicks and types. Changes are POST forms that redirect with a 303. Pages are plain server-rendered HTML with inline CSS: no scripts and no external assets.
+
+Checkpoints complete strictly in order and are stored in the same course state as the test course, so `/arena/state` and the deterministic verifier are unchanged:
+
+1. **Product found**: opening the correct product's page. This also sets `targetOpened`, the milestone that arms sabotage. Other products do nothing.
+2. **Added to cart**: the cart holds exactly one unit of the correct product. It is evaluated on every add and remove.
+3. **Shipping details**: a checkout with a non-empty name and address, Standard shipping and that cart. It then sets `finished` and shows an order number. Express shipping or a missing field re-renders checkout with an error. The store accepts any other valid order, but it completes nothing.
+
+Standard shipping is preselected because the runner's `type` action cannot drive a native `<select>`. For `arena-shop`, `POST /arena/checkpoint` and `POST /arena/finish` are rejected: progress comes only from the store's own pages. The run must use `checkpointCount=3`. The seeded catalogue and task are exported from `src/course/shop-course.ts` (`shopTaskForSeed`, `shopCatalogueForSeed`, `shopCorrectProductId`). Try it locally at `http://127.0.0.1:4000/?courseId=arena-shop&raceId=demo&racerId=racer-1&seed=demo&checkpointCount=3`.
+
+**Running a live race.** Steel browsers run in the cloud, so the course server must be publicly reachable, for example through a tunnel:
+
+```bash
+npm run dev:all                                  # live API on :3001, course on :4000
+cloudflared tunnel --url http://127.0.0.1:4000   # or: ngrok http 4000
+```
+
+Set `COURSE_BASE_URL` in `.env` to the tunnel's public URL before you start the API. The verifier also reads `/arena/state` through it, and both URLs must reach the same course process. Then create the fight:
+
+```bash
+SEED=demo npm run race:shop    # SEED is optional; API_URL defaults to http://127.0.0.1:3001
+```
+
+The script sends `POST /races` with `courseId: "arena-shop"`, three checkpoints, `obstaclesEnabled: true`, the title, task, detail, success condition and checkpoint labels from `shopTaskForSeed`, and `startUrl: ${COURSE_BASE_URL}/?courseId=arena-shop`. The runner appends the run parameters. The script then prints the answer key and the fight URL, `http://localhost:5173/fights/<raceId>` (start the UI with `npm run web:dev`). It warns when `COURSE_BASE_URL` is a local address, and it prints the status and error when the API rejects the request. The live API needs `STEEL_API_KEYS`, `OPENROUTER_API_KEY`, `COMPETITOR_LLM_MODELS` and `MASTER_LLM_MODEL`.
+
 ## Configuration
 
 | Variable | Default | Purpose |

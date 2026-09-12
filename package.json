@@ -16,6 +16,7 @@
     "build:all": "npm run build && npm run web:build",
     "demo": "npm run web:build && RACE_MODE=simulated WEB_DIST=web/dist node --import tsx src/server.ts",
     "smoke:steel": "node --import tsx scripts/steel-smoke.ts",
+    "race:shop": "node --import tsx scripts/create-shop-race.ts",
     "check": "npm test && npm run build",
     "test": "node --import tsx --test test/**/*.test.ts"
   },
