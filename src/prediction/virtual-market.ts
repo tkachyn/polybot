@@ -580,6 +580,6 @@ export class VirtualPredictionMarket {
   }
 
   private positionKey(userId: string, racerId: string, side: Side): string {
-    return `${userId} ${racerId} ${side}`;
+    return `${userId}\u0000${racerId}\u0000${side}`;
   }
 }
