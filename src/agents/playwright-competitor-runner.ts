@@ -507,7 +507,7 @@ function modelFacingError(
 ): string {
   if (failure instanceof ActionBlockedError) return message;
   const headline = (message.split("\n", 1)[0] ?? "")
-    .replace(/\[[0-9;]*m/g, "")
+    .replace(/\x1b\[[0-9;]*m/g, "")
     .replace(/<[^>]*\b(?:data-arena-decoy|data-arena-disruption-id|arena-decoy-)[^>]*>/g, "<element>")
     .replace(/\s*\bdata-arena-(?:decoy|disruption-id)(?:="[^"]*")?/g, "")
     .trim();
