@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
-import type { TraderLeaderboardResponse } from "@contract";
-import { getFightTraders, isAbortError } from "../../api/client";
+import type { TraderLeaderboardResponse, TraderStreamEvents } from "@contract";
+import { getFightTraders, isAbortError, traderStreamUrl } from "../../api/client";
+import { useEventStream } from "../../api/stream";
 import { ButtonLink, EmptyState, IconArrowLeft, Page, PageHeader, SignedMoney, SignedPercent } from "../../components";
 import { formatMoney } from "../../lib/format";
 import { useSession } from "../../state/session";
@@ -14,6 +15,10 @@ export function JudgeStandingsPage() {
   const { userId } = useSession();
   const [data, setData] = useState<TraderLeaderboardResponse | null>(null);
   const [failed, setFailed] = useState(false);
+  const streamStatus = useEventStream<TraderStreamEvents>(
+    raceId ? traderStreamUrl(raceId) : null,
+    { standings: (next) => { setData(next); setFailed(false); } },
+  );
 
   const load = useCallback(async (signal?: AbortSignal) => {
     if (!raceId) return;
@@ -28,12 +33,14 @@ export function JudgeStandingsPage() {
   useEffect(() => {
     const controller = new AbortController();
     void load(controller.signal);
-    const timer = window.setInterval(() => void load(), POLL_MS);
+    const timer = window.setInterval(() => {
+      if (streamStatus !== "open") void load();
+    }, POLL_MS);
     return () => {
       controller.abort();
       window.clearInterval(timer);
     };
-  }, [load]);
+  }, [load, streamStatus]);
 
   if (!raceId) return <Page title="Judge standings"><EmptyState title="Fight not found" /></Page>;
 

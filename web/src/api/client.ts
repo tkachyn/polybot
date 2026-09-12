@@ -196,6 +196,10 @@ export function getFightTraders(raceId: string, signal?: AbortSignal): Promise<T
   return request<TraderLeaderboardResponse>(`/api/fights/${seg(raceId)}/traders`, { signal });
 }
 
+export function traderStreamUrl(raceId: string): string {
+  return `${API_BASE}/api/fights/${seg(raceId)}/traders/stream`;
+}
+
 /**
  * GET /api/fights/:raceId/agents/:racerId/frame?seq= — use as an <img src>.
  * `seq` comes from `agent.frame.seq`; a new seq means a new capture.

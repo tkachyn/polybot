@@ -787,3 +787,8 @@ export type FightStreamEvents = {
 export type UserStreamEvents = {
   portfolio: PortfolioResponse;
 };
+
+/** GET /api/fights/:raceId/traders/stream */
+export type TraderStreamEvents = {
+  standings: TraderLeaderboardResponse;
+};

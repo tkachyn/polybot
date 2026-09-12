@@ -218,6 +218,32 @@ export function registerSpectatorRoutes(app: FastifyInstance, context: Spectator
     },
   );
 
+  app.get<{ Params: { raceId: string } }>(
+    "/api/fights/:raceId/traders/stream",
+    (request, reply) => {
+      const raceId = request.params.raceId;
+      const race = registry.get(raceId);
+      const stream = hub.open(request, reply);
+      const send = () => stream.send(
+        "standings",
+        presentTraderLeaderboard(race, users.list(), registry.ledger, now()),
+      );
+      send();
+      const throttle = trailingThrottle(send, context.throttles.portfolioMs);
+      const unsubscribeRaces = registry.subscribe((changedRaceId, change) => {
+        if (changedRaceId === raceId && (change.kind === "account" || change.kind === "price" || change.kind === "fight")) {
+          throttle.schedule();
+        }
+      });
+      const unsubscribeUsers = users.subscribe(() => throttle.schedule());
+      stream.onClose(() => {
+        unsubscribeRaces();
+        unsubscribeUsers();
+        throttle.cancel();
+      });
+    },
+  );
+
   app.get<{ Params: { raceId: string; racerId: string }; Querystring: { seq?: string } }>(
     "/api/fights/:raceId/agents/:racerId/frame",
     async (request, reply) => {
