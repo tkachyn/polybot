@@ -1,0 +1,14 @@
+{
+  "name": "Browser Agent Arena Backend",
+  "install": "npm ci",
+  "terminals": [
+    {
+      "name": "dev-server",
+      "command": "npm run dev",
+      "description": "Fastify API server on 127.0.0.1:3001. The server boots without secrets, but live race creation (POST /races) requires STEEL_API_KEY, ANTHROPIC_API_KEY, COMPETITOR_LLM_MODEL, MASTER_LLM_MODEL, and COURSE_BASE_URL to be present in the environment."
+    }
+  ],
+  "ports": [
+    { "name": "api", "port": 3001 }
+  ]
+}
