@@ -1,5 +1,7 @@
 export * from "./application/contracts.js";
 export * from "./application/race-coordinator.js";
+export * from "./agents/playwright-competitor-runner.js";
+export * from "./course/deterministic-course-verifier.js";
 export * from "./domain/noop-obstacle-provider.js";
 export * from "./domain/race-engine.js";
 export * from "./domain/types.js";
