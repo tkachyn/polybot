@@ -213,7 +213,8 @@ export function registerSpectatorRoutes(app: FastifyInstance, context: Spectator
     "/api/fights/:raceId/traders",
     async (request): Promise<TraderLeaderboardResponse> => {
       const race = registry.get(request.params.raceId);
-      const rows = users.list().flatMap((user) => {
+      const rows = race.market.traderUserIds().flatMap((userId) => {
+        const user = users.get(userId);
         const entries = registry.ledger.entries(user.userId)
           .filter((entry) => entry.raceId === race.raceId);
         const buys = entries.filter((entry) => entry.type === "buy");
