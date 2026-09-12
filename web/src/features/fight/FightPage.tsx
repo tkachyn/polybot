@@ -13,6 +13,7 @@ import { MarketRail } from "../market/MarketRail";
 import { SLIP_PARAM, slipFromParam } from "../market/slipParam";
 import type { Slip } from "../market/types";
 import { Arena } from "./Arena";
+import { FightInvite } from "../demo/FightInvite";
 import { rosterByRacer, rosterKey } from "./fightView";
 import { MasterStrip, SabotageStrip } from "./FightHeader";
 import styles from "./FightPage.module.css";
@@ -45,7 +46,7 @@ export function FightPage({ fight, priceHistory, streamStatus }: FightPageProps)
 
   return (
     <div className={styles.screen}>
-      <MasterStrip fight={fight} />
+      <MasterStrip fight={fight} action={<FightInvite raceId={fight.raceId} />} />
       <SabotageStrip fight={fight} roster={roster} />
       <div className={styles.body}>
         <Arena fight={fight} roster={roster} slip={activeSlip} streamStatus={streamStatus} className={styles.arena} />

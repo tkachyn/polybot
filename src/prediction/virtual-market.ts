@@ -360,6 +360,11 @@ export class VirtualPredictionMarket {
     };
   }
 
+  /** Distinct spectators that have traded, in first-trade order. */
+  traderUserIds(): string[] {
+    return [...this.traderIds];
+  }
+
   /** Side-aware lines produced by resolve() or markUnresolved(). */
   settlementLines(): SettlementLine[] {
     return this.settlement.map((line) => ({ ...line }));

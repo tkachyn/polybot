@@ -37,6 +37,7 @@ import type {
   SabotageStepSummary,
   ServerMeta,
   ServerMode,
+  TraderLeaderboardResponse,
 } from "./dto.js";
 import type { UserRecord } from "./users.js";
 
@@ -593,6 +594,44 @@ export function presentMyFight(
   };
 }
 
+/** Judges ranked by current P/L in one fight. Open positions are marked live. */
+export function presentTraderLeaderboard(
+  coordinator: RaceCoordinator,
+  users: readonly UserRecord[],
+  ledger: CreditLedger,
+  now: number,
+): TraderLeaderboardResponse {
+  const byId = new Map(users.map((user) => [user.userId, user]));
+  const rows = coordinator.market.traderUserIds().flatMap((userId) => {
+    const user = byId.get(userId);
+    if (!user) return [];
+    const entries = ledger.entries(userId).filter((entry) => entry.raceId === coordinator.raceId);
+    const cost = entries.reduce((sum, entry) => entry.type === "buy" ? sum - entry.amount : sum, 0);
+    const returned = entries.reduce((sum, entry) =>
+      entry.type === "sell" || entry.type === "payout" || entry.type === "refund"
+        ? sum + entry.amount
+        : sum, 0);
+    const open = coordinator.market.positionsFor(userId);
+    const openValue = open.reduce(
+      (sum, position) => sum + position.quantity * coordinator.market.sidePrice(position.racerId, position.side),
+      0,
+    );
+    const pnl = round(returned + openValue - cost);
+    return [{
+      rank: 0,
+      userId,
+      displayName: user.displayName,
+      pnl,
+      returnPct: cost > 0 ? round(pnl / cost) : null,
+      wagered: round(cost),
+      openPositions: open.length,
+    }];
+  }).sort((left, right) =>
+    right.pnl - left.pnl || right.wagered - left.wagered || left.displayName.localeCompare(right.displayName))
+    .map((row, index) => ({ ...row, rank: index + 1 }));
+  return { serverTime: now, raceId: coordinator.raceId, rows };
+}
+
 // ---------------------------------------------------------------------------
 // Leaderboard and meta
 // ---------------------------------------------------------------------------
@@ -735,12 +774,13 @@ export function presentLeaderboard(
 }
 
 export function presentMeta(
-  options: { mode: ServerMode; showSabotageUpfront: boolean; startingBalance: number },
+  options: { mode: ServerMode; demoMode: boolean; showSabotageUpfront: boolean; startingBalance: number },
   now: number,
 ): ServerMeta {
   return {
     serverTime: now,
     mode: options.mode,
+    demoMode: options.demoMode,
     showSabotageUpfront: options.showSabotageUpfront,
     startingBalance: options.startingBalance,
   };

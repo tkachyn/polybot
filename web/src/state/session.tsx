@@ -53,6 +53,8 @@ export type SessionValue = {
    * response's `serverTime` so an older payload never overwrites a newer one.
    */
   applyAccount: (account: Account, serverTime?: number) => void;
+  /** Sets the public judge name for standings. */
+  updateDisplayName: (displayName: string) => Promise<boolean>;
 };
 
 const SessionContext = createContext<SessionValue | null>(null);
@@ -229,9 +231,21 @@ export function SessionProvider({ children, userId: userIdOverride }: SessionPro
 
   const status: SessionStatus = account ? "ready" : error ? "error" : "loading";
 
+  const updateDisplayName = useCallback(async (displayName: string): Promise<boolean> => {
+    try {
+      const response = await ensureUser({ userId, displayName });
+      applyAccount(response.account, response.serverTime);
+      setError(null);
+      return true;
+    } catch (err) {
+      if (!isAbortError(err)) setError(toApiFailure(err));
+      return false;
+    }
+  }, [userId, applyAccount]);
+
   const value = useMemo<SessionValue>(
-    () => ({ userId, meta, account, portfolio, status, error, streamStatus, refresh, applyAccount }),
-    [userId, meta, account, portfolio, status, error, streamStatus, refresh, applyAccount],
+    () => ({ userId, meta, account, portfolio, status, error, streamStatus, refresh, applyAccount, updateDisplayName }),
+    [userId, meta, account, portfolio, status, error, streamStatus, refresh, applyAccount, updateDisplayName],
   );
 
   return <SessionContext.Provider value={value}>{children}</SessionContext.Provider>;

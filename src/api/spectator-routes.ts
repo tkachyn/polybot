@@ -18,6 +18,7 @@ import type {
   PortfolioResponse,
   RobustnessMatrixResponse,
   ServerMode,
+  TraderLeaderboardResponse,
   WalletTransferRequest,
   WalletTransferResponse,
 } from "./dto.js";
@@ -32,6 +33,7 @@ import {
   presentMeta,
   presentMyFight,
   presentPortfolio,
+  presentTraderLeaderboard,
   type AccountSources,
   type LeaderboardRecord,
 } from "./presenters.js";
@@ -58,6 +60,7 @@ export type SpectatorContext = {
   hub: SseHub;
   now: () => number;
   mode: ServerMode;
+  demoMode: boolean;
   showSabotageUpfront: boolean;
   throttles: StreamThrottles;
 };
@@ -134,6 +137,7 @@ export function registerSpectatorRoutes(app: FastifyInstance, context: Spectator
     presentMeta(
       {
         mode: context.mode,
+        demoMode: context.demoMode,
         showSabotageUpfront: context.showSabotageUpfront,
         startingBalance: users.startingBalance,
       },
@@ -206,6 +210,40 @@ export function registerSpectatorRoutes(app: FastifyInstance, context: Spectator
     },
   );
 
+  app.get<{ Params: { raceId: string } }>(
+    "/api/fights/:raceId/traders",
+    async (request): Promise<TraderLeaderboardResponse> => {
+      const race = registry.get(request.params.raceId);
+      return presentTraderLeaderboard(race, users.list(), registry.ledger, now());
+    },
+  );
+
+  app.get<{ Params: { raceId: string } }>(
+    "/api/fights/:raceId/traders/stream",
+    (request, reply) => {
+      const raceId = request.params.raceId;
+      const race = registry.get(raceId);
+      const stream = hub.open(request, reply);
+      const send = () => stream.send(
+        "standings",
+        presentTraderLeaderboard(race, users.list(), registry.ledger, now()),
+      );
+      send();
+      const throttle = trailingThrottle(send, context.throttles.portfolioMs);
+      const unsubscribeRaces = registry.subscribe((changedRaceId, change) => {
+        if (changedRaceId === raceId && (change.kind === "account" || change.kind === "price" || change.kind === "fight")) {
+          throttle.schedule();
+        }
+      });
+      const unsubscribeUsers = users.subscribe(() => throttle.schedule());
+      stream.onClose(() => {
+        unsubscribeRaces();
+        unsubscribeUsers();
+        throttle.cancel();
+      });
+    },
+  );
+
   app.get<{ Params: { raceId: string; racerId: string }; Querystring: { seq?: string } }>(
     "/api/fights/:raceId/agents/:racerId/frame",
     async (request, reply) => {
@@ -273,6 +311,9 @@ export function registerSpectatorRoutes(app: FastifyInstance, context: Spectator
     app.post<{ Params: { userId: string }; Body: WalletTransferRequest }>(
       `/api/users/:userId/${direction}`,
       async (request): Promise<WalletTransferResponse> => {
+        if (context.demoMode) {
+          throw new DomainError("invalid", "Wallet transfers are disabled in demo mode");
+        }
         const userId = request.params.userId;
         const body = bodyObject<WalletTransferRequest>(request.body);
         const at = now();

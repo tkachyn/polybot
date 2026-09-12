@@ -33,6 +33,8 @@ export type ApiServerOptions = {
   enableTicker?: boolean;
   tickIntervalMs?: number;
   mode?: ServerMode;
+  /** Locks wallet transfers and enables the judge onboarding flow. */
+  demoMode?: boolean;
   /** Reveal sabotage text before fights open. Default true. */
   showSabotageUpfront?: boolean;
   /** Credits granted to new users. Default 1000. */
@@ -181,6 +183,7 @@ export function buildApi(options: ApiServerOptions): FastifyInstance {
     hub,
     now,
     mode,
+    demoMode: options.demoMode ?? false,
     showSabotageUpfront: options.showSabotageUpfront ?? true,
     throttles: { ...DEFAULT_STREAM_THROTTLES, ...options.streamThrottles },
   });

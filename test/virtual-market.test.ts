@@ -14,6 +14,16 @@ test("starts with four equal 0.25 prices", () => {
   });
 });
 
+test("lists distinct traders in first-trade order", () => {
+  const market = new VirtualPredictionMarket(racers);
+  market.fund("user-1", 10);
+  market.fund("user-2", 10);
+  market.buy("user-1", "racer-1", 1);
+  market.buy("user-2", "racer-2", 1);
+  market.buy("user-1", "racer-3", 1);
+  assert.deepEqual(market.traderUserIds(), ["user-1", "user-2"]);
+});
+
 test("buying shares shifts normalized prices", () => {
   const market = new VirtualPredictionMarket(racers);
   market.fund("spectator-1", 10);

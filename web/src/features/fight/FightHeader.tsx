@@ -1,6 +1,7 @@
 /**
  * The two header strips of the fight screen: master task, then sabotage.
  */
+import type { ReactNode } from "react";
 import type { FightDetail, SabotageDetail } from "@contract";
 import { AgentMonogram, ElapsedClock, SabotageTag, StatusPill, Tag, fightPillStatus } from "../../components";
 import { cx } from "../../lib/cx";
@@ -14,7 +15,7 @@ import styles from "./FightHeader.module.css";
 // Master task strip
 // ---------------------------------------------------------------------------
 
-export function MasterStrip({ fight }: { fight: FightDetail }) {
+export function MasterStrip({ fight, action }: { fight: FightDetail; action?: ReactNode }) {
   return (
     <section className={styles.master} aria-label="Master task">
       <div className={styles.idBlock}>
@@ -49,6 +50,7 @@ export function MasterStrip({ fight }: { fight: FightDetail }) {
           <dd className={cx("num", styles.statValue)}>{formatNumber(fight.traders)}</dd>
         </div>
         <MarketState fight={fight} />
+        {action && <div className={styles.invite}>{action}</div>}
       </dl>
     </section>
   );
