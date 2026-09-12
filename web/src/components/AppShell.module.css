@@ -246,12 +246,16 @@
 
 @media (max-width: 759px) {
   .shell {
-    grid-template-columns: var(--sidebar-width-collapsed) minmax(0, 1fr);
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: var(--topbar-height) minmax(0, 1fr) auto;
+    grid-template-areas:
+      "topbar"
+      "content"
+      "sidebar";
   }
 
   .brand {
-    justify-content: center;
-    padding: 0;
+    display: none;
   }
 
   .brandText,
@@ -265,13 +269,16 @@
   }
 
   .nav {
-    padding: var(--space-3) var(--space-1-5) max(var(--space-3), var(--safe-bottom));
+    flex-direction: row;
+    justify-content: space-around;
+    padding: var(--space-1) max(var(--space-1), var(--safe-right)) max(var(--space-1), var(--safe-bottom)) max(var(--space-1), var(--safe-left));
   }
 
   .navLink {
     justify-content: center;
     padding: 0;
-    height: 40px;
+    width: 44px;
+    height: 44px;
   }
 
   .searchInput {
@@ -279,6 +286,18 @@
   }
 
   .avatar {
+    display: none;
+  }
+
+  .sidebar {
+    overflow: hidden;
+    border-top: 1px solid var(--color-hairline);
+    border-right: 0;
+  }
+}
+
+@media (max-width: 479px) {
+  .search {
     display: none;
   }
 }
