@@ -108,6 +108,10 @@ export function createSimulatedCoordinatorFactory(options: SimulationOptions): C
         eventStore: new InMemoryRaceEventStore(),
         obstacleProvider,
         ledger: context.ledger,
+        // Final evaluations land in the registry's store, labelled as
+        // scripted agents rather than real models.
+        evaluationStore: context.evaluationStore,
+        mode: "simulated",
       },
     );
   };

@@ -8,12 +8,24 @@ import {
   fitTemplate,
   pageAfterCheckpoint,
   templateForCourse,
+  type SimTemplate,
 } from "../src/simulation/catalogue.js";
 import { SIM_AGENT_ROSTER } from "../src/simulation/factory.js";
 import { escapeXml, renderSimFrame } from "../src/simulation/frames.js";
-import { planFight, planTimeline } from "../src/simulation/plan.js";
+import { planFight, planTimeline, type RacerPlan } from "../src/simulation/plan.js";
 import { Rng, hashString } from "../src/simulation/rng.js";
 import { InertCompetitorRunner, SimulatedCompetitorRunner } from "../src/simulation/runner.js";
+import {
+  STALL_PACE_FACTOR,
+  SimRacerScript,
+  chooseResponse,
+  runScriptOffline,
+  scriptHistoryRuns,
+  targetForAction,
+  type ScriptEvent,
+  type ScriptHazard,
+  type ScriptStep,
+} from "../src/simulation/script.js";
 import { SimulatedObstacleExecutor, SimulatedWorld, scaleDurationMs } from "../src/simulation/world.js";
 
 const RACERS = SIM_AGENT_ROSTER.map((agent, index) => ({ racerId: `racer-${index + 1}`, key: agent.key }));
@@ -234,6 +246,11 @@ test("simulated runner reports actions and frames, advances checkpoints and fini
   assert.ok(sink.frames.length >= sink.actions.length);
   assert.ok(sink.frames.every((frame) => frame.contentType === "image/svg+xml"));
   assert.deepEqual(runner.activeRacers(), []);
+  // Every step carries browser evidence; without sabotage nothing is a decoy.
+  const steps2 = sink.actions.filter((report) => report.kind !== "note");
+  assert.ok(steps2.every((report) => report.evidence !== undefined));
+  assert.ok(steps2.every((report) => report.evidence?.target?.decoy !== true));
+  assert.ok(steps2.some((report) => report.evidence?.target?.role === "primary-action"));
 });
 
 test("disrupted runners report blocked steps against the sabotage", async () => {
@@ -246,7 +263,9 @@ test("disrupted runners report blocked steps against the sabotage", async () => 
   };
   const executor = new SimulatedObstacleExecutor(world, "exec");
   const plan = planFight("runner-disrupt", RACERS, template.stages.length, { difficulty: "normal" });
-  plan.racers["racer-2"] = { ...plan.racers["racer-2"], failAtStep: null };
+  // Stubborn (never careful, never composed): it hammers the blocked control
+  // until the modal reverts, then resumes.
+  plan.racers["racer-2"] = { ...plan.racers["racer-2"], failAtStep: null, vigilance: 0, composure: 0 };
   const runner = new SimulatedCompetitorRunner({
     template,
     world,
@@ -270,6 +289,9 @@ test("disrupted runners report blocked steps against the sabotage", async () => 
   assert.ok(blocked.length >= 1, "blocked steps were reported");
   assert.ok(sink.actions.some((report) => report.text.startsWith("resume:")));
   assert.ok(sink.frames.some((frame) => String(frame.body).includes("SABOTAGE")));
+  assert.ok(sink.actions.some((report) =>
+    report.kind === "error" && report.evidence?.blockedBy === "modal" &&
+    report.evidence.target?.role === "primary-action"), "the overlay is named as the blocker");
 });
 
 test("runner stop() aborts promptly and leaves no pending loop", async () => {
@@ -321,4 +343,221 @@ test("sim policies carry the scaled duration and the world honours it", async ()
   assert.ok(world.disruption("racer-1"));
   clock = 1_800;
   assert.equal(world.disruption("racer-1"), null);
+});
+
+// ---------------------------------------------------------------------------
+// Scripted behaviour and browser evidence (script.ts)
+// ---------------------------------------------------------------------------
+
+function templateById(id: string): SimTemplate {
+  const template = SIM_TEMPLATES.find((item) => item.id === id);
+  assert.ok(template, id);
+  return template;
+}
+
+function scriptPlan(template: SimTemplate, overrides: Partial<RacerPlan> = {}): RacerPlan {
+  return {
+    racerId: "racer-1",
+    key: "gpt",
+    speed: 1,
+    stepsPerStage: [...template.stages.map(() => 4), 2],
+    errorRate: 0,
+    loopRate: 0,
+    failAtStep: null,
+    ...overrides,
+  };
+}
+
+/** A script standing on the page right after `checkpoint`. */
+function scriptAfter(
+  template: SimTemplate,
+  checkpoint: number,
+  overrides: Partial<RacerPlan> = {},
+): SimRacerScript {
+  const script = new SimRacerScript(scriptPlan(template, overrides), template, new Rng(`script/${template.id}`));
+  for (let page = 0; page < checkpoint; page += 1) {
+    while (!script.pageDone) script.next(null, 0);
+    script.advance();
+  }
+  return script;
+}
+
+/** The template's own sabotage, applied at t = 1 s. */
+function hazardOf(template: SimTemplate, overrides: Partial<ScriptHazard> = {}): ScriptHazard {
+  return {
+    hazardType: template.sabotage.policy.hazardType,
+    intensity: template.sabotage.policy.intensity,
+    appliedAt: 1_000,
+    until: 1_000 + template.sabotage.policy.durationMs,
+    effectLabel: template.sabotage.effectLabel,
+    ...overrides,
+  };
+}
+
+/** Steps one second apart, with the hazard on while it lasts, until the page is done. */
+function runPage(script: SimRacerScript, hazard: ScriptHazard | null): ScriptStep[] {
+  const steps: ScriptStep[] = [];
+  for (let t = 2_000; !script.pageDone && steps.length < 200; t += 1_000) {
+    steps.push(script.next(hazard && t < hazard.until ? hazard : null, t));
+  }
+  return steps;
+}
+
+const ADAPTIVE = { vigilance: 0, composure: 1, haste: 0 };
+
+test("hazard responses follow the plan's traits, which vary per fight", () => {
+  const rng = new Rng("responses");
+  assert.equal(chooseResponse({ vigilance: 1 }, rng), "careful");
+  assert.equal(chooseResponse({ vigilance: 0, composure: 0 }, rng), "stubborn");
+  assert.equal(chooseResponse({ vigilance: 0, composure: 1, haste: 1 }, rng), "hasty");
+  assert.equal(chooseResponse({ vigilance: 0, composure: 1, haste: 0 }, rng), "adaptive");
+  const seen = new Set<string>();
+  for (let index = 0; index < 40; index += 1) {
+    for (const racer of Object.values(planFight(`traits-${index}`, RACERS, 4).racers)) {
+      assert.ok(racer.vigilance !== undefined && racer.composure !== undefined && racer.haste !== undefined);
+      seen.add(chooseResponse(racer, new Rng(`traits-${index}/${racer.racerId}`)));
+    }
+  }
+  assert.deepEqual([...seen].sort(), ["adaptive", "careful", "hasty", "stubborn"]);
+});
+
+test("normal steps carry a plausible target that is never a decoy", () => {
+  const template = templateById("ssd-checkout");
+  const cart = template.stages[2];
+  const target = (role: string | null, text: string | null) => ({ role, text, decoy: false });
+  assert.deepEqual(targetForAction(`click "${cart.target}"`, cart), target("primary-action", cart.target));
+  assert.deepEqual(targetForAction("fill Full name: Arena Tester", cart), target("textbox", "Full name"));
+  assert.deepEqual(targetForAction("type \"1tb usb-c ssd\" into the search box", cart), target("textbox", "search box"));
+  assert.deepEqual(targetForAction("select Topic: Billing", cart), target("combobox", "Topic"));
+  assert.deepEqual(targetForAction("open \"Kinetic X1\"", cart), target("link", "Kinetic X1"));
+  assert.deepEqual(targetForAction("read the order subtotal: $84.99", cart), target(null, null));
+
+  // The cart page ends on its main control, which moves on to the next page.
+  const steps = runPage(scriptAfter(template, 2), null);
+  assert.ok(steps.every((step) => step.kind === "action" && step.evidence?.target?.decoy === false));
+  assert.deepEqual(steps.at(-1)?.evidence, { target: target("primary-action", cart.target), navigated: true });
+});
+
+test("a careful agent closes a blocking modal at once and makes no missteps on that page", () => {
+  const template = templateById("boot-exchange");
+  // Random errors would be likely on any other page.
+  const script = scriptAfter(template, template.sabotage.checkpoint, { vigilance: 1, errorRate: 0.5 });
+  const steps = runPage(script, hazardOf(template));
+  assert.match(steps[0].text, /^click "Close" on the ".+" overlay$/);
+  assert.deepEqual(steps[0].evidence?.target, { role: "dismiss-overlay", text: "Close", decoy: false });
+  assert.ok(steps[0].disruption, "the overlay was on screen when it acted");
+  assert.ok(steps.every((step) => step.kind === "action"), "no errors after the hit");
+  assert.ok(steps.slice(1).every((step) => step.disruption === null), "the closed overlay is gone");
+});
+
+test("a hasty agent clicks the planted decoy; a careful one clicks the real control", () => {
+  const template = templateById("ssd-checkout");
+  const page = pageAfterCheckpoint(template, template.sabotage.checkpoint);
+  const decoyText = template.sabotage.effectLabel;
+  const hasty = runPage(
+    scriptAfter(template, template.sabotage.checkpoint, { vigilance: 0, composure: 1, haste: 1 }),
+    hazardOf(template),
+  );
+  assert.equal(hasty[0].text, `click "${decoyText}"`);
+  assert.deepEqual(hasty[0].evidence?.target, { role: "primary-action", text: decoyText, decoy: true });
+  assert.deepEqual([hasty[1].kind, hasty[1].evidence?.blockedBy], ["error", "timeout"]);
+  assert.deepEqual(hasty[2].evidence?.target, { role: "primary-action", text: page.target, decoy: false });
+  assert.equal(hasty.filter((step) => step.evidence?.target?.decoy).length, 1);
+
+  // The decoy stays up for the whole page: a careful agent reads the labels.
+  const careful = runPage(
+    scriptAfter(template, template.sabotage.checkpoint, { vigilance: 1 }),
+    hazardOf(template, { until: 1_000_000 }),
+  );
+  assert.ok(careful.every((step) => step.kind === "action" && step.evidence?.target?.decoy !== true));
+  const real = careful.find((step) => step.text.includes("not the look-alike"));
+  assert.deepEqual(real?.evidence?.target, { role: "primary-action", text: page.target, decoy: false });
+});
+
+test("evidence names the block until an adaptive agent works around it", () => {
+  const move = templateById("library-renewal");
+  const moveSteps = runPage(scriptAfter(move, move.sabotage.checkpoint, ADAPTIVE), hazardOf(move, { until: 1_000_000 }));
+  const opened = moveSteps.findIndex((step) => step.evidence?.target?.role === "more-actions");
+  assert.ok(opened > 0, "opens More options after a miss");
+  assert.equal(moveSteps[opened].text, "open \"More options\"");
+  assert.ok(moveSteps.slice(0, opened).every((step) => step.kind === "error" && step.evidence?.blockedBy === "hidden"));
+  assert.ok(moveSteps.slice(opened).every((step) => step.kind === "action"));
+
+  const disable = templateById("support-refund");
+  const disableSteps = runPage(scriptAfter(disable, disable.sabotage.checkpoint, ADAPTIVE), hazardOf(disable));
+  assert.deepEqual([disableSteps[0].kind, disableSteps[0].evidence?.blockedBy], ["error", "disabled"]);
+  assert.deepEqual(
+    disableSteps[0].evidence?.target,
+    { role: "primary-action", text: pageAfterCheckpoint(disable, disable.sabotage.checkpoint).target, decoy: false },
+  );
+  assert.ok(disableSteps.slice(1).every((step) => step.kind === "action"), "it waits instead of clicking again");
+
+  const rename = templateById("garden-rsvp");
+  const renameSteps = runPage(scriptAfter(rename, rename.sabotage.checkpoint, ADAPTIVE), hazardOf(rename));
+  assert.deepEqual([renameSteps[0].kind, renameSteps[0].evidence?.blockedBy], ["error", "missing"]);
+  assert.equal(renameSteps[1].kind, "action", "the relabelled control works");
+  assert.deepEqual(renameSteps[1].evidence?.target, { role: "primary-action", text: "Decline", decoy: false });
+});
+
+test("a stubborn agent hammers the blocked control, then stalls about 3x its usual page", () => {
+  const template = templateById("flight-sea");
+  const script = scriptAfter(template, template.sabotage.checkpoint, { vigilance: 0, composure: 0 });
+  const steps = runPage(script, hazardOf(template, { intensity: 2, until: 3_500 }));
+  assert.deepEqual(
+    steps.slice(0, 2).map((step) => [step.kind, step.evidence?.blockedBy]),
+    [["error", "modal"], ["error", "modal"]],
+  );
+  assert.ok(steps.some((step) => step.text.startsWith("resume:")));
+  assert.ok(steps.some((step) => step.signature === "stall:recheck"));
+  // Its clean pages took 4 steps: getting past this one takes over three times that.
+  assert.ok(steps.length >= 3 * 4, `${steps.length} steps`);
+  assert.ok(steps.length <= Math.ceil(STALL_PACE_FACTOR * 4) + 1, `${steps.length} steps`);
+});
+
+test("offline runs follow the engine: progress waits out the hazard, frozen races apply none", () => {
+  const template = templateById("ssd-checkout");
+  const sabotage = [{ checkpoint: 2, hazardType: "insert_decoy" as const, durationMs: 60_000, intensity: 2 }];
+  const plan = scriptPlan(template, { vigilance: 0, composure: 1, haste: 1 });
+  const base = { plan, template, seed: "offline", sabotage, freezeAtMs: 1_000_000, horizonMs: 2_000_000, maxSteps: 90 };
+  const isStep = (event: ScriptEvent): event is Extract<ScriptEvent, { kind: "step" }> => event.kind === "step";
+
+  const run = runScriptOffline(base);
+  assert.deepEqual(run.hitAt, [run.checkpointAt[1]]);
+  assert.ok(run.checkpointAt[2] >= run.hitAt[0] + 60_000, "no progress while recovering");
+  assert.ok(run.finishAt !== null && run.finishAt > run.checkpointAt[3]);
+  const times = run.events.map((event) => event.t);
+  assert.deepEqual(times, [...times].sort((left, right) => left - right));
+  const decoyClicks = run.events.filter(isStep).filter((event) => event.entry.evidence?.target?.decoy);
+  assert.ok(decoyClicks.length > 0 && decoyClicks.every((event) => event.t > run.hitAt[0]));
+
+  const frozen = runScriptOffline({ ...base, freezeAtMs: 1 });
+  assert.deepEqual(frozen.hitAt, []);
+  assert.ok(frozen.events.filter(isStep).every((event) => event.entry.disruption === null));
+
+  const crashed = runScriptOffline({ ...base, plan: { ...plan, failAtStep: 5 } });
+  assert.equal(crashed.events.at(-1)?.kind, "crash");
+  assert.deepEqual([crashed.finishAt, crashed.steps], [null, 5]);
+  assert.ok(crashed.failAt !== null);
+
+  const exhausted = runScriptOffline({ ...base, maxSteps: 6 });
+  const last = exhausted.events.at(-1);
+  assert.ok(last?.kind === "note" && last.idle, "the budget runs out");
+  assert.equal(exhausted.finishAt, null);
+});
+
+test("history runs finish well before the cap, and void runs never finish before it", () => {
+  const template = templateById("ssd-checkout");
+  const sabotage = [{ checkpoint: 2, hazardType: "insert_decoy" as const, durationMs: 9_000, intensity: 2 }];
+  const options = { template, sabotage, freezeAtMs: 180_000, capMs: 300_000, maxSteps: 90 };
+  for (const [index, seed] of ["history-1", "history-2", "history-3"].entries()) {
+    const seeds = RACERS.map(({ racerId }) => `${seed}/${racerId}`);
+    const fair = planFight(seed, RACERS, template.stages.length, { difficulty: index === 2 ? "hard" : "normal" });
+    const runs = scriptHistoryRuns({ ...options, seeds, voided: false, plans: RACERS.map(({ racerId }) => fair.racers[racerId]) });
+    const finishes = runs.map((run) => run.finishAt).filter((at): at is number => at !== null);
+    assert.ok(finishes.length > 0 && Math.min(...finishes) <= 280_000, `${seed}: ${finishes.join(",")}`);
+
+    const brutal = planFight(seed, RACERS, template.stages.length, { difficulty: "brutal" });
+    const voided = scriptHistoryRuns({ ...options, seeds, voided: true, plans: RACERS.map(({ racerId }) => brutal.racers[racerId]) });
+    assert.ok(voided.every((run) => run.finishAt === null || run.finishAt >= 320_000), seed);
+  }
 });

@@ -1,21 +1,27 @@
+import type { AgentIdentity } from "../api/dto.js";
 import type { ApiCreateRaceInput, RaceRegistry } from "../api/race-registry.js";
 import type { RaceCoordinator } from "../application/race-coordinator.js";
 import { isDomainError } from "../domain/errors.js";
-import type { RaceStatus } from "../domain/types.js";
+import type { DisruptionCommand, RaceStatus, SabotagePlan } from "../domain/types.js";
 import {
   SIM_HISTORY_COURSE_ID,
   SIM_TEMPLATES,
   courseIdFor,
-  effectLabelFor,
   fitTemplate,
-  pageAfterCheckpoint,
   type SimTemplate,
 } from "./catalogue.js";
 import { SIM_AGENT_ROSTER, assertTimeScale, type SimulationOptions } from "./factory.js";
 import { renderSimFrame } from "./frames.js";
-import { SIM_MAX_STEPS, planFight, planTimeline, type FightDifficulty } from "./plan.js";
+import { SIM_MAX_STEPS, planFight, type FightDifficulty } from "./plan.js";
 import { Rng } from "./rng.js";
-import { blockedStep } from "./runner.js";
+import {
+  actionReport,
+  scriptHistoryRuns,
+  stepCaption,
+  type ScriptEvent,
+  type ScriptSabotageStep,
+  type ScriptStep,
+} from "./script.js";
 import { scaleDurationMs } from "./world.js";
 
 export type SimulationAutopilotOptions = SimulationOptions & {
@@ -37,11 +43,10 @@ const BOT_TOP_UP_BELOW = 300;
 const MIN_TIMER_MS = 20;
 
 type HistoryEvent =
-  | { t: number; kind: "checkpoint"; racerId: string; checkpoint: number }
-  | { t: number; kind: "finish"; racerId: string }
-  | { t: number; kind: "fail"; racerId: string }
-  | { t: number; kind: "trade" }
-  | { t: number; kind: "action"; racerId: string; text: string; url: string; step: number; error?: string; signature?: string };
+  | { t: number; order: number; kind: "trade" }
+  | (ScriptEvent & { order: number; racerId: string; racerIndex: number });
+
+type HistoryStepEvent = Extract<HistoryEvent, { kind: "note" | "step" | "crash" }>;
 
 function isLive(status: RaceStatus): boolean {
   return status === "running" || status === "hazards_frozen" || status === "finishing";
@@ -50,6 +55,21 @@ function isLive(status: RaceStatus): boolean {
 function isOver(coordinator: RaceCoordinator): boolean {
   const status = coordinator.engine.race.status;
   return status === "finished" || status === "timed_out";
+}
+
+/** The engine's ordered sabotage sequence; a legacy plan is one step. */
+export function sabotageStepsOf(plan: SabotagePlan | undefined): ScriptSabotageStep[] {
+  if (!plan) return [];
+  const steps: ReadonlyArray<{ checkpoint: number; policy: DisruptionCommand }> =
+    plan.steps && plan.steps.length > 0
+      ? plan.steps
+      : [{ checkpoint: plan.trigger.checkpoint, policy: plan.policy }];
+  return steps.map((step) => ({
+    checkpoint: step.checkpoint,
+    hazardType: step.policy.hazardType,
+    durationMs: step.policy.durationMs,
+    intensity: step.policy.intensity,
+  }));
 }
 
 /**
@@ -223,6 +243,12 @@ export class SimulationAutopilot {
     }
   }
 
+  /**
+   * Replays one fight in the past. Each racer's script (the same one the live
+   * runner follows) is run offline against the engine's rules, then every
+   * step, frame, checkpoint and finish is recorded through the coordinator
+   * with its past timestamp, so the fight closes with a real evaluation.
+   */
   private async seedHistoryFight(startAt: number, voided: boolean): Promise<void> {
     const template = this.rng.pick(SIM_TEMPLATES);
     const input = this.buildInput(template, { history: true });
@@ -238,87 +264,47 @@ export class SimulationAutopilot {
       course.stages.length,
       { difficulty },
     );
-    const sabotage = fight.sabotage?.policy
-      ? {
-          checkpoint: fight.sabotage.checkpoint,
-          durationMs: fight.sabotage.policy.durationMs,
-          intensity: fight.sabotage.policy.intensity,
-        }
-      : null;
-    const timelineRng = new Rng(`${input.seed}/timeline`);
-    const timelines = racerIds.map((racerId) =>
-      planTimeline(plan.racers[racerId], timelineRng.fork(racerId), sabotage));
-    if (!voided && timelines.every((timeline) => timeline.finishAt === null)) {
-      timelines[0] = planTimeline(
-        { ...plan.racers[racerIds[0]], failAtStep: null },
-        timelineRng.fork(`${racerIds[0]}/retry`),
-        sabotage,
-      );
-    }
+    const race = coordinator.engine.race;
+    const cap = race.absoluteDurationMs;
+    const runs = scriptHistoryRuns({
+      template: course,
+      plans: racerIds.map((racerId) => plan.racers[racerId]),
+      seeds: racerIds.map((racerId) => `${input.seed}/script/${racerId}`),
+      sabotage: sabotageStepsOf(race.sabotagePlan),
+      freezeAtMs: race.targetDurationMs,
+      capMs: cap,
+      voided,
+      maxSteps: SIM_MAX_STEPS,
+    });
 
-    const cap = coordinator.engine.race.absoluteDurationMs;
-    const finishes = timelines
-      .map((timeline) => timeline.finishAt)
-      .filter((finishAt): finishAt is number => finishAt !== null);
-    const fastest = finishes.length > 0 ? Math.min(...finishes) : null;
-    let scale = 1;
-    if (!voided && fastest !== null && fastest > cap - 20_000) scale = (cap - 50_000) / fastest;
-    if (voided && fastest !== null && fastest < cap + 20_000) scale = (cap + 30_000) / fastest;
-
+    let order = 0;
     const events: HistoryEvent[] = [];
-    timelines.forEach((timeline, index) => {
-      const racerId = racerIds[index];
-      timeline.checkpointAt.forEach((offset, cpIndex) => {
-        const t = offset * scale;
-        const stage = course.stages[cpIndex];
-        const text = stage.actions[stage.actions.length - 1] ?? `click "${stage.target}"`;
-        events.push({ t: t - 1_200, kind: "action", racerId, text, url: stage.url, step: timeline.stepsAt[cpIndex] });
-        events.push({ t, kind: "checkpoint", racerId, checkpoint: cpIndex + 1 });
-        if (sabotage && cpIndex + 1 === sabotage.checkpoint) {
-          const page = pageAfterCheckpoint(course, sabotage.checkpoint);
-          const hazard = fight.sabotage?.policy?.hazardType ?? "blocking_modal";
-          const effectLabel = effectLabelFor(course, hazard, page);
-          for (let attempt = 0; attempt < 2; attempt += 1) {
-            const blocked = blockedStep(hazard, page, effectLabel, attempt);
-            events.push({
-              t: t + 1_500 + attempt * 2_500,
-              kind: "action",
-              racerId,
-              text: blocked.text,
-              url: page.url,
-              step: timeline.stepsAt[cpIndex] + attempt + 1,
-              error: blocked.error,
-              signature: blocked.signature,
-            });
-          }
-        }
-      });
-      if (timeline.finishAt !== null) {
-        const t = timeline.finishAt * scale;
-        const text = course.finish.actions[course.finish.actions.length - 1] ?? "submit";
-        const steps = timeline.stepsAt.at(-1) ?? 0;
-        events.push({ t: t - 1_000, kind: "action", racerId, text, url: course.finish.url, step: steps + 2 });
-        events.push({ t, kind: "finish", racerId });
+    runs.forEach((run, racerIndex) => {
+      for (const event of run.events) {
+        events.push({ ...event, racerId: racerIds[racerIndex], racerIndex, order: order++ });
       }
-      if (timeline.failAt !== null) events.push({ t: timeline.failAt * scale, kind: "fail", racerId });
     });
     if (this.bots.length > 0) {
+      const finishes = runs
+        .map((run) => run.finishAt)
+        .filter((finishAt): finishAt is number => finishAt !== null);
+      const fastest = finishes.length > 0 ? Math.min(...finishes) : null;
       const tradeUntil = Math.min(
-        coordinator.engine.race.targetDurationMs - 2_000,
-        fastest !== null ? fastest * scale - 1_000 : cap,
+        race.targetDurationMs - 2_000,
+        fastest !== null ? fastest - 1_000 : cap,
       );
       const trades = this.rng.int(10, 24);
       for (let index = 0; index < trades; index += 1) {
-        events.push({ t: this.rng.range(2_000, Math.max(3_000, tradeUntil)), kind: "trade" });
+        events.push({ t: this.rng.range(2_000, Math.max(3_000, tradeUntil)), kind: "trade", order: order++ });
       }
     }
-    events.sort((left, right) => left.t - right.t);
+    events.sort((left, right) => left.t - right.t || left.order - right.order);
 
     let lastAt = startAt;
     for (const event of events) {
       if (isOver(coordinator)) break;
-      let at = startAt + Math.max(1, Math.round(event.t));
       if (event.t >= cap) break;
+      let at = startAt + Math.max(1, Math.round(event.t));
       switch (event.kind) {
         case "checkpoint":
           at = await this.pastRecovery(coordinator, event.racerId, at);
@@ -330,8 +316,9 @@ export class SimulationAutopilot {
           lastAt = Math.max(lastAt, at);
           await coordinator.recordFinish(event.racerId, at);
           break;
-        case "fail":
+        case "crash":
           lastAt = Math.max(lastAt, at);
+          this.recordHistoryStep(coordinator, course, fight.agents, event, at);
           coordinator.engine.failRacer(event.racerId, "simulated agent crashed: browser context lost", at);
           await coordinator.tick(at);
           break;
@@ -339,22 +326,10 @@ export class SimulationAutopilot {
           lastAt = Math.max(lastAt, at);
           this.botTrade(coordinator, at);
           break;
-        case "action": {
+        default:
           lastAt = Math.max(lastAt, at);
-          const racer = coordinator.engine.racers.get(event.racerId);
-          if (racer && (racer.status === "running" || racer.status === "recovering")) {
-            coordinator.recordAgentAction(event.racerId, {
-              kind: event.error ? "error" : "action",
-              text: event.text,
-              url: event.url,
-              step: event.step,
-              maxSteps: SIM_MAX_STEPS,
-              signature: event.signature,
-              error: event.error,
-            }, at);
-          }
+          this.recordHistoryStep(coordinator, course, fight.agents, event, at);
           break;
-        }
       }
     }
     if (!isOver(coordinator)) {
@@ -365,10 +340,65 @@ export class SimulationAutopilot {
     await coordinator.shutdown();
   }
 
+  /** Records one scripted step, with its browser evidence and frame, at `at`. */
+  private recordHistoryStep(
+    coordinator: RaceCoordinator,
+    course: SimTemplate,
+    agents: readonly AgentIdentity[],
+    event: HistoryStepEvent,
+    at: number,
+  ): void {
+    const racer = coordinator.engine.racers.get(event.racerId);
+    if (!racer || (racer.status !== "running" && racer.status !== "recovering")) return;
+    let caption: string;
+    let disruption: ScriptStep["disruption"] = null;
+    let status: "working" | "failed" | "idle" = "working";
+    if (event.kind === "note") {
+      coordinator.recordAgentAction(event.racerId, {
+        kind: "note",
+        text: event.text,
+        url: event.page.url,
+        step: event.step,
+        maxSteps: SIM_MAX_STEPS,
+      }, at);
+      caption = event.text;
+      if (event.idle) status = "idle";
+    } else {
+      coordinator.recordAgentAction(
+        event.racerId,
+        actionReport(event.entry, event.page, event.step, SIM_MAX_STEPS),
+        at,
+      );
+      caption = stepCaption(event.entry);
+      disruption = event.entry.disruption;
+      if (event.kind === "crash") status = "failed";
+    }
+    const agent = agents[event.racerIndex];
+    coordinator.recordAgentFrame(event.racerId, {
+      contentType: "image/svg+xml",
+      capturedAt: at,
+      body: renderSimFrame({
+        brand: course.brand,
+        page: event.page,
+        stageNumber: event.stageNumber,
+        stageCount: course.stages.length,
+        stageLabel: course.stages[event.stageNumber - 1]?.label ?? "Finish",
+        agentKey: agent?.key ?? event.racerId,
+        agentName: agent?.name ?? event.racerId,
+        step: event.step,
+        maxSteps: SIM_MAX_STEPS,
+        action: caption,
+        disruption,
+        status,
+      }),
+    }, at);
+  }
+
   /**
    * The engine rejects progress while a racer is recovering. Returns `at`,
    * or, when the racer is still recovering then, its recoverAt after ticking
-   * the coordinator there so the racer is running again.
+   * the coordinator there so the racer is running again. Scripted history
+   * already waits out every hazard; this is a safety net.
    */
   private async pastRecovery(
     coordinator: RaceCoordinator,

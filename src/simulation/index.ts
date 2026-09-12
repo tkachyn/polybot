@@ -34,6 +34,19 @@ export { renderSimFrame, AGENT_COLORS, type SimFrameInput } from "./frames.js";
 export { planFight, planTimeline, type FightPlan, type RacerPlan } from "./plan.js";
 export { Rng, hashString, mulberry32 } from "./rng.js";
 export { InertCompetitorRunner, SimulatedCompetitorRunner } from "./runner.js";
+export {
+  SimRacerScript,
+  chooseResponse,
+  runScriptOffline,
+  scriptHistoryRuns,
+  targetForAction,
+  type HazardResponse,
+  type OfflineRun,
+  type ScriptEvent,
+  type ScriptHazard,
+  type ScriptSabotageStep,
+  type ScriptStep,
+} from "./script.js";
 export { SimulatedSessionManager } from "./sessions.js";
 export { SimulatedCourseVerifier } from "./verifier.js";
 export { SimulatedObstacleExecutor, SimulatedWorld } from "./world.js";
