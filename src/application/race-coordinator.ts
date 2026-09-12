@@ -1,6 +1,7 @@
 import type { ObstacleProvider, Race, Racer } from "../domain/types.js";
 import { RaceEngine } from "../domain/race-engine.js";
 import { VirtualPredictionMarket } from "../prediction/virtual-market.js";
+import type { TradeReceipt } from "../prediction/virtual-market.js";
 import type {
   CompetitorAgentRunner,
   CompetitorContext,
@@ -159,6 +160,18 @@ export class RaceCoordinator {
 
   fundSpectator(userId: string, credits: number): void {
     this.market.fund(userId, credits);
+  }
+
+  buyShares(userId: string, racerId: string, quantity: number): TradeReceipt {
+    return this.market.buy(userId, racerId, quantity);
+  }
+
+  sellShares(userId: string, racerId: string, quantity: number): TradeReceipt {
+    return this.market.sell(userId, racerId, quantity);
+  }
+
+  spectatorBalance(userId: string): number {
+    return this.market.balance(userId);
   }
 
   snapshot(): RaceSnapshot {
