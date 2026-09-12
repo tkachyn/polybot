@@ -33,6 +33,7 @@ import {
   presentMeta,
   presentMyFight,
   presentPortfolio,
+  presentTraderLeaderboard,
   type AccountSources,
   type LeaderboardRecord,
 } from "./presenters.js";
@@ -213,36 +214,7 @@ export function registerSpectatorRoutes(app: FastifyInstance, context: Spectator
     "/api/fights/:raceId/traders",
     async (request): Promise<TraderLeaderboardResponse> => {
       const race = registry.get(request.params.raceId);
-      const rows = race.market.traderUserIds().flatMap((userId) => {
-        const user = users.get(userId);
-        const entries = registry.ledger.entries(user.userId)
-          .filter((entry) => entry.raceId === race.raceId);
-        const buys = entries.filter((entry) => entry.type === "buy");
-        if (buys.length === 0) return [];
-        const cost = buys.reduce((sum, entry) => sum - entry.amount, 0);
-        const returned = entries.reduce((sum, entry) =>
-          entry.type === "sell" || entry.type === "payout" || entry.type === "refund"
-            ? sum + entry.amount
-            : sum, 0);
-        const open = race.market.positionsFor(user.userId);
-        const openValue = open.reduce(
-          (sum, position) => sum + position.quantity * race.market.sidePrice(position.racerId, position.side),
-          0,
-        );
-        const pnl = Math.round((returned + openValue - cost) * 1_000_000) / 1_000_000;
-        return [{
-          rank: 0,
-          userId: user.userId,
-          displayName: user.displayName,
-          pnl,
-          returnPct: cost > 0 ? Math.round((pnl / cost) * 1_000_000) / 1_000_000 : null,
-          wagered: Math.round(cost * 1_000_000) / 1_000_000,
-          openPositions: open.length,
-        }];
-      }).sort((left, right) =>
-        right.pnl - left.pnl || right.wagered - left.wagered || left.displayName.localeCompare(right.displayName))
-        .map((row, index) => ({ ...row, rank: index + 1 }));
-      return { serverTime: now(), raceId: race.raceId, rows };
+      return presentTraderLeaderboard(race, users.list(), registry.ledger, now());
     },
   );
 
