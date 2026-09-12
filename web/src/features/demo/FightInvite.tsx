@@ -9,6 +9,7 @@ export function FightInvite({ raceId }: { raceId: string }) {
   const [open, setOpen] = useState(false);
   const [qr, setQr] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [canShare] = useState(() => typeof navigator !== "undefined" && typeof navigator.share === "function");
   const url = useMemo(() => {
     if (typeof window === "undefined") return "";
     return fightInviteUrl(window.location.origin, raceId);
@@ -33,6 +34,14 @@ export function FightInvite({ raceId }: { raceId: string }) {
     }
   };
 
+  const share = async () => {
+    try {
+      await navigator.share({ title: "Sabotage Markets", text: "Join this fight and bet with virtual credits.", url });
+    } catch (error) {
+      if (!(error instanceof DOMException && error.name === "AbortError")) await copy();
+    }
+  };
+
   return (
     <>
       <Button size="sm" variant="ghost" onClick={() => setOpen(true)}>Invite judges</Button>
@@ -44,6 +53,7 @@ export function FightInvite({ raceId }: { raceId: string }) {
             </div>
             <p className={styles.url}>{url}</p>
             <div className={styles.actions}>
+              {canShare && <Button variant="ghost" onClick={() => void share()}>Share</Button>}
               <Button variant="ghost" onClick={() => void copy()}>{copied ? "Copied" : "Copy link"}</Button>
               <ButtonLink variant="action" to={`/fights/${encodeURIComponent(raceId)}/standings`}>Judge standings</ButtonLink>
             </div>
