@@ -1,0 +1,68 @@
+.figure {
+  font-variant-numeric: tabular-nums;
+  font-weight: var(--fw-semibold);
+  line-height: var(--lh-tight);
+  white-space: nowrap;
+  color: var(--color-text);
+}
+
+.sm {
+  font-size: var(--fs-body);
+  font-weight: var(--fw-medium);
+}
+
+.md {
+  font-size: var(--fs-body-lg);
+}
+
+.lg {
+  font-size: var(--fs-price);
+  letter-spacing: var(--tracking-tight);
+}
+
+.xl {
+  font-size: var(--fs-price-lg);
+  letter-spacing: var(--tracking-tight);
+}
+
+.positive {
+  color: var(--color-positive);
+}
+
+.negative {
+  color: var(--color-negative);
+}
+
+.muted {
+  color: var(--color-text-muted);
+}
+
+.secondary {
+  color: var(--color-text-secondary);
+}
+
+.inherit {
+  color: inherit;
+}
+
+.flashUp {
+  animation: flashUp 900ms var(--ease-standard);
+}
+
+.flashDown {
+  animation: flashDown 900ms var(--ease-standard);
+}
+
+@keyframes flashUp {
+  0%,
+  35% {
+    color: var(--color-positive);
+  }
+}
+
+@keyframes flashDown {
+  0%,
+  35% {
+    color: var(--color-negative);
+  }
+}

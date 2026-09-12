@@ -1,0 +1,43 @@
+.indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1-5);
+  color: var(--color-text-muted);
+  font-size: var(--fs-label);
+  font-weight: var(--fw-semibold);
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background-color: currentColor;
+  flex-shrink: 0;
+}
+
+.open .dot {
+  background-color: var(--color-positive);
+}
+
+.connecting .dot,
+.reconnecting .dot {
+  background-color: var(--color-text-muted);
+  animation: blink 1.2s var(--ease-standard) infinite;
+}
+
+.closed {
+  color: var(--color-negative);
+}
+
+.label {
+  line-height: 1;
+}
+
+@keyframes blink {
+  50% {
+    opacity: 0.25;
+  }
+}

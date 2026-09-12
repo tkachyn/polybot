@@ -1,0 +1,124 @@
+/* EmptyState */
+.empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  text-align: center;
+  color: var(--color-text-secondary);
+}
+
+.empty_md {
+  padding: var(--space-12) var(--space-6);
+  border: 1px dashed var(--color-divider);
+  border-radius: var(--radius-lg);
+}
+
+.empty_sm {
+  padding: var(--space-6) var(--space-4);
+}
+
+.emptyIcon {
+  display: inline-flex;
+  color: var(--color-text-muted);
+  margin-bottom: var(--space-1);
+}
+
+.emptyTitle {
+  color: var(--color-text);
+  font-size: var(--fs-body-lg);
+  font-weight: var(--fw-semibold);
+}
+
+.emptyText {
+  max-width: 420px;
+  font-size: var(--fs-body);
+  color: var(--color-text-secondary);
+}
+
+.emptyAction {
+  margin-top: var(--space-2);
+}
+
+/* ErrorBanner */
+.banner {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2-5);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--tint-negative-border);
+  border-radius: var(--radius-md);
+  background-color: var(--tint-negative);
+  color: var(--color-text);
+  font-size: var(--fs-body);
+}
+
+.bannerIcon {
+  flex-shrink: 0;
+  color: var(--color-negative);
+}
+
+.bannerText {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.bannerTitle {
+  font-weight: var(--fw-semibold);
+}
+
+.bannerDismiss {
+  display: inline-flex;
+  padding: var(--space-1);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text-muted);
+}
+
+.bannerDismiss:hover {
+  color: var(--color-text);
+}
+
+/* Skeleton */
+.skeleton {
+  display: block;
+  max-width: 100%;
+  background: linear-gradient(90deg, var(--color-inset) 0%, var(--color-divider) 50%, var(--color-inset) 100%);
+  background-size: 200% 100%;
+  animation: shimmer 1.4s linear infinite;
+  opacity: 0.6;
+}
+
+.skeletonText {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1-5);
+  width: 100%;
+}
+
+.radius_sm {
+  border-radius: var(--radius-sm);
+}
+
+.radius_md {
+  border-radius: var(--radius-md);
+}
+
+.radius_lg {
+  border-radius: var(--radius-lg);
+}
+
+.radius_pill {
+  border-radius: var(--radius-pill);
+}
+
+@keyframes shimmer {
+  from {
+    background-position: 100% 0;
+  }
+  to {
+    background-position: -100% 0;
+  }
+}

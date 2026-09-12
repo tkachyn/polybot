@@ -1,0 +1,122 @@
+.button {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  font-weight: var(--fw-semibold);
+  line-height: 1;
+  white-space: nowrap;
+  text-decoration: none;
+  user-select: none;
+  transition:
+    background-color var(--duration-fast) var(--ease-standard),
+    border-color var(--duration-fast) var(--ease-standard),
+    color var(--duration-fast) var(--ease-standard);
+}
+
+.content {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1-5);
+  min-width: 0;
+}
+
+.text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.icon {
+  display: inline-flex;
+  flex-shrink: 0;
+}
+
+/* Sizes */
+.sm {
+  height: 26px;
+  padding: 0 var(--space-2-5);
+  font-size: var(--fs-body-sm);
+}
+
+.md {
+  height: 32px;
+  padding: 0 var(--space-3-5);
+  font-size: var(--fs-body);
+}
+
+.lg {
+  height: 40px;
+  padding: 0 var(--space-4);
+  font-size: var(--fs-body-lg);
+}
+
+.block {
+  display: flex;
+  width: 100%;
+}
+
+/* Variants */
+.action {
+  background-color: var(--color-action);
+  color: var(--color-on-action);
+}
+
+.action:hover:not(:disabled) {
+  background-color: var(--color-action-hover);
+}
+
+.ghost {
+  background-color: transparent;
+  border-color: var(--color-divider);
+  color: var(--color-text);
+}
+
+.ghost:hover:not(:disabled) {
+  border-color: var(--color-edge);
+  background-color: var(--tint-hover);
+}
+
+.subtle {
+  background-color: var(--color-inset);
+  color: var(--color-text-secondary);
+}
+
+.subtle:hover:not(:disabled) {
+  color: var(--color-text);
+  border-color: var(--color-divider);
+}
+
+.button:disabled {
+  opacity: 0.45;
+}
+
+/* Loading keeps the label's width and hides it behind the spinner. */
+.loading:disabled {
+  opacity: 1;
+  cursor: progress;
+}
+
+.loading .content {
+  visibility: hidden;
+}
+
+.spinner {
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  width: 14px;
+  height: 14px;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: spin 700ms linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}

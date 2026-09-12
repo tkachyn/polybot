@@ -1,0 +1,143 @@
+/*
+ * Sabotage Markets design tokens.
+ * Source of truth: docs/sabotage-markets-handoff.md, section 3 (Visual system).
+ * Values marked "handoff" are exact and must not be changed. Values marked
+ * "extension" are foundation choices that fill gaps the handoff leaves open.
+ *
+ * Breakpoints (CSS variables cannot be used in media queries):
+ *   <= 999px  everything reflows (flexible tracks, wrapping rows)
+ *   <= 759px  sidebar collapses to icons
+ */
+
+:root {
+  /* --- Surfaces: exactly three depths (handoff) ---------------------------
+   * Deeper never means more important; it means further back.
+   *   depth 0  ground   page behind everything
+   *   depth 1  surface  sidebar, top bar, cards, panes
+   *   depth 2  inset    search, chips, order form
+   */
+  --color-ground: #0d151d;
+  --color-surface: #15202b;
+  --color-inset: #22303d;
+
+  /* --- Lines and edges (handoff) ------------------------------------------ */
+  --color-hairline: #22303d; /* 1px borders; same value as inset */
+  --color-divider: #34485a; /* strong rules */
+  --color-edge: #3d8fb5; /* active or focused edge */
+  --color-focus: #3d8fb5;
+
+  /* --- Action (handoff): the ONLY colour used for actions ----------------- */
+  --color-action: #2c7da0;
+  --color-action-hover: #3d8fb5;
+  --color-on-action: #ffffff;
+
+  /* --- Semantic (handoff): rationed strictly ----------------------------- */
+  --color-positive: #34c98a; /* live, YES, gains, cleared checkpoints */
+  --color-negative: #e8736b; /* NO, losses, blocked agents */
+  --color-sabotage: #e8736b; /* sabotage; same value as negative */
+
+  /* --- Text (handoff) ---------------------------------------------------- */
+  --color-text: #ffffff; /* primary */
+  --color-text-secondary: #9fb1bf; /* secondary */
+  --color-text-muted: #7e94a6; /* figures and labels */
+
+  /* --- Agent identity (handoff): never swap between agents --------------- */
+  --color-agent-gpt: #7fd1c1; /* teal   GPT-5.2 */
+  --color-agent-claude: #e8c07a; /* sand   Claude Opus 4.6 */
+  --color-agent-gemini: #79a8e8; /* blue   Gemini 3 Pro */
+  --color-agent-grok: #b39ae0; /* violet Grok 4.1 */
+
+  /* --- Tints (extension): semantic colour at the tile ratios, 12% fill and
+   *     33% border, the same ratios the handoff gives agent monograms. ----- */
+  --tint-positive: rgba(52, 201, 138, 0.12);
+  --tint-positive-border: rgba(52, 201, 138, 0.33);
+  --tint-negative: rgba(232, 115, 107, 0.12);
+  --tint-negative-border: rgba(232, 115, 107, 0.33);
+  --tint-sabotage: rgba(232, 115, 107, 0.12);
+  --tint-sabotage-border: rgba(232, 115, 107, 0.33);
+  --tint-edge: rgba(61, 143, 181, 0.12);
+  --tint-edge-border: rgba(61, 143, 181, 0.33);
+  --tint-hover: rgba(34, 48, 61, 0.55); /* inset at 55%: hover wash, not a depth */
+
+  /* --- Type (handoff: Inter 400/500/600; labels 9-10.5px uppercase with
+   *     0.1em tracking; body 11-13px; prices 16-17px) --------------------- */
+  --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial,
+    sans-serif;
+  --font-mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+
+  --fs-label-sm: 9px;
+  --fs-label: 10px;
+  --fs-label-lg: 10.5px;
+  --fs-body-sm: 11px;
+  --fs-body: 12px;
+  --fs-body-lg: 13px;
+  --fs-price: 16px;
+  --fs-price-lg: 17px;
+  --fs-title: 17px; /* extension: page titles stay on the price step */
+  --fs-display: 22px; /* extension: hero figures only (wallet balance, big stats) */
+
+  --fw-regular: 400;
+  --fw-medium: 500;
+  --fw-semibold: 600;
+
+  --tracking-label: 0.1em;
+  --tracking-tight: -0.01em;
+
+  --lh-tight: 1.2;
+  --lh-snug: 1.35;
+  --lh-body: 1.5;
+
+  /* --- Spacing (extension): 4px base, with 2px half-steps --------------- */
+  --space-0-5: 2px;
+  --space-1: 4px;
+  --space-1-5: 6px;
+  --space-2: 8px;
+  --space-2-5: 10px;
+  --space-3: 12px;
+  --space-3-5: 14px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --space-12: 48px;
+
+  /* --- Radii (extension) ------------------------------------------------- */
+  --radius-xs: 3px;
+  --radius-sm: 4px; /* chips, tags, small tiles */
+  --radius-md: 6px; /* buttons, inputs, segmented controls */
+  --radius-lg: 8px; /* cards, panes, panels */
+  --radius-xl: 12px;
+  --radius-pill: 999px;
+
+  /* --- Layout (handoff where noted) ------------------------------------- */
+  --sidebar-width: 208px;
+  --sidebar-width-collapsed: 60px;
+  --topbar-height: 52px;
+  --rail-width: 344px; /* handoff: fight detail market rail */
+  --card-left-width: 150px; /* handoff: fight card left column */
+  --card-right-width: 104px; /* handoff: fight card right column */
+  --chip-basis: 78px; /* handoff: agent chip flex basis */
+  --page-gutter: 24px;
+  --content-max-width: 1180px;
+  --content-wide-width: 1440px;
+
+  /* --- Motion (extension) ------------------------------------------------ */
+  --duration-fast: 120ms;
+  --duration-base: 180ms;
+  --duration-slow: 320ms;
+  --ease-standard: cubic-bezier(0.2, 0, 0, 1);
+
+  /* --- Elevation and layering (extension) -------------------------------- */
+  --shadow-pop: 0 8px 24px rgba(0, 0, 0, 0.35), 0 0 0 1px var(--color-divider);
+  --z-sticky: 5;
+  --z-topbar: 10;
+  --z-overlay: 50;
+  --z-toast: 60;
+}
+
+@media (max-width: 759px) {
+  :root {
+    --page-gutter: 16px;
+  }
+}

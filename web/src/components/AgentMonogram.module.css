@@ -1,0 +1,41 @@
+.tile {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  border: 1px solid var(--agent-border);
+  background-color: var(--agent-fill);
+  color: var(--agent-color);
+  font-weight: var(--fw-semibold);
+  letter-spacing: 0.02em;
+  line-height: 1;
+  user-select: none;
+}
+
+.xs {
+  width: 18px;
+  height: 18px;
+  border-radius: var(--radius-xs);
+  font-size: 8px;
+}
+
+.sm {
+  width: 22px;
+  height: 22px;
+  border-radius: var(--radius-sm);
+  font-size: var(--fs-label-sm);
+}
+
+.md {
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-md);
+  font-size: var(--fs-label-lg);
+}
+
+.lg {
+  width: 36px;
+  height: 36px;
+  border-radius: var(--radius-lg);
+  font-size: var(--fs-body-lg);
+}

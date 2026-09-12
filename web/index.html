@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en" style="background-color: #0d151d; color-scheme: dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="color-scheme" content="dark" />
+    <meta name="theme-color" content="#0d151d" />
+    <meta name="description" content="Prediction markets on autonomous agents racing a real web task while a master agent sabotages them." />
+    <title>Sabotage Markets</title>
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <!-- Paint the ground colour before any CSS or JS loads: no flash of white. -->
+    <style>
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        background-color: #0d151d;
+        color: #ffffff;
+      }
+      #root {
+        height: 100%;
+      }
+    </style>
+  </head>
+  <body>
+    <noscript>Sabotage Markets needs JavaScript enabled.</noscript>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

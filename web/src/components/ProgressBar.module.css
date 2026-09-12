@@ -1,0 +1,62 @@
+.track {
+  position: relative;
+  width: 100%;
+  border-radius: var(--radius-pill);
+  background-color: var(--color-inset);
+  overflow: visible;
+}
+
+.xs {
+  height: 2px;
+}
+
+.sm {
+  height: 4px;
+}
+
+.md {
+  height: 6px;
+}
+
+.fill {
+  height: 100%;
+  border-radius: inherit;
+  transition: width var(--duration-slow) var(--ease-standard);
+}
+
+.positive {
+  background-color: var(--color-positive);
+}
+
+.sabotage {
+  background-color: var(--color-sabotage);
+}
+
+.edge {
+  background-color: var(--color-edge);
+}
+
+.muted {
+  background-color: var(--color-text-muted);
+}
+
+.marker {
+  position: absolute;
+  top: 50%;
+  width: 2px;
+  height: calc(100% + 6px);
+  transform: translate(-50%, -50%);
+  border-radius: 1px;
+}
+
+.marker_sabotage {
+  background-color: var(--color-sabotage);
+}
+
+.marker_positive {
+  background-color: var(--color-positive);
+}
+
+.marker_muted {
+  background-color: var(--color-divider);
+}
