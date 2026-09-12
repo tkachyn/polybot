@@ -1,9 +1,14 @@
 import type {
+  AgentIdentity,
+  EvaluationStatus,
+  FightEvaluation,
+  FightEvaluationPointer,
   OrderReceipt,
   OrderRequest,
   PricePoint,
   RunStatus,
   SabotageState,
+  ServerMode,
 } from "../api/dto.js";
 import { DomainError } from "../domain/errors.js";
 import { RaceEngine } from "../domain/race-engine.js";
@@ -25,7 +30,20 @@ import type {
   SabotageTier,
   SabotageTrigger,
 } from "../domain/types.js";
+import {
+  evaluateFight,
+  sabotageStepIdOf,
+  type EvaluationAgentInput,
+  type EvaluationInput,
+} from "../evaluation/evaluator.js";
+import type { EvaluationStore } from "../evaluation/store.js";
 import { validateDisruptionCommand } from "../infra/cdp-obstacle-provider.js";
+import {
+  collectSteelEvidence,
+  fetchSteelHlsPlaylist,
+  STEEL_EVIDENCE_RETRY_MS,
+  type SteelEvidence,
+} from "../infra/steel-evidence.js";
 import { VirtualPredictionMarket } from "../prediction/virtual-market.js";
 import type { TradeReceipt } from "../prediction/virtual-market.js";
 import type { CreditLedger } from "../wallet/credit-ledger.js";
@@ -87,6 +105,16 @@ export type RaceCoordinatorDependencies = {
   ledger?: CreditLedger;
   /** Per-race LLM spend, reported in `snapshot().llmUsage`. */
   llmUsage?: () => RaceSnapshot["llmUsage"];
+  /** The final evaluation is stored here once the fight closes. */
+  evaluationStore?: EvaluationStore;
+  /** Stamped on evaluations; Steel evidence is read in live mode only. Default "live". */
+  mode?: ServerMode;
+  /** Fetch used for Steel evidence (agent traces, HLS). Default: the global fetch. */
+  steelFetch?: typeof fetch;
+  /** Overall budget for reading Steel evidence once the fight closes. Default 8 s. */
+  steelEvidenceTimeoutMs?: number;
+  /** Wait before refetching Steel evidence that was not ready yet. Default 1.5 s. */
+  steelEvidenceRetryMs?: number;
 };
 
 export type RaceSnapshot = {
@@ -169,6 +197,9 @@ export const CONFIDENCE_SIGNALS = {
 /** While live, tick appends a price point when the last is this old. */
 export const PRICE_HEARTBEAT_MS = 5_000;
 
+/** Overall budget for reading Steel traces and recordings once the fight closes. */
+export const STEEL_EVIDENCE_TIMEOUT_MS = 8_000;
+
 type PendingChanges = {
   fight: boolean;
   points: PricePoint[];
@@ -212,6 +243,15 @@ export class RaceCoordinator {
   private cleanupInFlight?: Promise<void>;
   private lifecycleQueue: Promise<void> = Promise.resolve();
   private readonly competitorModels: Record<string, string>;
+  private readonly mode: ServerMode;
+  private readonly progressSyncs = new Map<string, Promise<void>>();
+  private evaluationVersion = 0;
+  private evaluationUpdatedAt = 0;
+  private lastEvaluationInputAt: number | null = null;
+  private evaluationCache: { key: string; evaluation: FightEvaluation } | null = null;
+  private finalEvaluation: FightEvaluation | null = null;
+  private finalizeRequested = false;
+  private readonly finalWaiters: Array<(evaluation: FightEvaluation) => void> = [];
 
   constructor(
     input: RaceCoordinatorInput,
@@ -219,6 +259,7 @@ export class RaceCoordinator {
   ) {
     this.fightMeta = normalizeFightMetadata(input);
     this.competitorModels = { ...input.competitorModels };
+    this.mode = dependencies.mode ?? "live";
 
     if (dependencies.obstacleProvider) {
       const checkpoint = this.fightMeta.sabotage?.checkpoint ??
@@ -320,6 +361,7 @@ export class RaceCoordinator {
             this.recordCheckpoint(session.racerId, checkpoint),
           reportFinish: () => this.recordFinish(session.racerId),
           checkFinish: () => this.checkFinish(session.racerId),
+          syncProgress: () => this.syncProgress(session.racerId),
         };
         const task = this.dependencies.agentRunner
           .run(context)
@@ -424,6 +466,62 @@ export class RaceCoordinator {
     }
   }
 
+  /**
+   * Verifier-backed progress sync after a browser action: records, in order
+   * and through the normal lifecycle path, each checkpoint the course already
+   * verified that the race has not claimed. Stops at the first unverified
+   * checkpoint, and while the racer is recovering (the engine rejects
+   * progress then; the next sync retries). Serialised per racer. Never throws.
+   */
+  private syncProgress(racerId: string): Promise<void> {
+    const previous = this.progressSyncs.get(racerId) ?? Promise.resolve();
+    const run = previous
+      .then(() => this.syncProgressOnce(racerId))
+      .catch(() => undefined);
+    this.progressSyncs.set(racerId, run);
+    void run.then(() => {
+      if (this.progressSyncs.get(racerId) === run) this.progressSyncs.delete(racerId);
+    });
+    return run;
+  }
+
+  private async syncProgressOnce(racerId: string): Promise<void> {
+    const checkpointCount = this.engine.race.checkpointCount;
+    for (;;) {
+      const racer = this.engine.racers.get(racerId);
+      if (!racer || !this.canClaimProgress(racer, Date.now())) return;
+      const checkpoint = racer.checkpoint + 1;
+      if (checkpoint > checkpointCount) return;
+      const verified = await this.dependencies.courseVerifier.verifyCheckpoint({
+        raceId: this.engine.race.id,
+        racerId,
+        courseId: this.engine.race.courseId,
+        checkpoint,
+        seed: this.engine.race.seed,
+        session: this.getSession(racerId),
+      });
+      if (!verified) return;
+      // Re-checked inside the queue so a concurrent report never double-claims.
+      const recorded = await this.enqueueLifecycle(async () => {
+        const current = this.engine.racers.get(racerId);
+        const now = Date.now();
+        if (!current || current.checkpoint + 1 !== checkpoint || !this.canClaimProgress(current, now)) {
+          return false;
+        }
+        await this.recordCheckpointInternal(racerId, checkpoint, now);
+        return true;
+      });
+      if (!recorded) return;
+    }
+  }
+
+  /** Progress is claimable while running, or once an elapsed recovery is due. */
+  private canClaimProgress(racer: Racer, now: number): boolean {
+    if (this.stopped || !this.isLive()) return false;
+    if (racer.status === "running") return true;
+    return racer.status === "recovering" && racer.recoverAt !== undefined && now >= racer.recoverAt;
+  }
+
   private async recordFinishInternal(racerId: string, now: number): Promise<void> {
     const session = this.getSession(racerId);
     const verified = await this.dependencies.courseVerifier.verifyFinish({
@@ -455,6 +553,7 @@ export class RaceCoordinator {
         await this.shutdownRace();
       }
       this.flush(changes);
+      this.scheduleFinalEvaluation();
     }
   }
 
@@ -473,11 +572,15 @@ export class RaceCoordinator {
         const point = this.telemetry.appendPrice(now, this.market.pricesSnapshot(), {
           heartbeat: true,
         });
-        if (point) changes.points.push(point);
+        if (point) {
+          changes.points.push(point);
+          this.touchEvaluation(point.t);
+        }
       }
     }
     await this.persistNewEvents();
     this.flush(changes);
+    this.scheduleFinalEvaluation();
   }
 
   /** Places a spectator order. Idempotent per userId + clientOrderId. */
@@ -564,12 +667,16 @@ export class RaceCoordinator {
   /** Applies a competitor step report to the racer's telemetry. */
   recordAgentAction(racerId: string, report: AgentActionReport, now = Date.now()): void {
     this.telemetry.recordAction(racerId, report, now);
+    this.touchEvaluation(typeof report.at === "number" ? report.at : now);
     this.flush({ ...createChanges(), fight: true });
   }
 
   /** Stores a racer's latest browser capture and bumps its frame seq. */
   recordAgentFrame(racerId: string, frame: CapturedFrame, now = Date.now()): void {
-    this.telemetry.recordFrame(racerId, frame, now);
+    const keyframes = this.telemetry.keyframeRevision;
+    const stored = this.telemetry.recordFrame(racerId, frame, now);
+    // Only a sabotage keyframe changes the evaluation.
+    if (this.telemetry.keyframeRevision !== keyframes) this.touchEvaluation(stored.capturedAt);
     const changes = createChanges();
     changes.frames.add(racerId);
     changes.fight = true;
@@ -714,12 +821,68 @@ export class RaceCoordinator {
     return this.telemetry.frame(racerId);
   }
 
+  /**
+   * The fight's evaluation (docs/frontend-contract.md, "Evaluation").
+   * Provisional while the fight runs and until the closing evidence is in,
+   * cached until its inputs change; final and fixed once finalized.
+   */
+  evaluation(now = Date.now()): FightEvaluation {
+    if (this.finalEvaluation) return structuredClone(this.finalEvaluation);
+    const key = `${this.evaluationVersion}:${this.engine.race.status}:${this.market.status}`;
+    if (this.evaluationCache?.key !== key) {
+      this.evaluationCache = {
+        key,
+        evaluation: evaluateFight(this.evaluationInput("provisional", now)),
+      };
+    }
+    return structuredClone(this.evaluationCache.evaluation);
+  }
+
+  /** Null before the race starts. `updatedAt` changes whenever the evaluation's inputs do. */
+  get evaluationPointer(): FightEvaluationPointer | null {
+    if (this.engine.race.startedAt === undefined) return null;
+    return {
+      status: this.finalEvaluation ? "final" : "provisional",
+      updatedAt: this.evaluationUpdatedAt,
+    };
+  }
+
+  /** Resolves with the final evaluation once it has been stored. */
+  whenEvaluationFinal(): Promise<FightEvaluation> {
+    if (this.finalEvaluation) return Promise.resolve(structuredClone(this.finalEvaluation));
+    return new Promise((resolve) => {
+      this.finalWaiters.push(resolve);
+    });
+  }
+
+  /** A sabotage keyframe (`<stepId>-before` / `<stepId>-after`) with its body. */
+  evidenceFrame(racerId: string, key: string): StoredFrame | null {
+    if (!this.engine.racers.has(racerId) || typeof key !== "string") return null;
+    return this.telemetry.keyframe(racerId, key);
+  }
+
+  /**
+   * Live Steel sessions only: a fresh fetch of the racer's HLS playlist, read
+   * with the key that created the session. Null otherwise or on failure.
+   */
+  async replayPlaylist(racerId: string): Promise<string | null> {
+    if (this.mode !== "live" || !this.engine.racers.has(racerId)) return null;
+    try {
+      const credentials = this.dependencies.sessionManager.evidence?.(racerId) ?? null;
+      if (!credentials) return null;
+      return await fetchSteelHlsPlaylist(credentials, { fetch: this.dependencies.steelFetch });
+    } catch {
+      return null;
+    }
+  }
+
   async events() {
     return this.dependencies.eventStore.list(this.engine.race.id);
   }
 
   async shutdown(): Promise<void> {
     await this.shutdownRace();
+    this.scheduleFinalEvaluation();
   }
 
   private enqueueLifecycle<T>(operation: () => Promise<T>): Promise<T> {
@@ -906,6 +1069,7 @@ export class RaceCoordinator {
     if (processed) {
       changes.fight = true;
       this.capturePrices(now, changes, false);
+      this.touchEvaluation(now);
     }
   }
 
@@ -958,6 +1122,7 @@ export class RaceCoordinator {
       }
       case "sabotage_applied": {
         this.telemetry.markSabotageHit(racerId, event.checkpoint ?? null, at);
+        this.telemetry.captureHitKeyframes(racerId, sabotageStepIdOf(event), at);
         this.telemetry.appendLog(racerId, {
           kind: "sabotage",
           text: `Sabotage fired: ${this.hazardText()}`,
@@ -1021,6 +1186,7 @@ export class RaceCoordinator {
     if (!point) return;
     changes.points.push(point);
     changes.fight = true;
+    this.touchEvaluation(point.t);
     // Marks moved: every holder's position value changed.
     for (const position of this.market.allPositions()) {
       changes.accounts.add(position.userId);
@@ -1050,6 +1216,7 @@ export class RaceCoordinator {
         // Persistence failures must not strand browser sessions. A later
         // shutdown call remains safe because cleanup is idempotent.
         await this.shutdownRace();
+        this.scheduleFinalEvaluation();
       }
     }
   }
@@ -1137,6 +1304,165 @@ export class RaceCoordinator {
     const racer = this.engine.racers.get(racerId);
     if (!racer || ["finished", "failed", "timed_out"].includes(racer.status)) return;
     await this.handleRunnerFailure(racerId, new Error("competitor runner exited before completion"));
+  }
+
+  /** Evaluation inputs changed at `at`: invalidate the cache and bump the pointer. */
+  private touchEvaluation(at: number): void {
+    if (this.finalEvaluation) return;
+    this.evaluationVersion += 1;
+    const time = Number.isFinite(at) ? at : this.evaluationUpdatedAt;
+    this.evaluationUpdatedAt = Math.max(this.evaluationUpdatedAt + 1, time);
+    this.lastEvaluationInputAt = Math.max(this.lastEvaluationInputAt ?? time, time);
+  }
+
+  /** Finalizes exactly once, after a started race closes. Never blocks or throws. */
+  private scheduleFinalEvaluation(): void {
+    const race = this.engine.race;
+    if (this.finalizeRequested || race.startedAt === undefined) return;
+    if (race.status !== "finished" && race.status !== "timed_out") return;
+    this.finalizeRequested = true;
+    void this.finalizeEvaluation().catch(() => undefined);
+  }
+
+  /**
+   * Waits for the sessions to be released, reads the Steel evidence (live
+   * only, bounded), computes and stores the final evaluation, then marks it
+   * final and publishes the new pointer on the fight stream.
+   */
+  private async finalizeEvaluation(): Promise<void> {
+    await this.shutdownRace().catch(() => undefined);
+    const steel = await this.readSteelEvidence().catch(() => undefined);
+    const race = this.engine.race;
+    // Event times, not the wall clock: history seeded in the past stays in the past.
+    const generatedAt = Math.max(
+      race.finishedAt ?? this.closedAtValue ?? -Infinity,
+      this.lastEvaluationInputAt ?? -Infinity,
+    );
+    let evaluation: FightEvaluation;
+    try {
+      evaluation = evaluateFight(this.evaluationInput(
+        "final",
+        Number.isFinite(generatedAt) ? generatedAt : Date.now(),
+        steel,
+      ));
+    } catch {
+      return;
+    }
+    try {
+      await this.dependencies.evaluationStore?.put(structuredClone(evaluation));
+    } catch {
+      // A storage failure must not keep the evaluation provisional.
+    }
+    this.finalEvaluation = evaluation;
+    this.evaluationCache = null;
+    this.evaluationVersion += 1;
+    this.evaluationUpdatedAt = Math.max(this.evaluationUpdatedAt + 1, evaluation.generatedAt);
+    for (const resolve of this.finalWaiters.splice(0)) resolve(structuredClone(evaluation));
+    this.flush({ ...createChanges(), fight: true });
+  }
+
+  /** Live mode: each racer's Steel traces and replay start, within the overall budget. */
+  private async readSteelEvidence(): Promise<Map<string, SteelEvidence> | undefined> {
+    const manager = this.dependencies.sessionManager;
+    if (this.mode !== "live" || typeof manager.evidence !== "function") return undefined;
+    const timeoutMs = this.dependencies.steelEvidenceTimeoutMs ?? STEEL_EVIDENCE_TIMEOUT_MS;
+    const retryMs = Math.max(10, this.dependencies.steelEvidenceRetryMs ?? STEEL_EVIDENCE_RETRY_MS);
+    const controller = new AbortController();
+    const collected = new Map<string, SteelEvidence>();
+    const work = Promise.all([...this.engine.racers.keys()].map(async (racerId) => {
+      let credentials: { steelSessionId: string; apiKey: string } | null = null;
+      try {
+        credentials = manager.evidence?.(racerId) ?? null;
+      } catch {
+        credentials = null;
+      }
+      if (!credentials) return;
+      // A just-released session may still be publishing its recording, so
+      // what is missing is fetched again while the budget lasts. Progress is
+      // kept as it arrives, so the deadline never discards what was read.
+      await collectSteelEvidence(credentials, {
+        fetch: this.dependencies.steelFetch,
+        signal: controller.signal,
+        attempts: Math.max(1, Math.floor(timeoutMs / retryMs)),
+        retryMs,
+        onProgress: (evidence) => {
+          collected.set(racerId, evidence);
+        },
+      });
+    }));
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const deadline = new Promise<void>((resolve) => {
+      timer = setTimeout(resolve, timeoutMs);
+      timer.unref?.();
+    });
+    try {
+      await Promise.race([work.then(() => undefined, () => undefined), deadline]);
+    } finally {
+      if (timer) clearTimeout(timer);
+      controller.abort();
+    }
+    return new Map(collected);
+  }
+
+  private evaluationInput(
+    status: EvaluationStatus,
+    now: number,
+    steel?: ReadonlyMap<string, SteelEvidence>,
+  ): EvaluationInput {
+    const race = this.engine.race;
+    const fight = this.fightMeta;
+    const closed = race.status === "finished" || race.status === "timed_out";
+    const agents = [...this.engine.racers.keys()].map((racerId, index): EvaluationAgentInput => {
+      const telemetry = this.telemetry.racer(racerId);
+      const stats = this.telemetry.traceStats(racerId);
+      const evidence = steel?.get(racerId);
+      return {
+        racerId,
+        agent: this.agentIdentity(index, racerId),
+        steps: telemetry.step,
+        maxSteps: telemetry.maxSteps,
+        errors: stats.errors,
+        loops: stats.loops,
+        trace: this.telemetry.trace(racerId),
+        keyframes: this.telemetry.keyframes(racerId),
+        steel: evidence
+          ? {
+              traceAvailable: evidence.trace !== null,
+              replayAvailable: evidence.replayAvailable,
+              trace: evidence.trace ?? [],
+              replayStart: evidence.replayStart,
+            }
+          : null,
+      };
+    });
+    return {
+      raceId: race.id,
+      number: fight.number,
+      title: fight.title,
+      task: fight.task,
+      courseId: race.courseId,
+      mode: this.mode,
+      status,
+      now,
+      startedAt: race.startedAt ?? null,
+      finishedAt: closed ? race.finishedAt ?? this.closedAtValue ?? null : null,
+      winnerRacerId: race.winnerRacerId ?? null,
+      voided: this.market.status === "unresolved",
+      checkpointCount: race.checkpointCount,
+      checkpointLabels: [...fight.checkpointLabels],
+      sabotagePlan: race.sabotagePlan ?? null,
+      events: this.engine.events,
+      priceHistory: this.telemetry.priceHistory(),
+      openingPrices: this.openingPrices,
+      agents,
+    };
+  }
+
+  private agentIdentity(index: number, racerId: string): AgentIdentity {
+    const agent = this.fightMeta.agents[index];
+    return agent
+      ? { ...agent }
+      : { key: racerId, name: racerId, provider: "unknown", model: "unknown" };
   }
 
   /** Serialised so concurrent callers never append an event twice. */

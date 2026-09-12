@@ -13,6 +13,12 @@ export interface RacerSessionManager {
   create(racerId: string): Promise<RacerSessionHandle>;
   release(racerId: string): Promise<void>;
   releaseAll(): Promise<void>;
+  /**
+   * Live Steel only: the racer's Steel session id and the API key that
+   * created it, remembered after release so Agent Traces and the recording
+   * can still be read. Never log or expose the key.
+   */
+  evidence?(racerId: string): { steelSessionId: string; apiKey: string } | null;
 }
 
 /** One step of a competitor's loop, reported for spectator telemetry. */

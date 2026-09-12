@@ -10,11 +10,21 @@ export type SteelRacerSession = {
   viewerUrl?: string;
 };
 
+/** A racer's Steel session and the API key that created it. */
+export type SteelSessionEvidence = {
+  steelSessionId: string;
+  apiKey: string;
+};
+
 export type SteelSessionManagerOptions = {
   apiKey?: string;
   /** Keys tried in order; the next one is used once the current one runs out. */
   apiKeys?: string[];
   sessionTimeoutSeconds?: number;
+  /** Builds the Steel client for one key. Default: the steel-sdk client. */
+  createClient?: (apiKey: string) => Steel;
+  /** Connects Playwright to a session. Default: chromium.connectOverCDP. */
+  connectOverCDP?: (endpointUrl: string) => Promise<Browser>;
 };
 
 /**
@@ -25,9 +35,12 @@ export type SteelSessionManagerOptions = {
 export class SteelSessionManager {
   private readonly keys: SteelKeyPool<Steel>;
   private readonly sessionTimeoutSeconds: number;
+  private readonly connect: (endpointUrl: string) => Promise<Browser>;
   private readonly active = new Map<string, SteelRacerSession>();
   // Sessions must be released with the client whose key created them.
   private readonly clients = new Map<string, Steel>();
+  // Traces and recordings must be read with that key too, after release.
+  private readonly evidenceByRacer = new Map<string, SteelSessionEvidence>();
 
   constructor(options: SteelSessionManagerOptions = {}) {
     const keys = [
@@ -36,13 +49,14 @@ export class SteelSessionManager {
     ];
     this.keys = new SteelKeyPool({
       keys: keys.length > 0 ? keys : steelKeysFromEnv(),
-      createClient: (apiKey) => new Steel({ steelAPIKey: apiKey }),
+      createClient: options.createClient ?? ((apiKey) => new Steel({ steelAPIKey: apiKey })),
       onRotate: ({ fromKeyIndex, reason }) =>
         console.warn(
           `Steel API key #${fromKeyIndex + 1} unavailable (${reason}); rotating to the next key`,
         ),
     });
     this.sessionTimeoutSeconds = options.sessionTimeoutSeconds ?? 240;
+    this.connect = options.connectOverCDP ?? ((endpointUrl) => chromium.connectOverCDP(endpointUrl));
   }
 
   async create(racerId: string): Promise<SteelRacerSession> {
@@ -61,7 +75,7 @@ export class SteelSessionManager {
     );
     let browser: Browser;
     try {
-      browser = await chromium.connectOverCDP(
+      browser = await this.connect(
         `${session.websocketUrl}&apiKey=${lease.apiKey}`,
       );
     } catch (error) {
@@ -80,6 +94,7 @@ export class SteelSessionManager {
 
     this.active.set(racerId, racerSession);
     this.clients.set(racerId, lease.client);
+    this.evidenceByRacer.set(racerId, { steelSessionId: session.id, apiKey: lease.apiKey });
     return racerSession;
   }
 
@@ -89,6 +104,16 @@ export class SteelSessionManager {
       throw new Error(`No active Steel session for ${racerId}`);
     }
     return session;
+  }
+
+  /**
+   * The racer's latest Steel session id and the key that created it. Kept
+   * after release, because Agent Traces and the HLS recording must be read
+   * with that key. Never log or expose the key.
+   */
+  evidence(racerId: string): SteelSessionEvidence | null {
+    const evidence = this.evidenceByRacer.get(racerId);
+    return evidence ? { ...evidence } : null;
   }
 
   async release(racerId: string): Promise<void> {
