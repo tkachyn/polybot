@@ -9,7 +9,7 @@ This document binds the Sabotage Markets UI (`docs/sabotage-markets-handoff.md`)
 | Outcomes | YES and NO per agent | Buy/sell one share per racer | Added `side: "yes" \| "no"`. NO on X costs `1 - p(X)` and pays 1 if X does not win. It is priced as a basket: one share of each of the other three racers. |
 | Money | $ balance, deposit/withdraw, methods | Virtual credits only, no cash | The UI keeps $ formatting but every amount is a virtual credit. Deposit and withdraw move virtual credits. The only enabled method is `virtual`; other methods are shown as unavailable. |
 | Wallet scope | One balance across fights | Balance per market | Added a shared `CreditLedger` injected into every market. Settlements pay directly into the wallet. |
-| Sabotage | One sabotage per fight at a named checkpoint, revealed to bettors upfront, armed → fired | One master policy per checkpoint | One `SabotagePlan` per fight. It is armed at creation, before the fight goes live: the policy comes from `sabotage.policy` or from the obstacle provider (master LLM with deterministic fallback). It fires when an agent reaches that checkpoint. |
+| Sabotage | One sabotage per fight at a named checkpoint, revealed to bettors upfront, armed → fired | One immutable race-wide plan with a tier (basic, intermediate, difficult), fired per racer at the first verified target-opening milestone | The engine's `SabotagePlan` (tier, trigger checkpoint, policy, source) is the source of truth. It is armed once, before the fight goes live: the policy is the fixed `sabotage.policy` (source `operator`), else the master's `armRace` choice (`model`, with a deterministic `fallback`). Its trigger checkpoint is `sabotage.checkpoint`, default 1. It fires independently for each agent whose verified report of that checkpoint also verifies the target opening. The bettor-facing text (`summary`, `detail`) is presentation metadata (`SabotageBrief`) on the fight. |
 | Duration | 30-minute cap | 180 s target, 300 s cap | Durations are per race and supplied by the backend (`freezesAt`, `closesAt`). The UI never hard-codes them. |
 | Void | Rules undefined | Cap reached → unresolved, credits returned | A voided fight refunds each open position at its average price. The history shows a `refund` entry. |
 | Capture | Undecided | Steel viewer URL | Periodic frames. Live mode stores a JPEG screenshot per racer; simulated mode renders SVG frames. The UI polls by `frame.seq`. Viewer URLs are never sent to spectators because Steel viewers can be interactive. |
@@ -42,7 +42,9 @@ The existing fields are unchanged. These optional fields were added and are vali
 }
 ```
 
-If `obstaclesEnabled` is true and `sabotage` is omitted, a default plan is armed at checkpoint `ceil(checkpointCount / 2)`. Its summary is generated from the armed hazard and capped at 70 chars.
+If `obstaclesEnabled` is true and `sabotage` is omitted, a default plan is armed at checkpoint 1. Its summary is generated from the armed hazard and capped at 70 chars.
+
+Engine events (`GET /races/:raceId/events`): `sabotage_armed` once before the start, then per racer `sabotage_triggered` followed by `sabotage_applied` or `sabotage_misfired`, and `sabotage_recovered` when an applied sabotage's `durationMs` elapses (`metadata.cause` is `duration` or `manual`). A racer in `recovering` cannot report a checkpoint or finish until then.
 
 The default roster, in racer order, is: `gpt` "GPT-5.2" (openai), `claude` "Claude Opus 4.6" (anthropic), `gemini` "Gemini 3 Pro" (google), `grok` "Grok 4.1" (xai).
 
@@ -94,7 +96,7 @@ Clients treat `snapshot` as a full replace. They append `price` points whose `t`
   - `bad` if phase is `recovering` (sabotage active), `failed` or `timed_out`.
   - Otherwise `warn` if the last 3 action reports share one signature, or the last 2 reports were errors.
   - Otherwise `run`.
-- **Recovery:** a `recovering` racer returns to `running` when the disruption's `durationMs` elapses (engine tick), when it reaches a later checkpoint, or when it finishes. A `recovered` log entry is written.
+- **Recovery:** a `recovering` racer returns to `running` when the sabotage's `durationMs` elapses (`recoverAt`, applied on the engine tick or before its next report). It cannot clear a checkpoint or finish while recovering. A `recovered` log entry is written.
 - **ETA:**
   - Active racer with `c ≥ 1` checkpoints: `(now - startedAt) / c × (N - c)`.
   - `c = N` (awaiting finish): `0`.
@@ -105,7 +107,8 @@ Clients treat `snapshot` as a full replace. They append `price` points whose `t`
   - `expired` if not fired and the race froze hazards or ended.
   - `armed` otherwise.
   - A misfire (`applied: false`) logs a `sabotage` entry but leaves the agent unhit.
-- **Reveal:** when `SHOW_SABOTAGE_UPFRONT=false`, `summary`, `detail` and `hazardType` are `null` and `revealed=false` until the fight is `live`.
+- **Tier:** `SabotageSummary.tier` is the armed plan's tier (`basic`, `intermediate` or `difficult`); `null` until the plan is armed or while not revealed.
+- **Reveal:** when `SHOW_SABOTAGE_UPFRONT=false`, `summary`, `detail`, `hazardType` and `tier` are `null` and `revealed=false` until the fight is `live`.
 - **Confidence signals:** deterministic demand adjustments, applied only while the market is `open`. `L` is base liquidity.
 
   | Event | Effect on the racer's weight |

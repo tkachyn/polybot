@@ -42,6 +42,7 @@ test("serves a deterministic course and records verified completion", async () =
   assert.deepEqual(state.json(), {
     ...identity,
     completedCheckpoints: [1, 2],
+    targetOpened: true,
     finished: true,
   });
   await app.close();

@@ -6,6 +6,25 @@ export type RaceStatus =
   | "finished"
   | "timed_out";
 
+export type SabotageTier = "basic" | "intermediate" | "difficult";
+
+export type SabotageTrigger = {
+  kind: "target_opened";
+  /** 1-based checkpoint whose verified report fires the sabotage. Default 1. */
+  checkpoint: number;
+  milestone: "first_verified_checkpoint";
+};
+
+export type SabotagePlan = {
+  raceId: string;
+  tier: SabotageTier;
+  trigger: SabotageTrigger;
+  policy: DisruptionCommand;
+  selectedAt: number;
+  /** "operator" when the fight supplied a fixed policy. */
+  source: "model" | "fallback" | "operator";
+};
+
 export type RacerStatus =
   | "starting"
   | "ready"
@@ -27,6 +46,7 @@ export type Race = {
   absoluteDurationMs: number;
   targetDurationAt?: number;
   absoluteDeadlineAt?: number;
+  sabotagePlan?: SabotagePlan;
   winnerRacerId?: string;
   finishedAt?: number;
 };
@@ -39,11 +59,12 @@ export type Racer = {
   status: RacerStatus;
   startedAt?: number;
   finishedAt?: number;
-  /** Set while `recovering`: when the applied disruption's duration elapses. */
-  recoveringUntil?: number;
+  /** Set while `recovering`: when the applied sabotage's duration elapses. */
+  recoverAt?: number;
 };
 
-export type RecoveryCause = "duration" | "checkpoint" | "finish" | "manual";
+/** Why a racer left `recovering` (sabotage_recovered metadata.cause). */
+export type RecoveryCause = "duration" | "manual";
 
 export type RaceEvent = {
   id: string;
@@ -53,9 +74,12 @@ export type RaceEvent = {
     | "race_created"
     | "racer_ready"
     | "race_started"
+    | "sabotage_armed"
     | "checkpoint_reached"
-    | "obstacle_applied"
-    | "racer_recovered"
+    | "sabotage_triggered"
+    | "sabotage_applied"
+    | "sabotage_misfired"
+    | "sabotage_recovered"
     | "hazards_frozen"
     | "racer_finished"
     | "racer_failed"
@@ -76,6 +100,8 @@ export type DisruptionCommand = {
   targetRole: string;
   durationMs: number;
   intensity: number;
+  /** Optional stable id supplied by a policy model. */
+  disruptionId?: string;
 };
 
 export type DisruptionResult = {
@@ -84,6 +110,13 @@ export type DisruptionResult = {
 };
 
 export interface ObstacleProvider {
+  armRace?(input: {
+    raceId: string;
+    courseId: string;
+    seed: string;
+    checkpointCount: number;
+    trigger: SabotageTrigger;
+  }): Promise<SabotagePlan | null>;
   getPolicy(raceId: string, checkpoint: number): Promise<DisruptionCommand | null>;
   apply(
     racerId: string,

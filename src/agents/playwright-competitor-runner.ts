@@ -86,6 +86,7 @@ export class PlaywrightCompetitorRunner implements CompetitorAgentRunner {
     url.searchParams.set("racerId", context.racerId);
     url.searchParams.set("seed", context.seed);
     url.searchParams.set("courseId", context.courseId);
+    url.searchParams.set("steelSessionId", context.session.steelSessionId);
     url.searchParams.set("checkpointCount", String(context.checkpointCount));
     await page.goto(url.toString(), { waitUntil: "domcontentloaded" });
     this.prepared.add(context.racerId);

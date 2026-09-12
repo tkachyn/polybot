@@ -68,6 +68,13 @@ class FakeRunner implements CompetitorAgentRunner {
 }
 
 class FakeVerifier implements CourseVerifier {
+  openings: string[] = [];
+
+  async verifyTargetOpening(input: { racerId: string }): Promise<boolean> {
+    this.openings.push(input.racerId);
+    return true;
+  }
+
   async verifyCheckpoint(): Promise<boolean> {
     return true;
   }
@@ -97,6 +104,7 @@ function setup(options: {
 } = {}) {
   const sessions = new FakeSessions();
   const runner = new FakeRunner(options.prepareError);
+  const verifier = new FakeVerifier();
   const events = new InMemoryRaceEventStore();
   const ledger = new InMemoryCreditLedger();
   const coordinator = new RaceCoordinator(
@@ -111,7 +119,7 @@ function setup(options: {
     {
       sessionManager: sessions,
       agentRunner: runner,
-      courseVerifier: new FakeVerifier(),
+      courseVerifier: verifier,
       eventStore: events,
       obstacleProvider: options.obstacles,
       ledger,
@@ -119,7 +127,7 @@ function setup(options: {
   );
   ledger.credit("alice", 100, { type: "deposit", at: 0 });
   ledger.credit("bob", 100, { type: "deposit", at: 0 });
-  return { coordinator, sessions, runner, events, ledger };
+  return { coordinator, sessions, runner, verifier, events, ledger };
 }
 
 function flushAsync(): Promise<void> {
@@ -166,43 +174,97 @@ test("fight metadata overrides are validated", () => {
   );
 });
 
-test("a default sabotage arms at ceil(N / 2) and describes the armed hazard", async () => {
+test("a default sabotage arms at checkpoint 1 and describes the armed hazard", async () => {
   const obstacles = new FakeObstacles();
   const { coordinator } = setup({ obstacles });
   const before = coordinator.sabotage;
-  assert.equal(before?.plan.checkpoint, 2);
-  assert.equal(before?.plan.summary, "Sabotage armed at Checkpoint 2");
+  assert.equal(before?.plan.checkpoint, 1);
+  assert.equal(before?.plan.summary, "Sabotage armed at Checkpoint 1");
   assert.equal(before?.state, "armed");
   assert.equal(before?.armed, false);
   assert.equal(before?.policy, null);
+  assert.equal(before?.tier, null);
 
   await coordinator.prepareAndStart(1_000);
   const after = coordinator.sabotage;
   assert.equal(after?.armed, true);
   assert.deepEqual(after?.policy, policy);
-  assert.equal(after?.plan.summary, describeHazard(policy, "Checkpoint 2"));
+  assert.equal(after?.tier, "intermediate");
+  assert.equal(after?.plan.summary, describeHazard(policy, "Checkpoint 1"));
   assert.equal(coordinator.fight.sabotage?.summary, after?.plan.summary);
-  assert.deepEqual(obstacles.policyCalls, [2]);
+  assert.deepEqual(obstacles.policyCalls, [1]);
+  const plan = coordinator.engine.race.sabotagePlan;
+  assert.equal(plan?.source, "fallback");
+  assert.equal(plan?.trigger.checkpoint, 1);
   await coordinator.shutdown();
 });
 
 test("an operator plan keeps its summary and fixed policy", async () => {
-  const fixed: DisruptionCommand = { ...policy, hazardType: "insert_decoy" };
+  const fixed: DisruptionCommand = { ...policy, hazardType: "insert_decoy", intensity: 3 };
+  const obstacles = new FakeObstacles();
   const { coordinator } = setup({
-    obstacles: new FakeObstacles(),
+    obstacles,
     fight: {
       checkpointLabels: ["Cart", "Shipping", "Pay"],
-      sabotage: { checkpoint: 1, summary: "Decoy at the cart", policy: fixed },
+      sabotage: { checkpoint: 2, summary: "Decoy at shipping", policy: fixed },
     },
   });
   assert.deepEqual(await coordinator.arm(900), fixed);
-  assert.equal(coordinator.sabotage?.plan.summary, "Decoy at the cart");
-  assert.equal(coordinator.sabotage?.checkpointLabel, "Cart");
+  assert.equal(coordinator.sabotage?.plan.summary, "Decoy at shipping");
+  assert.equal(coordinator.sabotage?.checkpointLabel, "Shipping");
   assert.equal(coordinator.sabotage?.armedAt, 900);
+  assert.equal(coordinator.sabotage?.tier, "difficult");
+  const plan = coordinator.engine.race.sabotagePlan;
+  assert.equal(plan?.source, "operator");
+  assert.equal(plan?.trigger.checkpoint, 2);
+  assert.deepEqual(obstacles.policyCalls, []);
+});
+
+test("an obstacle provider with armRace chooses the race-wide plan", async () => {
+  const chosen: DisruptionCommand = { ...policy, intensity: 1 };
+  const triggers: number[] = [];
+  const obstacles: ObstacleProvider = {
+    async armRace(input) {
+      triggers.push(input.trigger.checkpoint);
+      return {
+        raceId: input.raceId,
+        tier: "basic",
+        trigger: input.trigger,
+        policy: chosen,
+        selectedAt: 1,
+        source: "model",
+      };
+    },
+    async getPolicy() {
+      throw new Error("getPolicy must not be used when armRace exists");
+    },
+    async apply() {
+      return { applied: true };
+    },
+  };
+  const { coordinator, verifier } = setup({
+    obstacles,
+    fight: { sabotage: { checkpoint: 3, summary: "Late modal" } },
+  });
+  await coordinator.prepareAndStart(1_000);
+  assert.deepEqual(triggers, [3]);
+  assert.equal(coordinator.sabotage?.tier, "basic");
+  assert.equal(coordinator.engine.race.sabotagePlan?.source, "model");
+
+  await coordinator.recordCheckpoint("racer-4", 1, 1_100);
+  await coordinator.recordCheckpoint("racer-4", 2, 1_200);
+  assert.deepEqual(verifier.openings, []);
+  await coordinator.recordCheckpoint("racer-4", 3, 1_300);
+  assert.deepEqual(verifier.openings, ["racer-4"]);
+  assert.deepEqual(coordinator.sabotage?.hitRacerIds, ["racer-4"]);
+  await coordinator.shutdown();
 });
 
 test("sabotage hits drive telemetry, run status, signals and sabotage state", async () => {
-  const { coordinator } = setup({ obstacles: new FakeObstacles() });
+  const { coordinator } = setup({
+    obstacles: new FakeObstacles(),
+    fight: { sabotage: { checkpoint: 2, summary: "Modal at checkpoint 2" } },
+  });
   await coordinator.prepareAndStart(1_000);
   assert.deepEqual(coordinator.openingPrices, coordinator.market.pricesSnapshot());
 

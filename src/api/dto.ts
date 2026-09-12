@@ -44,6 +44,8 @@ export type RunStatus = "run" | "warn" | "bad";
 
 export type SabotageState = "armed" | "fired" | "expired";
 
+export type SabotageTier = "basic" | "intermediate" | "difficult";
+
 export type HazardType =
   | "blocking_modal"
   | "move_primary_action"
@@ -98,6 +100,8 @@ export type SabotageSummary = {
   state: SabotageState;
   /** First time the sabotage was applied to any agent. */
   firedAt: number | null;
+  /** Tier of the armed race-wide plan. Null until armed or when not revealed. */
+  tier: SabotageTier | null;
 };
 
 export type FightSummary = {

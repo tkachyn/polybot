@@ -8,20 +8,24 @@ import type {
 import { DomainError } from "../domain/errors.js";
 import { RaceEngine } from "../domain/race-engine.js";
 import {
-  SabotageObstacleProvider,
+  DEFAULT_SABOTAGE_CHECKPOINT,
   describeHazard,
   describeHazardDetail,
   hazardLabel,
   sabotagePlaceholder,
-  type SabotagePlan,
+  tierForPolicy,
 } from "../domain/sabotage.js";
 import type {
   DisruptionCommand,
+  ObstacleProvider,
   Race,
   RaceEvent,
   Racer,
-  ObstacleProvider,
+  SabotagePlan,
+  SabotageTier,
+  SabotageTrigger,
 } from "../domain/types.js";
+import { validateDisruptionCommand } from "../infra/cdp-obstacle-provider.js";
 import { VirtualPredictionMarket } from "../prediction/virtual-market.js";
 import type { TradeReceipt } from "../prediction/virtual-market.js";
 import type { CreditLedger } from "../wallet/credit-ledger.js";
@@ -40,6 +44,7 @@ import {
   normalizeFightMetadata,
   UNCONFIGURED_MODEL,
   type FightMetadata,
+  type SabotageBrief,
 } from "./fight-metadata.js";
 import {
   RaceTelemetry,
@@ -52,6 +57,7 @@ export {
   normalizeFightMetadata,
   type FightMetadata,
   type FightMetadataInput,
+  type SabotageBrief,
 } from "./fight-metadata.js";
 
 export type CreateRaceInput = {
@@ -116,13 +122,17 @@ export type RaceChange =
 
 export type RaceChangeListener = (change: RaceChange) => void;
 
+/** Presentation view of the fight's sabotage; the engine plan is the source of truth. */
 export type SabotageStatus = {
-  plan: SabotagePlan;
+  /** Bettor-facing brief. `plan.checkpoint` is the engine trigger checkpoint. */
+  plan: SabotageBrief;
   checkpointLabel: string;
   /** Arming has settled (policy may still be null). */
   armed: boolean;
   /** The armed hazard; null when not armed or no policy was chosen. */
   policy: DisruptionCommand | null;
+  /** Tier of the armed engine plan; null until armed. */
+  tier: SabotageTier | null;
   armedAt: number | null;
   /** First time the sabotage was applied to any agent. */
   firedAt: number | null;
@@ -149,8 +159,6 @@ type PendingChanges = {
 
 const RECOVERY_TEXT: Record<string, string> = {
   duration: "Recovered: disruption expired",
-  checkpoint: "Recovered: cleared the next checkpoint",
-  finish: "Recovered at the finish",
   manual: "Recovered",
 };
 
@@ -164,9 +172,10 @@ export class RaceCoordinator {
   readonly telemetry: RaceTelemetry;
 
   private readonly fightMeta: FightMetadata;
-  private readonly sabotageProvider?: SabotageObstacleProvider;
   private readonly sabotageDefaulted: boolean;
-  private sabotagePlan: SabotagePlan | null;
+  private sabotageBrief: SabotageBrief | null;
+  private sabotageArming?: Promise<DisruptionCommand | null>;
+  private sabotageSettled = false;
   private sabotageArmedAt: number | null = null;
   private sabotageFiredAt: number | null = null;
   private readonly sabotageHits: string[] = [];
@@ -188,22 +197,18 @@ export class RaceCoordinator {
     this.fightMeta = normalizeFightMetadata(input);
     this.competitorModels = { ...input.competitorModels };
 
-    let obstacleProvider: ObstacleProvider | undefined;
     if (dependencies.obstacleProvider) {
       const checkpoint = this.fightMeta.sabotage?.checkpoint ??
-        Math.ceil(input.checkpointCount / 2);
-      const plan: SabotagePlan = this.fightMeta.sabotage
+        Math.min(DEFAULT_SABOTAGE_CHECKPOINT, input.checkpointCount);
+      this.sabotageBrief = this.fightMeta.sabotage
         ? { ...this.fightMeta.sabotage }
         : { checkpoint, summary: sabotagePlaceholder(this.checkpointLabel(checkpoint)) };
       this.sabotageDefaulted = this.fightMeta.sabotage === null;
-      this.sabotagePlan = plan;
-      this.sabotageProvider = new SabotageObstacleProvider(dependencies.obstacleProvider, plan);
-      obstacleProvider = this.sabotageProvider;
     } else {
       this.sabotageDefaulted = false;
-      this.sabotagePlan = null;
+      this.sabotageBrief = null;
     }
-    this.fightMeta.sabotage = this.sabotagePlan;
+    this.fightMeta.sabotage = this.sabotageBrief;
 
     this.engine = new RaceEngine(
       {
@@ -216,7 +221,7 @@ export class RaceCoordinator {
       {
         targetDurationMs: input.targetDurationMs,
         absoluteDurationMs: input.absoluteDurationMs,
-        obstacleProvider,
+        obstacleProvider: dependencies.obstacleProvider,
       },
     );
     const racerIds = [...this.engine.racers.keys()];
@@ -247,34 +252,24 @@ export class RaceCoordinator {
   }
 
   /**
-   * Chooses the sabotage policy (memoised). A default plan's summary is
-   * generated from the armed hazard. Resolves null without sabotage.
+   * Selects and arms the race-wide engine sabotage plan (memoised). The
+   * policy is the brief's fixed policy, else the provider's `armRace`, else
+   * its `getPolicy` fallback. A default brief's summary is generated from
+   * the armed hazard. Resolves null without sabotage or when none was chosen.
    */
-  async arm(now = Date.now()): Promise<DisruptionCommand | null> {
-    const provider = this.sabotageProvider;
-    if (!provider || !this.sabotagePlan) return null;
-    const policy = await provider.arm(this.engine.race.id);
-    if (this.sabotageArmedAt === null) {
-      this.sabotageArmedAt = now;
-      if (this.sabotageDefaulted && policy) {
-        const label = this.checkpointLabel(this.sabotagePlan.checkpoint);
-        this.sabotagePlan = {
-          ...this.sabotagePlan,
-          summary: describeHazard(policy, label),
-          detail: describeHazardDetail(policy, label),
-        };
-        this.fightMeta.sabotage = this.sabotagePlan;
-      }
-      this.flush({ ...createChanges(), fight: true });
-    }
-    return policy;
+  arm(now = Date.now()): Promise<DisruptionCommand | null> {
+    const provider = this.dependencies.obstacleProvider;
+    const brief = this.sabotageBrief;
+    if (!provider || !brief) return Promise.resolve(null);
+    this.sabotageArming ??= this.selectSabotagePlan(provider, brief, now)
+      .catch(() => null)
+      .then((plan) => this.settleSabotage(plan, now));
+    return this.sabotageArming;
   }
 
   async prepareAndStart(now = Date.now()): Promise<RaceSnapshot> {
     try {
-      if (this.sabotageProvider && this.sabotageArmedAt === null) {
-        await this.arm(now);
-      }
+      await this.arm(now);
       const sessions = await Promise.all(
         [...this.engine.racers.keys()].map((racerId) =>
           this.dependencies.sessionManager.create(racerId),
@@ -326,14 +321,29 @@ export class RaceCoordinator {
       racerId,
       courseId: this.engine.race.courseId,
       checkpoint,
+      seed: this.engine.race.seed,
       session,
     });
     if (!verified) {
       throw new Error(`Checkpoint ${checkpoint} was not verified for ${racerId}`);
     }
 
-    // checkpoint_reached is emitted synchronously, before the obstacle is
-    // chosen and applied, so spectators see the checkpoint immediately.
+    const plan = this.engine.race.sabotagePlan;
+    if (plan && checkpoint === plan.trigger.checkpoint) {
+      const openingVerified = await this.dependencies.courseVerifier.verifyTargetOpening({
+        raceId: this.engine.race.id,
+        racerId,
+        courseId: this.engine.race.courseId,
+        seed: this.engine.race.seed,
+        session,
+      });
+      if (!openingVerified) {
+        throw new Error(`Target opening was not verified for ${racerId}`);
+      }
+    }
+
+    // checkpoint_reached (and sabotage_triggered) are emitted synchronously,
+    // before the sabotage is applied, so spectators see the checkpoint first.
     const reaching = this.engine.reachCheckpoint(racerId, checkpoint, now);
     const early = createChanges();
     this.processEngineEvents(now, early);
@@ -351,6 +361,7 @@ export class RaceCoordinator {
       raceId: this.engine.race.id,
       racerId,
       courseId: this.engine.race.courseId,
+      seed: this.engine.race.seed,
       session,
     });
     if (!verified) {
@@ -522,9 +533,9 @@ export class RaceCoordinator {
 
   /** Null when the fight has no sabotage (no obstacle provider). */
   get sabotage(): SabotageStatus | null {
-    const plan = this.sabotagePlan;
+    const plan = this.sabotageBrief;
     if (!plan) return null;
-    const armedPolicy = this.sabotageProvider?.armedPolicy();
+    const armedPlan = this.engine.race.sabotagePlan;
     const raceStatus = this.engine.race.status;
     const state: SabotageState = this.sabotageFiredAt !== null
       ? "fired"
@@ -535,8 +546,9 @@ export class RaceCoordinator {
     return {
       plan: structuredClone(plan),
       checkpointLabel: this.checkpointLabel(plan.checkpoint),
-      armed: armedPolicy !== undefined,
-      policy: armedPolicy ?? null,
+      armed: this.sabotageSettled,
+      policy: armedPlan ? { ...armedPlan.policy } : null,
+      tier: armedPlan?.tier ?? null,
       armedAt: this.sabotageArmedAt,
       firedAt: this.sabotageFiredAt,
       hitRacerIds: [...this.sabotageHits],
@@ -576,7 +588,87 @@ export class RaceCoordinator {
     if (this.stopped) return;
     await this.stopRacers();
     await this.dependencies.sessionManager.releaseAll();
+    const cleanup = this.dependencies.obstacleProvider &&
+      "cleanup" in this.dependencies.obstacleProvider
+      ? (this.dependencies.obstacleProvider as ObstacleProvider & {
+          cleanup?: () => Promise<void>;
+        }).cleanup
+      : undefined;
+    await cleanup?.();
     this.stopped = true;
+  }
+
+  /** Fixed operator policy, else provider.armRace, else the getPolicy fallback. */
+  private async selectSabotagePlan(
+    provider: ObstacleProvider,
+    brief: SabotageBrief,
+    now: number,
+  ): Promise<SabotagePlan | null> {
+    const race = this.engine.race;
+    const trigger: SabotageTrigger = {
+      kind: "target_opened",
+      checkpoint: brief.checkpoint,
+      milestone: "first_verified_checkpoint",
+    };
+    if (brief.policy) {
+      return {
+        raceId: race.id,
+        tier: tierForPolicy(brief.policy),
+        trigger,
+        policy: { ...brief.policy },
+        selectedAt: now,
+        source: "operator",
+      };
+    }
+    if (provider.armRace) {
+      return provider.armRace({
+        raceId: race.id,
+        courseId: race.courseId,
+        seed: race.seed,
+        checkpointCount: race.checkpointCount,
+        trigger,
+      });
+    }
+    const policy = await provider.getPolicy(race.id, brief.checkpoint);
+    if (!policy) return null;
+    return {
+      raceId: race.id,
+      tier: tierForPolicy(policy),
+      trigger,
+      policy,
+      selectedAt: now,
+      source: "fallback",
+    };
+  }
+
+  /** Arms the engine with a valid plan; a failed or invalid plan arms nothing. */
+  private settleSabotage(plan: SabotagePlan | null, now: number): DisruptionCommand | null {
+    let armed: SabotagePlan | null = null;
+    if (plan && this.engine.race.status === "starting") {
+      try {
+        validateDisruptionCommand(plan.policy);
+        this.engine.armSabotage(plan, now);
+        armed = this.engine.race.sabotagePlan ?? null;
+      } catch {
+        armed = null;
+      }
+    }
+    this.sabotageSettled = true;
+    this.sabotageArmedAt ??= now;
+    if (this.sabotageDefaulted && armed && this.sabotageBrief) {
+      const label = this.checkpointLabel(this.sabotageBrief.checkpoint);
+      this.sabotageBrief = {
+        ...this.sabotageBrief,
+        summary: describeHazard(armed.policy, label),
+        detail: describeHazardDetail(armed.policy, label),
+      };
+      this.fightMeta.sabotage = this.sabotageBrief;
+    }
+    const changes = createChanges();
+    this.processEngineEvents(now, changes);
+    changes.fight = true;
+    this.flush(changes);
+    return armed ? { ...armed.policy } : null;
   }
 
   private baseContext(
@@ -705,29 +797,28 @@ export class RaceCoordinator {
         this.market.adjustConfidence(racerId, CONFIDENCE_SIGNALS.checkpoint * liquidity);
         return;
       }
-      case "obstacle_applied": {
-        const hazard = hazardLabel(String(metadata.hazardType ?? "hazard"));
-        if (metadata.applied === true) {
-          this.telemetry.markSabotageHit(racerId, event.checkpoint ?? null, at);
-          this.telemetry.appendLog(racerId, {
-            kind: "sabotage",
-            text: `Sabotage fired: ${hazard}`,
-            at,
-          });
-          if (!this.sabotageHits.includes(racerId)) this.sabotageHits.push(racerId);
-          this.sabotageFiredAt ??= at;
-          this.market.adjustConfidence(racerId, CONFIDENCE_SIGNALS.sabotageHit * liquidity);
-        } else {
-          const reason = typeof metadata.reason === "string" ? metadata.reason : "not applied";
-          this.telemetry.appendLog(racerId, {
-            kind: "sabotage",
-            text: `Sabotage misfired (${reason}): ${hazard}`,
-            at,
-          });
-        }
+      case "sabotage_applied": {
+        this.telemetry.markSabotageHit(racerId, event.checkpoint ?? null, at);
+        this.telemetry.appendLog(racerId, {
+          kind: "sabotage",
+          text: `Sabotage fired: ${this.hazardText()}`,
+          at,
+        });
+        if (!this.sabotageHits.includes(racerId)) this.sabotageHits.push(racerId);
+        this.sabotageFiredAt ??= at;
+        this.market.adjustConfidence(racerId, CONFIDENCE_SIGNALS.sabotageHit * liquidity);
         return;
       }
-      case "racer_recovered": {
+      case "sabotage_misfired": {
+        const reason = typeof metadata.reason === "string" ? metadata.reason : "not applied";
+        this.telemetry.appendLog(racerId, {
+          kind: "sabotage",
+          text: `Sabotage misfired (${reason}): ${this.hazardText()}`,
+          at,
+        });
+        return;
+      }
+      case "sabotage_recovered": {
         const cause = String(metadata.cause ?? "manual");
         this.telemetry.markRecovered(racerId, at);
         this.telemetry.appendLog(racerId, {
@@ -756,6 +847,10 @@ export class RaceCoordinator {
       default:
         return;
     }
+  }
+
+  private hazardText(): string {
+    return hazardLabel(this.engine.race.sabotagePlan?.policy.hazardType ?? "hazard");
   }
 
   /** Appends a price point when prices moved (or when forced). */

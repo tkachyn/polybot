@@ -7,7 +7,8 @@ Backend features:
 - Four independent racer state machines with a readiness barrier and a simultaneous start
 - Semantic checkpoint progression with per-racer idempotency
 - A target duration (hazards and trading freeze) and an absolute safety cap (void and refund)
-- One sabotage per fight, armed before the fight opens and fired at a named checkpoint
+- One immutable race-wide sabotage plan (basic, intermediate or difficult tier), armed before the fight opens and fired independently at each racer's verified trigger checkpoint (default checkpoint 1)
+- Deterministic fallback sabotage and local course/verifier tests without live keys
 - Virtual YES/NO prediction markets over a shared virtual-credit wallet
 - Per-agent telemetry: action log, run status, ETA and browser frames
 - A spectator JSON API with server-sent events
@@ -48,6 +49,8 @@ Other scripts:
 | `npm run dev:all` | Live backend and the test course together |
 | `npm run smoke:steel` | Steel smoke test (needs `STEEL_API_KEYS` or `STEEL_API_KEY`) |
 
+`npm test` and `npm run build` use fakes and the deterministic local course; they do not require Steel or OpenRouter credentials. The live Steel path is exercised only by `npm run smoke:steel`.
+
 ## Modes
 
 - **`RACE_MODE=live`** (default) uses Steel sessions, Playwright over CDP, the course verifier and OpenRouter models. The operator creates fights with `POST /races`. Copy `.env.example` to `.env` and populate `OPENROUTER_API_KEY` plus either `STEEL_API_KEYS` or `STEEL_API_KEY`; the server loads `.env` automatically.
@@ -76,7 +79,7 @@ racer-4: deepseek/deepseek-v4.1-flash
 http://127.0.0.1:4000/?raceId=demo&racerId=racer-1&courseId=course-1&checkpointCount=3
 ```
 
-Steel sessions run remotely and cannot access your machine's localhost. A live Steel race must use a public deployment or tunnel URL for `startUrl`; the local backend can continue using `COURSE_BASE_URL=http://127.0.0.1:4000` for verification.
+Steel sessions run remotely and cannot access your machine's localhost. A live Steel race must use a public deployment or tunnel URL for `startUrl`; the local backend can continue using `COURSE_BASE_URL=http://127.0.0.1:4000` for verification. When `COURSE_VERIFIER_TOKEN` is set, the course server requires the matching Bearer token on server-to-server arena-state verification requests; the browser course UI remains usable without exposing that secret.
 
 ## Configuration
 
@@ -148,6 +151,8 @@ POST /races/:raceId/market/sell
 ```
 
 `POST /races` accepts the original fields plus the optional `title`, `taskDetail`, `successCondition`, `checkpointLabels`, `sabotage`, `agents` and `startsAt` (see the contract). A future `startsAt` creates an upcoming fight: it is armed and tradable immediately, and the ticker starts it once it is due. Otherwise the fight creates four sessions, prepares all four agents, passes the readiness barrier and starts. Obstacles stay disabled unless `obstaclesEnabled` is `true`.
+
+When `obstaclesEnabled` is `true`, one immutable race-wide sabotage plan (tier, trigger checkpoint and policy) is armed before the race starts: the fixed `sabotage.policy` when given, otherwise the master's `armRace` choice, with a deterministic fallback. The trigger is `sabotage.checkpoint`, default 1. Each racer independently triggers that same plan when its verified report of the trigger checkpoint also verifies the target opening, and cannot report further progress until its recovery (`recoverAt`) elapses. Repeated reports are idempotent.
 
 ## Timing
 

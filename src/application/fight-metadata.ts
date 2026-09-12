@@ -4,9 +4,24 @@ import {
   HAZARD_TYPES,
   SABOTAGE_DETAIL_MAX,
   SABOTAGE_SUMMARY_MAX,
-  type SabotagePlan,
 } from "../domain/sabotage.js";
+import type { DisruptionCommand } from "../domain/types.js";
 import { validateDisruptionCommand } from "../infra/cdp-obstacle-provider.js";
+
+/**
+ * Bettor-facing description of a fight's one sabotage. Presentation only: the
+ * domain plan (tier, trigger, policy, source) is `SabotagePlan` on the engine.
+ */
+export type SabotageBrief = {
+  /** 1-based checkpoint at which the sabotage fires (the engine trigger). */
+  checkpoint: number;
+  /** At most 70 characters. */
+  summary: string;
+  /** At most 280 characters. */
+  detail?: string;
+  /** Fixed operator policy. Otherwise the obstacle provider chooses one. */
+  policy?: DisruptionCommand;
+};
 
 /** Spectator-facing description of one fight (market). */
 export type FightMetadata = {
@@ -21,8 +36,8 @@ export type FightMetadata = {
   checkpointLabels: string[];
   /** Exactly four, in racer order racer-1..racer-4. */
   agents: AgentIdentity[];
-  /** The effective plan, or null when the fight has no sabotage. */
-  sabotage: SabotagePlan | null;
+  /** The effective sabotage brief, or null when the fight has no sabotage. */
+  sabotage: SabotageBrief | null;
   createdAt: number;
   /** Scheduled start for upcoming fights. */
   startsAt: number | null;
@@ -97,9 +112,9 @@ function normalizeAgents(agents: unknown): AgentIdentity[] {
 function normalizeSabotage(
   sabotage: unknown,
   checkpointCount: number,
-): SabotagePlan | null {
+): SabotageBrief | null {
   if (sabotage === undefined || sabotage === null) return null;
-  const plan = sabotage as Partial<SabotagePlan>;
+  const plan = sabotage as Partial<SabotageBrief>;
   if (
     !Number.isInteger(plan.checkpoint) ||
     Number(plan.checkpoint) < 1 ||
@@ -116,7 +131,7 @@ function normalizeSabotage(
   if (detail !== undefined && detail.length > SABOTAGE_DETAIL_MAX) {
     invalid(`sabotage.detail must be at most ${SABOTAGE_DETAIL_MAX} characters`);
   }
-  const normalized: SabotagePlan = { checkpoint: Number(plan.checkpoint), summary };
+  const normalized: SabotageBrief = { checkpoint: Number(plan.checkpoint), summary };
   if (detail !== undefined) normalized.detail = detail;
   if (plan.policy !== undefined && plan.policy !== null) {
     if (!HAZARD_TYPES.includes(plan.policy.hazardType)) {
