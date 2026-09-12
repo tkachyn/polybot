@@ -1,0 +1,8 @@
+node_modules/
+dist/
+.env
+.env.*
+!.env.example
+
+# Ignore the accidental nested repository currently present in this checkout.
+/utwat/
