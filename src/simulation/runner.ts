@@ -18,6 +18,11 @@ import type { SimulatedWorld } from "./world.js";
 
 type PrepareContext = Omit<CompetitorContext, "reportCheckpoint" | "reportFinish">;
 
+/** Unscaled wait between progress reports while the racer is recovering. */
+const RECOVERY_RETRY_MS = 500;
+/** Covers the longest sabotage (30 s) at any time scale. */
+const RECOVERY_MAX_RETRIES = 120;
+
 /** Resolves after `ms`, or as soon as the signal aborts. Leaves no timer behind. */
 export function sleep(ms: number, signal: AbortSignal): Promise<void> {
   return new Promise((resolve) => {
@@ -307,13 +312,40 @@ export class SimulatedCompetitorRunner implements CompetitorAgentRunner {
       }
 
       if (stage < stageCount) {
-        await context.reportCheckpoint(stage + 1);
+        const checkpoint = stage + 1;
+        if (!await this.reportProgress(() => context.reportCheckpoint(checkpoint), signal)) return;
       } else {
-        await context.reportFinish();
+        if (!await this.reportProgress(() => context.reportFinish(), signal)) return;
         this.reportFrame(context, page, stageNumber, step, "final task state verified", null, "finished");
         return;
       }
       if (signal.aborted) return;
+    }
+  }
+
+  /**
+   * Reports a checkpoint or the finish. The engine rejects progress while the
+   * racer is still recovering from the sabotage, so this waits and retries
+   * until the coordinator has recovered it. False when stopped meanwhile.
+   */
+  private async reportProgress(
+    report: () => Promise<void>,
+    signal: AbortSignal,
+  ): Promise<boolean> {
+    const retryMs = Math.max(5, RECOVERY_RETRY_MS / this.options.timeScale);
+    for (let attempt = 0; ; attempt += 1) {
+      try {
+        await report();
+        return true;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        if (signal.aborted || !/while recovering/.test(message) ||
+          attempt >= RECOVERY_MAX_RETRIES) {
+          throw error;
+        }
+      }
+      await sleep(retryMs, signal);
+      if (signal.aborted) return false;
     }
   }
 

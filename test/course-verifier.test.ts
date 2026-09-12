@@ -55,3 +55,36 @@ test("accepts a finish only when the exact run is marked finished", async () => 
     session,
   }), true);
 });
+
+test("verifies the first target-opening milestone against the run proof", async () => {
+  const gateway: CourseStateGateway = {
+    async getState() {
+      return {
+        raceId: "race-1",
+        racerId: "racer-1",
+        courseId: "course-1",
+        seed: "seed-1",
+        steelSessionId: "steel-1",
+        completedCheckpoints: [1],
+        targetOpened: true,
+        finished: false,
+      };
+    },
+  };
+  const verifier = new DeterministicCourseVerifier(gateway);
+
+  assert.equal(await verifier.verifyTargetOpening({
+    raceId: "race-1",
+    racerId: "racer-1",
+    courseId: "course-1",
+    seed: "seed-1",
+    session,
+  }), true);
+  assert.equal(await verifier.verifyTargetOpening({
+    raceId: "race-1",
+    racerId: "racer-1",
+    courseId: "course-1",
+    seed: "wrong-seed",
+    session,
+  }), false);
+});

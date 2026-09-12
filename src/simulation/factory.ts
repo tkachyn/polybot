@@ -62,8 +62,8 @@ function simulatedFight(fight: FightMetadata): FightMetadata {
 
 /**
  * Builds real RaceCoordinators whose browser sessions, competitors, course
- * verifier and obstacle executor are simulated. Sabotage arms and fires
- * through the real SabotageObstacleProvider; money moves through the shared
+ * verifier and obstacle executor are simulated. Sabotage arms on the real
+ * engine plan and fires through the engine; money moves through the shared
  * ledger.
  */
 export function createSimulatedCoordinatorFactory(options: SimulationOptions): CoordinatorFactory {

@@ -5,9 +5,8 @@ import type {
   RaceCoordinator,
   RaceSnapshot,
 } from "../application/race-coordinator.js";
-import { normalizeFightMetadata } from "../application/fight-metadata.js";
+import { normalizeFightMetadata, type SabotageBrief } from "../application/fight-metadata.js";
 import { DomainError } from "../domain/errors.js";
-import type { SabotagePlan } from "../domain/sabotage.js";
 import { InMemoryCreditLedger, type CreditLedger } from "../wallet/credit-ledger.js";
 import type { AgentIdentity } from "./dto.js";
 import { fightStatusOf, leaderboardRecord, type LeaderboardRecord } from "./presenters.js";
@@ -24,8 +23,8 @@ export type ApiCreateRaceInput = CreateRaceInput & {
   successCondition?: string;
   /** Exactly checkpointCount labels. */
   checkpointLabels?: string[];
-  /** Requires obstaclesEnabled. */
-  sabotage?: SabotagePlan;
+  /** Requires obstaclesEnabled. Presentation brief plus optional fixed policy. */
+  sabotage?: SabotageBrief;
   /** Exactly four, unique keys, racer order. */
   agents?: AgentIdentity[];
   /** A future timestamp schedules the fight (upcoming). */

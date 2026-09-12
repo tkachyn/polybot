@@ -53,6 +53,9 @@ export function createFactory(options: { failRaceIds?: Set<string> } = {}) {
     async stop() {},
   };
   const courseVerifier: CourseVerifier = {
+    async verifyTargetOpening() {
+      return true;
+    },
     async verifyCheckpoint() {
       return true;
     },

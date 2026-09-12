@@ -14,7 +14,7 @@ import { escapeXml, renderSimFrame } from "../src/simulation/frames.js";
 import { planFight, planTimeline } from "../src/simulation/plan.js";
 import { Rng, hashString } from "../src/simulation/rng.js";
 import { InertCompetitorRunner, SimulatedCompetitorRunner } from "../src/simulation/runner.js";
-import { SimulatedObstacleExecutor, SimulatedWorld } from "../src/simulation/world.js";
+import { SimulatedObstacleExecutor, SimulatedWorld, scaleDurationMs } from "../src/simulation/world.js";
 
 const RACERS = SIM_AGENT_ROSTER.map((agent, index) => ({ racerId: `racer-${index + 1}`, key: agent.key }));
 
@@ -238,8 +238,12 @@ test("simulated runner reports actions and frames, advances checkpoints and fini
 
 test("disrupted runners report blocked steps against the sabotage", async () => {
   const template = SIM_TEMPLATES[1];
-  // 12 s modal / 200 = 60 ms, several 12-30 ms steps.
+  // 12 s modal / 200 = 60 ms (sim policies carry the scaled duration), several 12-30 ms steps.
   const world = new SimulatedWorld(200);
+  const scaledPolicy = {
+    ...template.sabotage.policy,
+    durationMs: scaleDurationMs(template.sabotage.policy.durationMs, 200),
+  };
   const executor = new SimulatedObstacleExecutor(world, "exec");
   const plan = planFight("runner-disrupt", RACERS, template.stages.length, { difficulty: "normal" });
   plan.racers["racer-2"] = { ...plan.racers["racer-2"], failAtStep: null };
@@ -256,7 +260,7 @@ test("disrupted runners report blocked steps against the sabotage", async () => 
   context.reportCheckpoint = async (checkpoint) => {
     sink.checkpoints.push(checkpoint);
     if (checkpoint === template.sabotage.checkpoint) {
-      assert.deepEqual(await executor.apply("racer-2", template.sabotage.policy), { applied: true });
+      assert.deepEqual(await executor.apply("racer-2", scaledPolicy), { applied: true });
     }
   };
   await runner.run(context);
@@ -301,14 +305,17 @@ test("runner stop() aborts promptly and leaves no pending loop", async () => {
   assert.deepEqual(inert.pendingRacers(), []);
 });
 
-test("obstacle executor disrupts for durationMs / timeScale", async () => {
+test("sim policies carry the scaled duration and the world honours it", async () => {
   let clock = 1_000;
   const world = new SimulatedWorld(10, () => clock);
   const executor = new SimulatedObstacleExecutor(world, "seed");
   const policy = await executor.getPolicy("race", 2);
   assert.ok(policy);
   validateDisruptionCommand(policy);
-  await executor.apply("racer-1", { hazardType: "blocking_modal", targetRole: "x", durationMs: 8_000, intensity: 2 });
+  // 6-14 s of real time at 10x.
+  assert.ok(policy.durationMs >= 600 && policy.durationMs <= 1_400, String(policy.durationMs));
+  assert.equal(scaleDurationMs(8_000, 10), 800);
+  await executor.apply("racer-1", { hazardType: "blocking_modal", targetRole: "x", durationMs: 800, intensity: 2 });
   assert.equal(world.disruption("racer-1")?.until, 1_800);
   clock = 1_799;
   assert.ok(world.disruption("racer-1"));

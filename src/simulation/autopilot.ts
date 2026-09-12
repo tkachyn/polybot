@@ -16,6 +16,7 @@ import { renderSimFrame } from "./frames.js";
 import { SIM_MAX_STEPS, planFight, planTimeline, type FightDifficulty } from "./plan.js";
 import { Rng } from "./rng.js";
 import { blockedStep } from "./runner.js";
+import { scaleDurationMs } from "./world.js";
 
 export type SimulationAutopilotOptions = SimulationOptions & {
   liveFights?: number;
@@ -188,7 +189,12 @@ export class SimulationAutopilot {
         checkpoint: template.sabotage.checkpoint,
         summary: template.sabotage.summary,
         detail: template.sabotage.detail,
-        policy: { ...template.sabotage.policy },
+        // Scaled like the race durations so the engine's recoverAt matches
+        // the simulated world at any time scale.
+        policy: {
+          ...template.sabotage.policy,
+          durationMs: scaleDurationMs(template.sabotage.policy.durationMs, scale),
+        },
       },
       agents: SIM_AGENT_ROSTER.map((agent) => ({ ...agent })),
     };
@@ -311,24 +317,30 @@ export class SimulationAutopilot {
     let lastAt = startAt;
     for (const event of events) {
       if (isOver(coordinator)) break;
-      const at = startAt + Math.max(1, Math.round(event.t));
+      let at = startAt + Math.max(1, Math.round(event.t));
       if (event.t >= cap) break;
-      lastAt = at;
       switch (event.kind) {
         case "checkpoint":
+          at = await this.pastRecovery(coordinator, event.racerId, at);
+          lastAt = Math.max(lastAt, at);
           await coordinator.recordCheckpoint(event.racerId, event.checkpoint, at);
           break;
         case "finish":
+          at = await this.pastRecovery(coordinator, event.racerId, at);
+          lastAt = Math.max(lastAt, at);
           await coordinator.recordFinish(event.racerId, at);
           break;
         case "fail":
+          lastAt = Math.max(lastAt, at);
           coordinator.engine.failRacer(event.racerId, "simulated agent crashed: browser context lost", at);
           await coordinator.tick(at);
           break;
         case "trade":
+          lastAt = Math.max(lastAt, at);
           this.botTrade(coordinator, at);
           break;
         case "action": {
+          lastAt = Math.max(lastAt, at);
           const racer = coordinator.engine.racers.get(event.racerId);
           if (racer && (racer.status === "running" || racer.status === "recovering")) {
             coordinator.recordAgentAction(event.racerId, {
@@ -351,6 +363,25 @@ export class SimulationAutopilot {
     }
     this.recordFinalFrames(coordinator, course, lastAt);
     await coordinator.shutdown();
+  }
+
+  /**
+   * The engine rejects progress while a racer is recovering. Returns `at`,
+   * or, when the racer is still recovering then, its recoverAt after ticking
+   * the coordinator there so the racer is running again.
+   */
+  private async pastRecovery(
+    coordinator: RaceCoordinator,
+    racerId: string,
+    at: number,
+  ): Promise<number> {
+    const racer = coordinator.engine.racers.get(racerId);
+    if (racer?.status !== "recovering" || racer.recoverAt === undefined || at >= racer.recoverAt) {
+      return at;
+    }
+    const recoverAt = racer.recoverAt;
+    await coordinator.tick(recoverAt);
+    return recoverAt;
   }
 
   private recordFinalFrames(coordinator: RaceCoordinator, course: SimTemplate, at: number): void {

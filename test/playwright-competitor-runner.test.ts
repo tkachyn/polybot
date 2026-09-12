@@ -80,6 +80,42 @@ test("prepares a seeded racer URL and reports verified progress", async () => {
   assert.match(page.navigations[0], /seed=seed-1/);
 });
 
+test("resolves a distinct model for each racer", async () => {
+  const page = new FakePage();
+  const selected: string[] = [];
+  const runner = new PlaywrightCompetitorRunner({
+    task: "Complete the course",
+    startUrl: "https://course.test/start",
+    modelForRacer(racerId) {
+      selected.push(racerId);
+      return new SequenceModel([{ type: "finish" }]);
+    },
+  });
+  const base = {
+    raceId: "race-1",
+    racerId: "racer-3",
+    courseId: "course-1",
+    seed: "seed-1",
+    checkpointCount: 3,
+    session: {
+      racerId: "racer-3",
+      steelSessionId: "steel-3",
+      page: page as unknown as Page,
+    },
+  };
+
+  await runner.prepare(base);
+  await runner.run({
+    ...base,
+    async reportCheckpoint() {},
+    async reportFinish() {},
+  });
+
+  assert.deepEqual(selected, ["racer-3"]);
+  assert.match(page.navigations[0], /courseId=course-1/);
+  assert.match(page.navigations[0], /checkpointCount=3/);
+});
+
 class ScreenshotPage extends FakePage {
   shots: Array<Record<string, unknown>> = [];
   active = 0;
@@ -130,7 +166,7 @@ test("reports every decision and captures a JPEG after each action", async () =>
   const runner = new PlaywrightCompetitorRunner({
     task: "Complete the course",
     startUrl: "https://course.test/start",
-    modelFor: (racerId) => {
+    modelForRacer: (racerId) => {
       assert.equal(racerId, "racer-2");
       return new SequenceModel([
         { type: "click", targetRole: "add-to-cart" },
@@ -245,9 +281,9 @@ test("stop clears the frame interval and swallows capture errors", async () => {
   assert.equal(frames.length, 0);
 });
 
-test("requires a model or modelFor", () => {
+test("requires a model or a per-racer model resolver", () => {
   assert.throws(
     () => new PlaywrightCompetitorRunner({ task: "t", startUrl: "https://course.test/" }),
-    /model or modelFor is required/,
+    /model or model resolver is required/,
   );
 });

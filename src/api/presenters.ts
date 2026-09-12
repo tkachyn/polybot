@@ -171,6 +171,7 @@ function sabotageSummary(view: FightView): SabotageSummary | null {
     checkpointLabel: sabotage.checkpointLabel,
     state: sabotage.state,
     firedAt: sabotage.firedAt,
+    tier: revealed ? sabotage.tier : null,
   };
 }
 

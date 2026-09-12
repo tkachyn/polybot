@@ -1,21 +1,8 @@
-import { validateDisruptionCommand } from "../infra/cdp-obstacle-provider.js";
-import type {
-  DisruptionCommand,
-  DisruptionResult,
-  ObstacleProvider,
-} from "./types.js";
+import type { DisruptionCommand, SabotageTier } from "./types.js";
 
-/** The one sabotage a fight carries, revealed to bettors before it fires. */
-export type SabotagePlan = {
-  /** 1-based checkpoint at which the sabotage fires. */
-  checkpoint: number;
-  /** At most 70 characters. */
-  summary: string;
-  /** At most 280 characters. */
-  detail?: string;
-  /** Fixed policy. Otherwise the inner obstacle provider chooses one. */
-  policy?: DisruptionCommand;
-};
+// Presentation helpers for the race-wide sabotage. The domain plan itself is
+// `SabotagePlan` in ./types.ts, armed on the engine; the bettor-facing brief
+// is `SabotageBrief` in application/fight-metadata.ts.
 
 export const HAZARD_TYPES: readonly DisruptionCommand["hazardType"][] = [
   "blocking_modal",
@@ -28,62 +15,14 @@ export const HAZARD_TYPES: readonly DisruptionCommand["hazardType"][] = [
 export const SABOTAGE_SUMMARY_MAX = 70;
 export const SABOTAGE_DETAIL_MAX = 280;
 
-/**
- * Restricts an obstacle provider to one sabotage per fight. The policy is
- * chosen once (armed) and only returned for the plan's checkpoint; every
- * racer who reaches that checkpoint receives the same policy.
- */
-export class SabotageObstacleProvider implements ObstacleProvider {
-  private arming?: Promise<DisruptionCommand | null>;
-  private armed: DisruptionCommand | null | undefined;
+/** Default trigger checkpoint when a fight names none. */
+export const DEFAULT_SABOTAGE_CHECKPOINT = 1;
 
-  constructor(
-    private readonly inner: ObstacleProvider,
-    readonly plan: SabotagePlan,
-  ) {}
-
-  /** Chooses the policy once. Failures and invalid policies arm `null`. */
-  arm(raceId: string): Promise<DisruptionCommand | null> {
-    if (!this.arming) {
-      this.arming = this.choosePolicy(raceId)
-        .catch(() => null)
-        .then((policy) => {
-          this.armed = policy;
-          return policy;
-        });
-    }
-    return this.arming;
-  }
-
-  /** undefined until arming has settled. */
-  armedPolicy(): DisruptionCommand | null | undefined {
-    return this.armed === undefined || this.armed === null
-      ? this.armed
-      : { ...this.armed };
-  }
-
-  async getPolicy(
-    raceId: string,
-    checkpoint: number,
-  ): Promise<DisruptionCommand | null> {
-    return checkpoint === this.plan.checkpoint ? this.arm(raceId) : null;
-  }
-
-  apply(racerId: string, policy: DisruptionCommand): Promise<DisruptionResult> {
-    return this.inner.apply(racerId, policy);
-  }
-
-  private async choosePolicy(raceId: string): Promise<DisruptionCommand | null> {
-    const policy = this.plan.policy
-      ? { ...this.plan.policy }
-      : await this.inner.getPolicy(raceId, this.plan.checkpoint);
-    if (!policy) return null;
-    if (!HAZARD_TYPES.includes(policy.hazardType)) {
-      throw new Error(`unknown hazardType: ${String(policy.hazardType)}`);
-    }
-    validateDisruptionCommand(policy);
-    return policy;
-  }
+/** Tier implied by a policy's intensity (1 basic, 2 intermediate, 3 difficult). */
+export function tierForPolicy(policy: DisruptionCommand): SabotageTier {
+  if (policy.intensity <= 1) return "basic";
+  if (policy.intensity === 2) return "intermediate";
+  return "difficult";
 }
 
 function truncate(text: string, max: number): string {

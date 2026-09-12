@@ -5,6 +5,7 @@ import type {
   DisruptionCommand,
   DisruptionResult,
   ObstacleProvider,
+  SabotagePlan,
 } from "../src/domain/types.js";
 
 const policy: DisruptionCommand = {
@@ -15,17 +16,12 @@ const policy: DisruptionCommand = {
 };
 
 class FakeObstacles implements ObstacleProvider {
-  policyCalls: number[] = [];
   applied: string[] = [];
 
-  constructor(
-    private readonly result: DisruptionResult | Error = { applied: true },
-    private readonly checkpoints: number[] = [1],
-  ) {}
+  constructor(private readonly result: DisruptionResult | Error = { applied: true }) {}
 
-  async getPolicy(_raceId: string, checkpoint: number): Promise<DisruptionCommand | null> {
-    this.policyCalls.push(checkpoint);
-    return this.checkpoints.includes(checkpoint) ? policy : null;
+  async getPolicy(): Promise<DisruptionCommand | null> {
+    return policy;
   }
 
   async apply(racerId: string): Promise<DisruptionResult> {
@@ -35,17 +31,32 @@ class FakeObstacles implements ObstacleProvider {
   }
 }
 
-function readyRace(provider: ObstacleProvider, checkpointCount = 3) {
+function plan(checkpoint = 1): SabotagePlan {
+  return {
+    raceId: "race-1",
+    tier: "intermediate",
+    trigger: { kind: "target_opened", checkpoint, milestone: "first_verified_checkpoint" },
+    policy,
+    selectedAt: 0,
+    source: "fallback",
+  };
+}
+
+function readyRace(
+  provider: ObstacleProvider,
+  options: { checkpointCount?: number; trigger?: number | null } = {},
+) {
   const race = new RaceEngine(
     {
       raceId: "race-1",
       courseId: "course-1",
       seed: "seed-1",
-      checkpointCount,
+      checkpointCount: options.checkpointCount ?? 3,
       now: 0,
     },
     { obstacleProvider: provider },
   );
+  if (options.trigger !== null) race.armSabotage(plan(options.trigger ?? 1), 5);
   for (let index = 1; index <= 4; index += 1) {
     race.markReady(`racer-${index}`, 10);
   }
@@ -57,50 +68,46 @@ function eventTypes(race: RaceEngine): string[] {
   return race.events.map((event) => event.type);
 }
 
-test("emits obstacle_applied and enters recovery until the duration elapses", async () => {
+test("emits sabotage_applied and enters recovery until recoverAt", async () => {
   const race = readyRace(new FakeObstacles());
   const result = await race.reachCheckpoint("racer-1", 1, 1_000);
   assert.deepEqual(result, { claimed: true, obstacleApplied: true });
 
+  assert.deepEqual(eventTypes(race).slice(-3), [
+    "checkpoint_reached",
+    "sabotage_triggered",
+    "sabotage_applied",
+  ]);
   const applied = race.events.at(-1);
-  assert.equal(applied?.type, "obstacle_applied");
   assert.equal(applied?.racerId, "racer-1");
   assert.equal(applied?.checkpoint, 1);
-  assert.deepEqual(applied?.metadata, {
-    hazardType: "blocking_modal",
-    targetRole: "primary-action",
-    durationMs: 4_000,
-    intensity: 2,
-    applied: true,
-    reason: null,
-  });
+  assert.deepEqual(applied?.metadata, { tier: "intermediate", policy });
   const racer = race.racers.get("racer-1");
   assert.equal(racer?.status, "recovering");
-  assert.equal(racer?.recoveringUntil, 5_000);
+  assert.equal(racer?.recoverAt, 5_000);
 
   race.tick(4_999);
   assert.equal(racer?.status, "recovering");
   race.tick(5_000);
   assert.equal(racer?.status, "running");
-  assert.equal(racer?.recoveringUntil, undefined);
+  assert.equal(racer?.recoverAt, undefined);
   const recovered = race.events.at(-1);
-  assert.equal(recovered?.type, "racer_recovered");
+  assert.equal(recovered?.type, "sabotage_recovered");
   assert.equal(recovered?.racerId, "racer-1");
   assert.equal(recovered?.occurredAt, 5_000);
-  assert.deepEqual(recovered?.metadata, { cause: "duration" });
+  assert.deepEqual(recovered?.metadata, { checkpoint: 1, cause: "duration" });
 
   race.tick(6_000);
-  assert.equal(eventTypes(race).filter((type) => type === "racer_recovered").length, 1);
+  assert.equal(eventTypes(race).filter((type) => type === "sabotage_recovered").length, 1);
 });
 
-test("emits obstacle_applied for a misfire and keeps the racer running", async () => {
+test("emits sabotage_misfired and keeps the racer running", async () => {
   const race = readyRace(new FakeObstacles({ applied: false, reason: "target_not_found" }));
   const result = await race.reachCheckpoint("racer-2", 1, 1_000);
   assert.deepEqual(result, { claimed: true, obstacleApplied: false });
-  const applied = race.events.at(-1);
-  assert.equal(applied?.type, "obstacle_applied");
-  assert.equal(applied?.metadata?.applied, false);
-  assert.equal(applied?.metadata?.reason, "target_not_found");
+  const misfired = race.events.at(-1);
+  assert.equal(misfired?.type, "sabotage_misfired");
+  assert.equal(misfired?.metadata?.reason, "target_not_found");
   assert.equal(race.racers.get("racer-2")?.status, "running");
 });
 
@@ -108,63 +115,65 @@ test("treats a throwing obstacle executor as a misfire", async () => {
   const race = readyRace(new FakeObstacles(new Error("cdp timeout")));
   const result = await race.reachCheckpoint("racer-1", 1, 1_000);
   assert.deepEqual(result, { claimed: true, obstacleApplied: false });
-  assert.equal(race.events.at(-1)?.metadata?.reason, "apply_failed: cdp timeout");
+  assert.equal(race.events.at(-1)?.type, "sabotage_misfired");
+  assert.equal(race.events.at(-1)?.metadata?.reason, "cdp timeout");
   assert.equal(race.racers.get("racer-1")?.checkpoint, 1);
 });
 
-test("fetches each stage policy once and skips checkpoints without one", async () => {
-  const provider = new FakeObstacles();
-  const race = readyRace(provider);
+test("fires only at the trigger checkpoint, once per racer", async () => {
+  const provider = new FakeObstacles({ applied: false });
+  const race = readyRace(provider, { trigger: 2 });
   await race.reachCheckpoint("racer-1", 1, 1_000);
-  await race.reachCheckpoint("racer-2", 1, 1_100);
-  await race.reachCheckpoint("racer-2", 2, 1_200);
-  assert.deepEqual(provider.policyCalls, [1, 2]);
+  assert.deepEqual(provider.applied, []);
+  await race.reachCheckpoint("racer-1", 2, 1_100);
+  await race.reachCheckpoint("racer-2", 1, 1_200);
+  await race.reachCheckpoint("racer-2", 2, 1_300);
+  await race.reachCheckpoint("racer-1", 3, 1_400);
   assert.deepEqual(provider.applied, ["racer-1", "racer-2"]);
-  assert.equal(eventTypes(race).filter((type) => type === "obstacle_applied").length, 2);
+  assert.equal(eventTypes(race).filter((type) => type === "sabotage_triggered").length, 2);
 });
 
-test("a recovering racer recovers when it reaches the next checkpoint", async () => {
-  const race = readyRace(new FakeObstacles());
-  await race.reachCheckpoint("racer-1", 1, 1_000);
-  await race.reachCheckpoint("racer-1", 2, 2_000);
-
-  assert.equal(race.racers.get("racer-1")?.status, "running");
-  const [recovered, reached] = race.events.slice(-2);
-  assert.equal(recovered.type, "racer_recovered");
-  assert.deepEqual(recovered.metadata, { cause: "checkpoint" });
-  assert.equal(recovered.occurredAt, 2_000);
-  assert.equal(reached.type, "checkpoint_reached");
-  assert.equal(reached.checkpoint, 2);
+test("armSabotage rejects a trigger outside the course", () => {
+  const race = new RaceEngine({ raceId: "race-1", courseId: "c", seed: "s", checkpointCount: 2 });
+  assert.throws(() => race.armSabotage(plan(3)), /outside the course/);
 });
 
-test("a recovering racer recovers when it finishes", async () => {
-  const race = readyRace(new FakeObstacles(), 1);
+test("a recovering racer cannot reach a checkpoint or finish until recoverAt", async () => {
+  const race = readyRace(new FakeObstacles(), { checkpointCount: 1 });
   await race.reachCheckpoint("racer-3", 1, 1_000);
   assert.equal(race.racers.get("racer-3")?.status, "recovering");
+  assert.throws(() => race.finishRacer("racer-3", 2_000), /cannot finish while recovering/);
 
-  assert.equal(race.finishRacer("racer-3", 2_000), true);
-  const types = eventTypes(race).slice(-3);
-  assert.deepEqual(types, ["racer_recovered", "racer_finished", "race_finished"]);
-  assert.deepEqual(race.events.at(-3)?.metadata, { cause: "finish" });
-  assert.equal(race.racers.get("racer-3")?.status, "finished");
+  const other = readyRace(new FakeObstacles());
+  await other.reachCheckpoint("racer-1", 1, 1_000);
+  await assert.rejects(
+    other.reachCheckpoint("racer-1", 2, 2_000),
+    /cannot reach a checkpoint while recovering/,
+  );
+  // Past recoverAt the engine recovers the racer on its own tick first.
+  await other.reachCheckpoint("racer-1", 2, 5_000);
+  assert.equal(other.racers.get("racer-1")?.checkpoint, 2);
+
+  assert.equal(race.finishRacer("racer-3", 5_000), true);
+  assert.deepEqual(eventTypes(race).slice(-3), ["sabotage_recovered", "racer_finished", "race_finished"]);
 });
 
 test("markRecovered emits a manual recovery only on a status change", async () => {
   const race = readyRace(new FakeObstacles());
   race.markRecovered("racer-1", 500);
-  assert.equal(eventTypes(race).includes("racer_recovered"), false);
+  assert.equal(eventTypes(race).includes("sabotage_recovered"), false);
 
   await race.reachCheckpoint("racer-1", 1, 1_000);
   race.markRecovered("racer-1", 1_500);
   race.markRecovered("racer-1", 1_600);
-  const recoveries = race.events.filter((event) => event.type === "racer_recovered");
+  const recoveries = race.events.filter((event) => event.type === "sabotage_recovered");
   assert.equal(recoveries.length, 1);
-  assert.deepEqual(recoveries[0].metadata, { cause: "manual" });
+  assert.deepEqual(recoveries[0].metadata, { checkpoint: 1, cause: "manual" });
   assert.equal(recoveries[0].occurredAt, 1_500);
 });
 
 test("does not recover racers by duration once the race is over", async () => {
-  const race = readyRace(new FakeObstacles(), 1);
+  const race = readyRace(new FakeObstacles(), { checkpointCount: 1 });
   await race.reachCheckpoint("racer-2", 1, 1_000);
   await race.reachCheckpoint("racer-1", 1, 1_500);
   race.markRecovered("racer-1", 1_600);
@@ -176,13 +185,13 @@ test("does not recover racers by duration once the race is over", async () => {
   assert.equal(race.racers.get("racer-2")?.status, "recovering");
 });
 
-test("no obstacles are fetched after hazards freeze", async () => {
+test("no sabotage fires after hazards freeze", async () => {
   const provider = new FakeObstacles();
   const race = readyRace(provider);
   race.tick(180_100);
   await race.reachCheckpoint("racer-1", 1, 180_200);
-  assert.deepEqual(provider.policyCalls, []);
-  assert.equal(eventTypes(race).includes("obstacle_applied"), false);
+  assert.deepEqual(provider.applied, []);
+  assert.equal(eventTypes(race).includes("sabotage_applied"), false);
 });
 
 test("the safety cap records its reason", () => {
@@ -217,7 +226,7 @@ test("abort times out an unstarted race with a reason", () => {
 });
 
 test("abort leaves a finished race and its winner alone", async () => {
-  const race = readyRace(new FakeObstacles({ applied: false }), 1);
+  const race = readyRace(new FakeObstacles({ applied: false }), { checkpointCount: 1 });
   await race.reachCheckpoint("racer-1", 1, 1_000);
   race.finishRacer("racer-1", 2_000);
   assert.equal(race.abort("late", 3_000), false);
@@ -225,10 +234,10 @@ test("abort leaves a finished race and its winner alone", async () => {
   assert.equal(race.racers.get("racer-1")?.status, "finished");
 });
 
-test("abort keeps finished racers finished", async () => {
-  const race = readyRace(new FakeObstacles(), 1);
+test("abort times out a recovering racer and clears recoverAt", async () => {
+  const race = readyRace(new FakeObstacles(), { checkpointCount: 1 });
   await race.reachCheckpoint("racer-1", 1, 1_000);
   race.abort("operator", 1_500);
   assert.equal(race.racers.get("racer-1")?.status, "timed_out");
-  assert.equal(race.racers.get("racer-1")?.recoveringUntil, undefined);
+  assert.equal(race.racers.get("racer-1")?.recoverAt, undefined);
 });

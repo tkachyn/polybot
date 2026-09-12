@@ -9,9 +9,14 @@ import { Rng } from "./rng.js";
 export type Disruption = {
   policy: DisruptionCommand;
   appliedAt: number;
-  /** Scaled wall-clock time at which the disruption stops affecting the agent. */
+  /** Wall-clock time at which the disruption stops affecting the agent. */
   until: number;
 };
+
+/** Scales a real-time sabotage duration to simulated wall-clock time. */
+export function scaleDurationMs(durationMs: number, timeScale: number): number {
+  return Math.max(1, Math.round(durationMs / timeScale));
+}
 
 /**
  * Shared state of one simulated fight's "web pages": which racers currently
@@ -39,7 +44,9 @@ export class SimulatedWorld {
     const disruption: Disruption = {
       policy: { ...policy },
       appliedAt,
-      until: appliedAt + policy.durationMs / this.timeScale,
+      // Sim policies already carry the scaled duration, so the world and the
+      // engine's recoverAt agree at any time scale.
+      until: appliedAt + policy.durationMs,
     };
     this.disruptions.set(racerId, disruption);
     return { ...disruption, policy: { ...disruption.policy } };
@@ -63,8 +70,9 @@ export class SimulatedWorld {
 
 /**
  * Obstacle executor for simulated fights. `apply` flags the racer as disrupted
- * for durationMs / timeScale and always succeeds. `getPolicy` supplies a seeded
- * policy for fights whose sabotage plan has no fixed policy.
+ * for the policy's durationMs and always succeeds. `getPolicy` supplies a
+ * seeded policy, with its duration already scaled, for fights whose sabotage
+ * brief has no fixed policy.
  */
 export class SimulatedObstacleExecutor implements ObstacleProvider {
   private readonly rng: Rng;
@@ -80,7 +88,7 @@ export class SimulatedObstacleExecutor implements ObstacleProvider {
     return {
       hazardType: this.rng.pick(HAZARD_TYPES),
       targetRole: "primary-action",
-      durationMs: this.rng.int(6, 14) * 1_000,
+      durationMs: scaleDurationMs(this.rng.int(6, 14) * 1_000, this.world.timeScale),
       intensity: this.rng.int(1, 3),
     };
   }

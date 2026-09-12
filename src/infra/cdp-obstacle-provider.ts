@@ -5,6 +5,8 @@ import type {
   DisruptionCommand,
   DisruptionResult,
   ObstacleProvider,
+  SabotagePlan,
+  SabotageTrigger,
 } from "../domain/types.js";
 
 const MAX_DURATION_MS = 30_000;
@@ -12,6 +14,18 @@ const MAX_DURATION_MS = 30_000;
 export function validateDisruptionCommand(
   command: DisruptionCommand,
 ): void {
+  if (!command || typeof command !== "object") {
+    throw new Error("disruption command must be an object");
+  }
+  if (![
+    "blocking_modal",
+    "move_primary_action",
+    "insert_decoy",
+    "temporary_disable",
+    "rename_control",
+  ].includes(command.hazardType)) {
+    throw new Error("unsupported hazardType");
+  }
   if (!Number.isInteger(command.durationMs) || command.durationMs < 0) {
     throw new Error("durationMs must be a non-negative integer");
   }
@@ -21,8 +35,24 @@ export function validateDisruptionCommand(
   if (!Number.isInteger(command.intensity) || command.intensity < 1 || command.intensity > 3) {
     throw new Error("intensity must be an integer from 1 to 3");
   }
-  if (!command.targetRole || command.targetRole.length > 100) {
+  if (
+    typeof command.targetRole !== "string" ||
+    command.targetRole.length === 0 ||
+    command.targetRole.length > 100 ||
+    /[\u0000-\u001f\u007f]/.test(command.targetRole)
+  ) {
     throw new Error("targetRole must be between 1 and 100 characters");
+  }
+  if (
+    command.disruptionId !== undefined &&
+    (
+      typeof command.disruptionId !== "string" ||
+      command.disruptionId.length === 0 ||
+      command.disruptionId.length > 100 ||
+      !/^[a-zA-Z0-9._:-]+$/.test(command.disruptionId)
+    )
+  ) {
+    throw new Error("disruptionId contains invalid characters");
   }
 }
 
@@ -113,6 +143,7 @@ export function buildDisruptionScript(
 export class CdpObstacleProvider implements ObstacleProvider {
   private readonly queues = new Map<string, SessionCommandQueue>();
   private readonly policies: Map<number, DisruptionCommand>;
+  private readonly applied = new Set<string>();
 
   constructor(
     private readonly sessions: SteelSessionManager,
@@ -120,8 +151,31 @@ export class CdpObstacleProvider implements ObstacleProvider {
   ) {
     this.policies = new Map(Object.entries(policies).map(([key, value]) => [
       Number(key),
-      value,
+      validateAndReturn(value),
     ]));
+  }
+
+  async armRace(input: {
+    raceId: string;
+    courseId: string;
+    seed: string;
+    checkpointCount: number;
+    trigger: SabotageTrigger;
+  }): Promise<SabotagePlan | null> {
+    const policy = this.policies.get(input.trigger.checkpoint);
+    if (!policy) return null;
+    return {
+      raceId: input.raceId,
+      tier: policy.intensity <= 1
+        ? "basic"
+        : policy.intensity === 2
+          ? "intermediate"
+          : "difficult",
+      trigger: input.trigger,
+      policy,
+      selectedAt: Date.now(),
+      source: "fallback",
+    };
   }
 
   async getPolicy(
@@ -140,21 +194,49 @@ export class CdpObstacleProvider implements ObstacleProvider {
     this.queues.set(racerId, queue);
 
     return queue.run(async () => {
+      const disruptionId = policy.disruptionId ??
+        `disruption-${racerId}-${stablePolicyKey(policy)}`;
+      const applicationKey = `${racerId}:${disruptionId}`;
+      if (this.applied.has(applicationKey)) {
+        return { applied: false, reason: "already_applied" };
+      }
       const session = this.sessions.get(racerId);
       const cdp: CDPSession = await session.page.context().newCDPSession(session.page);
-      const disruptionId = `disruption-${racerId}-${Date.now()}`;
-      const response = await cdp.send("Runtime.evaluate", {
-        expression: buildDisruptionScript(policy, disruptionId),
-        returnByValue: true,
-        awaitPromise: true,
-      });
-      await cdp.detach().catch(() => undefined);
-
-      const value = response.result.value;
-      if (typeof value === "object" && value !== null && "applied" in value) {
-        return value as DisruptionResult;
+      try {
+        const response = await cdp.send("Runtime.evaluate", {
+          expression: buildDisruptionScript(policy, disruptionId),
+          returnByValue: true,
+          awaitPromise: true,
+        });
+        const value = response.result.value;
+        if (typeof value === "object" && value !== null && "applied" in value) {
+          const result = value as DisruptionResult;
+          if (result.applied) this.applied.add(applicationKey);
+          return result;
+        }
+        return { applied: false, reason: "invalid_cdp_response" };
+      } finally {
+        await cdp.detach().catch(() => undefined);
       }
-      return { applied: false, reason: "invalid_cdp_response" };
     });
   }
+
+  async cleanup(): Promise<void> {
+    this.applied.clear();
+    this.queues.clear();
+  }
+}
+
+function validateAndReturn(policy: DisruptionCommand): DisruptionCommand {
+  validateDisruptionCommand(policy);
+  return policy;
+}
+
+function stablePolicyKey(policy: DisruptionCommand): string {
+  return [
+    policy.hazardType,
+    policy.targetRole,
+    policy.durationMs,
+    policy.intensity,
+  ].join("-");
 }

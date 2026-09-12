@@ -1,12 +1,11 @@
 import { NoopObstacleProvider } from "./noop-obstacle-provider.js";
 import type {
-  DisruptionCommand,
-  DisruptionResult,
   ObstacleProvider,
   Race,
   RaceEvent,
   Racer,
   RecoveryCause,
+  SabotagePlan,
 } from "./types.js";
 
 export type RaceEngineOptions = {
@@ -24,10 +23,7 @@ export class RaceEngine {
   private readonly obstacleProvider: ObstacleProvider;
   private readonly idFactory: () => string;
   private readonly claimedCheckpoints = new Set<string>();
-  private readonly stagePolicies = new Map<
-    number,
-    Promise<DisruptionCommand | null>
-  >();
+  private readonly claimedSabotage = new Set<string>();
 
   constructor(
     input: {
@@ -73,6 +69,44 @@ export class RaceEngine {
     this.emit({ type: "race_created", occurredAt: input.now ?? Date.now() });
   }
 
+  armSabotage(plan: SabotagePlan, now = Date.now()): void {
+    if (this.race.status !== "starting") {
+      throw new Error("Sabotage can only be armed before the race starts");
+    }
+    if (plan.raceId !== this.race.id) {
+      throw new Error("Sabotage plan belongs to a different race");
+    }
+    if (
+      !Number.isInteger(plan.trigger.checkpoint) ||
+      plan.trigger.checkpoint < 1 ||
+      plan.trigger.checkpoint > this.race.checkpointCount
+    ) {
+      throw new Error("Sabotage trigger checkpoint is outside the course");
+    }
+    if (this.race.sabotagePlan) {
+      if (JSON.stringify(this.race.sabotagePlan) !== JSON.stringify(plan)) {
+        throw new Error("Race sabotage plan is immutable");
+      }
+      return;
+    }
+    const immutablePlan = Object.freeze({
+      ...plan,
+      trigger: Object.freeze({ ...plan.trigger }),
+      policy: Object.freeze({ ...plan.policy }),
+    }) as SabotagePlan;
+    this.race.sabotagePlan = immutablePlan;
+    this.emit({
+      type: "sabotage_armed",
+      occurredAt: now,
+      metadata: {
+        tier: immutablePlan.tier,
+        trigger: immutablePlan.trigger,
+        policy: immutablePlan.policy,
+        source: immutablePlan.source,
+      },
+    });
+  }
+
   markReady(racerId: string, now = Date.now()): void {
     const racer = this.getRacer(racerId);
     if (this.race.status !== "starting") {
@@ -116,9 +150,15 @@ export class RaceEngine {
     if (this.isOver()) {
       return { claimed: false, obstacleApplied: false };
     }
+    if (this.race.status === "starting") {
+      throw new Error("Race has not started");
+    }
     const claimKey = `${racerId}:${checkpoint}`;
     if (this.claimedCheckpoints.has(claimKey)) {
       return { claimed: false, obstacleApplied: false };
+    }
+    if (racer.status !== "running") {
+      throw new Error(`${racerId} cannot reach a checkpoint while ${racer.status}`);
     }
 
     if (checkpoint !== racer.checkpoint + 1) {
@@ -131,7 +171,6 @@ export class RaceEngine {
     }
 
     this.claimedCheckpoints.add(claimKey);
-    this.recover(racer, "checkpoint", now);
     racer.checkpoint = checkpoint;
     this.emit({
       type: "checkpoint_reached",
@@ -140,49 +179,85 @@ export class RaceEngine {
       occurredAt: now,
     });
 
-    if (this.race.status === "hazards_frozen") {
+    const plan = this.race.sabotagePlan;
+    if (
+      !plan ||
+      checkpoint !== plan.trigger.checkpoint ||
+      this.race.status === "hazards_frozen" ||
+      this.claimedSabotage.has(racerId)
+    ) {
       return { claimed: true, obstacleApplied: false };
     }
 
-    let policyPromise = this.stagePolicies.get(checkpoint);
-    if (!policyPromise) {
-      policyPromise = this.obstacleProvider
-        .getPolicy(this.race.id, checkpoint)
-        .catch(() => null);
-      this.stagePolicies.set(checkpoint, policyPromise);
-    }
-    const policy = await policyPromise;
-    if (!policy) {
-      return { claimed: true, obstacleApplied: false };
-    }
-
-    const result = await this.applyObstacle(racerId, policy);
+    this.claimedSabotage.add(racerId);
     this.emit({
-      type: "obstacle_applied",
+      type: "sabotage_triggered",
       racerId,
       checkpoint,
       occurredAt: now,
       metadata: {
-        hazardType: policy.hazardType,
-        targetRole: policy.targetRole,
-        durationMs: policy.durationMs,
-        intensity: policy.intensity,
-        applied: result.applied,
-        reason: result.reason ?? null,
+        tier: plan.tier,
+        trigger: plan.trigger,
       },
     });
-    // The race may have ended, or the racer failed, while the obstacle was
+
+    let result;
+    try {
+      result = await this.obstacleProvider.apply(racerId, plan.policy);
+    } catch (error) {
+      this.emit({
+        type: "sabotage_misfired",
+        racerId,
+        checkpoint,
+        occurredAt: now,
+        metadata: {
+          tier: plan.tier,
+          reason: error instanceof Error ? error.message : String(error),
+        },
+      });
+      return { claimed: true, obstacleApplied: false };
+    }
+    // The race may have ended, or the racer failed, while the sabotage was
     // being applied; only a still-running racer enters recovery.
     if (result.applied && !this.isOver() && racer.status === "running") {
       racer.status = "recovering";
-      racer.recoveringUntil = now + policy.durationMs;
+      racer.recoverAt = now + plan.policy.durationMs;
+      this.emit({
+        type: "sabotage_applied",
+        racerId,
+        checkpoint,
+        occurredAt: now,
+        metadata: { tier: plan.tier, policy: plan.policy },
+      });
+      return { claimed: true, obstacleApplied: true };
     }
-    return { claimed: true, obstacleApplied: result.applied };
+    this.emit({
+      type: "sabotage_misfired",
+      racerId,
+      checkpoint,
+      occurredAt: now,
+      metadata: {
+        tier: plan.tier,
+        reason: result.applied ? "racer_not_running" : result.reason ?? "not_applied",
+      },
+    });
+    return { claimed: true, obstacleApplied: false };
   }
 
   /** Ends a racer's recovery early. Emits only when the status changes. */
-  markRecovered(racerId: string, now = Date.now()): void {
-    this.recover(this.getRacer(racerId), "manual", now);
+  markRecovered(racerId: string, now = Date.now(), cause: RecoveryCause = "manual"): void {
+    const racer = this.getRacer(racerId);
+    if (racer.status !== "recovering" || this.isOver()) {
+      return;
+    }
+    racer.status = "running";
+    racer.recoverAt = undefined;
+    this.emit({
+      type: "sabotage_recovered",
+      racerId,
+      occurredAt: now,
+      metadata: { checkpoint: racer.checkpoint, cause },
+    });
   }
 
   failRacer(racerId: string, reason: string, now = Date.now()): void {
@@ -191,7 +266,7 @@ export class RaceEngine {
       return;
     }
     racer.status = "failed";
-    delete racer.recoveringUntil;
+    racer.recoverAt = undefined;
     this.emit({
       type: "racer_failed",
       racerId,
@@ -213,8 +288,10 @@ export class RaceEngine {
     if (racer.status === "finished") {
       return false;
     }
+    if (racer.status !== "running") {
+      throw new Error(`${racerId} cannot finish while ${racer.status}`);
+    }
 
-    this.recover(racer, "finish", now);
     racer.status = "finished";
     racer.finishedAt = now;
     this.emit({ type: "racer_finished", racerId, occurredAt: now });
@@ -253,15 +330,13 @@ export class RaceEngine {
       this.emit({ type: "hazards_frozen", occurredAt: now });
     }
 
-    if (!this.isOver()) {
-      for (const racer of this.racers.values()) {
-        if (
-          racer.status === "recovering" &&
-          racer.recoveringUntil !== undefined &&
-          racer.recoveringUntil <= now
-        ) {
-          this.recover(racer, "duration", now);
-        }
+    for (const racer of this.racers.values()) {
+      if (
+        racer.status === "recovering" &&
+        racer.recoverAt !== undefined &&
+        now >= racer.recoverAt
+      ) {
+        this.markRecovered(racer.racerId, now, "duration");
       }
     }
 
@@ -287,37 +362,10 @@ export class RaceEngine {
     for (const racer of this.racers.values()) {
       if (racer.status !== "finished") {
         racer.status = "timed_out";
-        delete racer.recoveringUntil;
+        racer.recoverAt = undefined;
       }
     }
     this.emit({ type: "race_timed_out", occurredAt: now, metadata: { reason } });
-  }
-
-  private recover(racer: Racer, cause: RecoveryCause, now: number): void {
-    if (racer.status !== "recovering") {
-      return;
-    }
-    racer.status = "running";
-    delete racer.recoveringUntil;
-    this.emit({
-      type: "racer_recovered",
-      racerId: racer.racerId,
-      checkpoint: racer.checkpoint,
-      occurredAt: now,
-      metadata: { cause },
-    });
-  }
-
-  private async applyObstacle(
-    racerId: string,
-    policy: DisruptionCommand,
-  ): Promise<DisruptionResult> {
-    try {
-      return await this.obstacleProvider.apply(racerId, policy);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      return { applied: false, reason: `apply_failed: ${message}` };
-    }
   }
 
   private isOver(): boolean {
