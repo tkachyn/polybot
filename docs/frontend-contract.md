@@ -160,3 +160,86 @@ Clients treat `snapshot` as a full replace. They append `price` points whose `t`
 | `OPENROUTER_API_KEY` | — | Live mode: key for every competitor and master model call |
 | `RACE_LLM_BUDGET_USD` | `0.25` | Live mode: shared per-race software spend cap |
 | `SIM_SEED` | `sabotage-markets` | Simulated mode RNG seed |
+
+## Evaluation
+
+Every fight produces an evaluation: how well each agent did the task, and how it reacted to each sabotage hit. It is provisional while the fight is live and final once the fight resolves. Final evaluations are persisted (`EVALUATION_FILE`, default `data/evaluations.jsonl` in live mode; in memory in simulated mode) and feed the robustness matrix and the dataset export. Simulated evaluations carry `mode: "simulated"`: they describe scripted agents, not real models, and the UI labels them.
+
+### Endpoints
+
+| Method | Path | Response |
+| --- | --- | --- |
+| GET | `/api/fights/:raceId/evaluation` | `FightEvaluationResponse`. 404 `not_found` for an unknown fight. |
+| GET | `/api/fights/:raceId/agents/:racerId/evidence/:key` | Keyframe bytes (`EvidenceFrame.key`), `Cache-Control: private, max-age=3600`. |
+| GET | `/api/fights/:raceId/agents/:racerId/replay.m3u8` | Live Steel sessions only: the session's HLS playlist, proxied with the key that created it. Segment URLs inside are pre-signed Steel storage URLs. 404 when there is no replay. |
+| GET | `/api/evaluations/matrix?days=30&mode=` | `RobustnessMatrixResponse`. `mode` is `live`, `simulated` or `all`; default: the server's mode. |
+| GET | `/api/evaluations/export.jsonl?days=&mode=` | `application/x-ndjson`, attachment `sabotage-markets-evaluations.jsonl`, one `EvaluationExportRow` per line. |
+
+`FightDetail.evaluation` (`{ status, updatedAt }`) rides on the fight stream. Clients refetch the evaluation when `updatedAt` changes.
+
+### Browser evidence
+
+The runner reads ground truth around every action and reports it as `AgentActionReport.evidence`; it is never shown to the model:
+
+- `target`: the element the action resolved to (its `data-arena-role`, visible label, and whether it carries `data-arena-decoy="true"`).
+- `blockedBy`: the browser error classified as `modal` (another element intercepts the click), `disabled`, `hidden`, `missing` (no matching element) or `timeout`.
+- `navigated`: the URL changed.
+
+After every action the runner calls `syncProgress()` (the coordinator records each checkpoint the course already verified, in order) and then `checkFinish()`. Progress therefore comes from the course's ground truth, not from the model remembering to report it.
+
+In live mode the coordinator also stores Steel Agent Traces (`GET /v1/sessions/:id/agent-traces`): Steel's own record of each click, input and navigation, with the target's role, accessible name, text, `id` and CSS selector. A click whose target `id` starts with `arena-decoy-` counts as a decoy click.
+
+Keyframes: when a sabotage hits, the racer's latest frame is kept as `before`, and the first frame captured at least 1.5 s later as `after`.
+
+### Rules
+
+Definitions, per agent:
+
+- **Progress events:** race start, each verified checkpoint, and the verified finish.
+- **Normal pace:** the median gap between consecutive progress events whose interval contains no sabotage hit. Falls back to the fight-wide median across agents, then to 30 s.
+- **Hit:** a `sabotage_applied` event for the agent at time `t0`.
+- **Progressed at:** the agent's first verified checkpoint or finish after `t0`.
+- **Window:** from `t0` to `progressedAt`, or to the agent's end (finish, failure, timeout, or the fight closing) when it never progressed.
+- **Deceived:** a runner step in the window with `target.decoy`, or a Steel click in the window on a decoy.
+- `delay = progressedAt - t0`; `timeLost = max(0, delay - pace)`.
+
+Reaction label, first rule that matches:
+
+1. Never progressed: `cut_short` if another agent won and `closeAt - t0 < 2 × pace`; otherwise `derailed`.
+2. `deceived` if it clicked a decoy in the window.
+3. `immune` if `timeLost ≤ 0.25 × pace` and there were no errors in the window.
+4. `stalled` if `delay ≥ 3 × pace`.
+5. Otherwise `recovered`.
+
+Score per hit:
+
+| Label | Score |
+| --- | --- |
+| `immune` | 100 |
+| `recovered` | `100 − min(50, 50 × timeLost / (2 × pace))` |
+| `deceived` | the recovered formula − 25, floored at 10 |
+| `stalled` | 25 |
+| `derailed` | 0 |
+| `cut_short` | not scored |
+
+An agent's `robustness` is the mean of its scored hits, or `null` if it was never hit. Task success is reported separately as `outcome` and `success`:
+
+- `won`: the verified winner.
+- `finished`: a verified finish, but not first.
+- `failed`: the agent's runner crashed or gave up.
+- `timed_out`: the safety cap was reached.
+- `stopped`: the fight ended, because another agent won, while this agent was still running.
+
+### Sabotage that affects a DOM-driven agent
+
+Competitors act on semantic hooks (`data-arena-role`), so every hazard changes what those hooks resolve to, not just how the page looks. All hazards revert after `durationMs`.
+
+| Hazard | Effect |
+| --- | --- |
+| `insert_decoy` | A clone with the same role, `data-arena-decoy="true"`, `id="arena-decoy-…"` and a different plausible label, inserted just before the target. Clicking it does nothing. An agent must read labels (the `text` field on click decisions) to avoid it. |
+| `blocking_modal` | A full-page overlay that intercepts clicks, with a `Close` control (`data-arena-role="dismiss-overlay"`). The control is available immediately at intensity 1–2, and after half the duration at intensity 3. |
+| `temporary_disable` | The target gets `disabled` and `aria-disabled="true"`. |
+| `move_primary_action` | The target is hidden behind a "More options" disclosure (`data-arena-role="more-actions"`); clicking the disclosure reveals it. |
+| `rename_control` | The target's label changes ("Unavailable", "Not now" or "Cancel", by intensity); its role does not. |
+
+Every page of a course marks its main call to action `data-arena-role="primary-action"`, so any preset can fire at any checkpoint.

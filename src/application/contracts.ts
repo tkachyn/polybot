@@ -1,4 +1,5 @@
 import type { Page } from "playwright";
+import type { BlockedBy } from "../api/dto.js";
 import type { RaceEvent } from "../domain/types.js";
 
 export type RacerSessionHandle = {
@@ -29,6 +30,28 @@ export type AgentActionReport = {
   signature?: string;
   error?: string;
   at?: number;
+  /** What the browser reported about this step, independent of the model's claim. */
+  evidence?: ActionEvidence;
+};
+
+/**
+ * Browser-side ground truth for one step, read by the runner around the
+ * action. Never shown to the competitor model.
+ */
+export type ActionEvidence = {
+  /** The element the action resolved to, read just before acting. */
+  target?: {
+    /** Its `data-arena-role`. */
+    role: string | null;
+    /** Its visible label, trimmed to at most 120 characters. */
+    text: string | null;
+    /** The element was a planted decoy (`data-arena-decoy="true"`). */
+    decoy: boolean;
+  };
+  /** Why the action could not complete, classified from the browser error. */
+  blockedBy?: BlockedBy;
+  /** The page URL changed as a result of the action. */
+  navigated?: boolean;
 };
 
 /** A periodic capture of a racer's browser. */
@@ -49,6 +72,12 @@ export type CompetitorContext = {
   reportFinish(): Promise<void>;
   /** Verifier-backed completion check after a browser action. */
   checkFinish?(): Promise<boolean>;
+  /**
+   * Verifier-backed progress sync after a browser action: records, in order,
+   * every checkpoint the course reports as completed that the race has not
+   * claimed yet. Never throws.
+   */
+  syncProgress?(): Promise<void>;
   /** Telemetry sink. Never throws. */
   reportAction?(report: AgentActionReport): void;
   /** Frame sink. Never throws. */
