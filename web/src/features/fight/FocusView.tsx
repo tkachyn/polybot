@@ -63,6 +63,7 @@ export function FocusView({ fight, agent, visual, slip, markers, onClose }: Focu
           raceId={fight.raceId}
           racerId={agent.racerId}
           frame={agent.frame}
+          browserView={agent.browserView}
           fightStatus={fight.status}
           startsAt={fight.startsAt}
           agentName={name}

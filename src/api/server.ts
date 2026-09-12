@@ -6,6 +6,10 @@ import type { ApiErrorCode, ServerMode } from "./dto.js";
 import type { ApiCreateRaceInput, CoordinatorFactory } from "./race-registry.js";
 import { RaceRegistry } from "./race-registry.js";
 import {
+  DefaultSteelBrowserSessionService,
+  type SteelBrowserSessionService,
+} from "../infra/steel-browser-session-service.js";
+import {
   DEFAULT_STREAM_THROTTLES,
   registerSpectatorRoutes,
   type StreamThrottles,
@@ -40,6 +44,8 @@ export type ApiServerOptions = {
   now?: () => number;
   streamThrottles?: Partial<StreamThrottles>;
   ssePingMs?: number;
+  /** Server-side browser lifecycle for an authenticated operator/frontend. */
+  browserSessionService?: SteelBrowserSessionService;
 };
 
 const ERROR_STATUS: Record<ApiErrorCode, number> = {
@@ -95,6 +101,8 @@ export function buildApi(options: ApiServerOptions): FastifyInstance {
   const hub = new SseHub(options.ssePingMs ?? SSE_PING_MS);
   const now = options.now ?? (() => Date.now());
   const webDist = isDirectory(options.webDist) ? options.webDist : undefined;
+  const browserSessions = options.browserSessionService ??
+    new DefaultSteelBrowserSessionService();
   let ticker: ReturnType<typeof setInterval> | undefined;
   let stopRegistryHook: (() => void) | undefined;
 
@@ -150,6 +158,42 @@ export function buildApi(options: ApiServerOptions): FastifyInstance {
     showSabotageUpfront: options.showSabotageUpfront ?? true,
     throttles: { ...DEFAULT_STREAM_THROTTLES, ...options.streamThrottles },
   });
+
+  // -------------------------------------------------------- browser sessions
+
+  app.post<{ Body: { url?: string } }>("/api/browser-sessions", async (request, reply) => {
+    const body = request.body ?? {};
+    if (typeof body !== "object" || Array.isArray(body)) {
+      throw new DomainError("invalid", "request body must be a JSON object");
+    }
+    return reply.status(201).send(
+      await browserSessions.create(requireString(body.url, "url")),
+    );
+  });
+
+  app.get<{ Params: { sessionId: string } }>(
+    "/api/browser-sessions/:sessionId",
+    async (request) => browserSessions.get(request.params.sessionId),
+  );
+
+  app.post<{
+    Params: { sessionId: string };
+    Body: { url?: string };
+  }>("/api/browser-sessions/:sessionId/navigate", async (request) => {
+    const body = request.body ?? {};
+    if (typeof body !== "object" || Array.isArray(body)) {
+      throw new DomainError("invalid", "request body must be a JSON object");
+    }
+    return browserSessions.navigate(
+      request.params.sessionId,
+      requireString(body.url, "url"),
+    );
+  });
+
+  app.delete<{ Params: { sessionId: string } }>(
+    "/api/browser-sessions/:sessionId",
+    async (request) => browserSessions.release(request.params.sessionId),
+  );
 
   // ------------------------------------------------------ operator routes
 
@@ -290,6 +334,7 @@ export function buildApi(options: ApiServerOptions): FastifyInstance {
     } catch (error) {
       app.log.error(error);
     }
+    await browserSessions.releaseAll();
     await registry.shutdown();
   });
 

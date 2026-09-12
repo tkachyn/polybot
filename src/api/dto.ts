@@ -181,6 +181,13 @@ export type FrameInfo = {
   contentType: string;
 };
 
+export type BrowserView = {
+  /** Browser session lifecycle, independent of the fight lifecycle. */
+  status: "pending" | "live" | "released" | "unavailable";
+  /** Read-only Steel debug URL; null when not currently viewable. */
+  viewerUrl: string | null;
+};
+
 export type FightAgentDetail = FightAgentSummary & {
   openingYes: number;
   /** checkpoint / checkpointCount, 0..1. */
@@ -201,6 +208,8 @@ export type FightAgentDetail = FightAgentSummary & {
   log: ActionLogEntry[];
   /** Fetch bytes from GET /api/fights/:raceId/agents/:racerId/frame?seq=N */
   frame: FrameInfo | null;
+  /** Read-only live browser view, with frame capture as the fallback. */
+  browserView: BrowserView;
 };
 
 export type SabotageDetail = SabotageSummary & {

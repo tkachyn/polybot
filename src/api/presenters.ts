@@ -276,6 +276,7 @@ function agentDetail(view: FightView, racer: Racer, index: number): FightAgentDe
     checkpoints,
     log: telemetry.log,
     frame,
+    browserView: coordinator.browserView(racer.racerId),
   };
 }
 

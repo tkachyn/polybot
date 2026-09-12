@@ -16,7 +16,11 @@ class FakeSessions implements RacerSessionManager {
 
   async create(racerId: string): Promise<RacerSessionHandle> {
     this.created.push(racerId);
-    return { racerId, steelSessionId: `steel-${racerId}` };
+    return {
+      racerId,
+      steelSessionId: `steel-${racerId}`,
+      viewerUrl: `https://viewer.test/${racerId}?interactive=false&showControls=false`,
+    };
   }
 
   async release(_racerId: string): Promise<void> {}
@@ -91,7 +95,15 @@ test("prepares four sessions before starting all racers", async () => {
   assert.equal(runner.running.size, 4);
   assert.equal(snapshot.race.status, "running");
   assert.equal(snapshot.racers.every((racer) => racer.status === "running"), true);
+  assert.deepEqual(coordinator.browserView("racer-1"), {
+    status: "live",
+    viewerUrl: "https://viewer.test/racer-1?interactive=false&showControls=false",
+  });
   await coordinator.shutdown();
+  assert.deepEqual(coordinator.browserView("racer-1"), {
+    status: "released",
+    viewerUrl: null,
+  });
 });
 
 test("verifies checkpoints and resolves the market with the winner", async () => {

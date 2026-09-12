@@ -9,7 +9,7 @@
  * ones in between are skipped.
  */
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import type { FightStatus, FrameInfo } from "@contract";
+import type { BrowserView, FightStatus, FrameInfo } from "@contract";
 import { fightFrameUrl } from "../../api/client";
 import { cx } from "../../lib/cx";
 import { useNow } from "../../state/clock";
@@ -21,6 +21,7 @@ export type LiveCaptureProps = {
   raceId: string;
   racerId: string;
   frame: FrameInfo | null;
+  browserView: BrowserView;
   fightStatus: FightStatus;
   /** Scheduled start, for the upcoming placeholder. */
   startsAt: number | null;
@@ -38,17 +39,31 @@ export function LiveCapture(props: LiveCaptureProps) {
 
 type Shown = { src: string; seq: number; capturedAt: number };
 
-function CaptureSurface({ raceId, racerId, frame, fightStatus, startsAt, agentName, overlay, className }: LiveCaptureProps) {
+function CaptureSurface({ raceId, racerId, frame, browserView, fightStatus, startsAt, agentName, overlay, className }: LiveCaptureProps) {
   const shown = useBufferedFrame(raceId, racerId, frame);
+  const viewerUrl = browserView.status === "live" ? browserView.viewerUrl : null;
+  const [viewerFailed, setViewerFailed] = useState(false);
+  useEffect(() => setViewerFailed(false), [viewerUrl]);
+  const showViewer = viewerUrl !== null && !viewerFailed;
   return (
     <div className={cx(styles.capture, className)}>
-      {shown ? (
+      {showViewer ? (
+        <iframe
+          className={styles.viewer}
+          src={viewerUrl}
+          title={`${agentName} live browser view`}
+          aria-label={`${agentName} live browser view`}
+          allow="autoplay; fullscreen"
+          tabIndex={-1}
+          onError={() => setViewerFailed(true)}
+        />
+      ) : shown ? (
         <img className={styles.image} src={shown.src} alt={`${agentName} browser capture`} draggable={false} />
       ) : (
         <Placeholder fightStatus={fightStatus} startsAt={startsAt} />
       )}
       {overlay && <div className={styles.overlay}>{overlay}</div>}
-      {shown && fightStatus === "live" && <FrameAge capturedAt={shown.capturedAt} />}
+      {!showViewer && shown && fightStatus === "live" && <FrameAge capturedAt={shown.capturedAt} />}
     </div>
   );
 }

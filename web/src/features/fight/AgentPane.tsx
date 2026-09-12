@@ -59,6 +59,7 @@ export function AgentPane({ fight, agent, visual, slip, markers, onOpen, buttonR
         raceId={fight.raceId}
         racerId={agent.racerId}
         frame={agent.frame}
+        browserView={agent.browserView}
         fightStatus={fight.status}
         startsAt={fight.startsAt}
         agentName={name}

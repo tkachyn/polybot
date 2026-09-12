@@ -112,6 +112,10 @@ test("fights, orders, frames, my-fight and leaderboard", async () => {
   assert.equal(detail.json().fight.title, "Upcoming fight");
   assert.equal(detail.json().fight.sabotage.summary, "A modal blocks checkout");
   assert.equal(detail.json().fight.checkpoints.length, 3);
+  assert.deepEqual(detail.json().fight.agents[0].browserView, {
+    status: "pending",
+    viewerUrl: null,
+  });
   assert.ok(detail.json().priceHistory.length >= 1);
   const unknown = await app.inject({ method: "GET", url: "/api/fights/missing" });
   assert.deepEqual([unknown.statusCode, unknown.json().code], [404, "not_found"]);

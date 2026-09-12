@@ -11,6 +11,7 @@ Backend features:
 - Deterministic fallback sabotage and local course/verifier tests without live keys
 - Virtual YES/NO prediction markets over a shared virtual-credit wallet
 - Per-agent telemetry: action log, run status, ETA and browser frames
+- Read-only Steel live browser viewers with frame fallbacks
 - A spectator JSON API with server-sent events
 - OpenRouter adapters with one model per racer and a shared per-race LLM budget
 - Anthropic adapters retained for direct-provider experiments
@@ -120,6 +121,10 @@ GET  /api/fights?status=live|upcoming|resolved
 GET  /api/fights/:raceId
 GET  /api/fights/:raceId/me?userId=
 GET  /api/fights/:raceId/agents/:racerId/frame?seq=   raw image, Cache-Control: no-store
+POST /api/browser-sessions                            operator browser create
+GET  /api/browser-sessions/:sessionId                 operator browser status/view
+POST /api/browser-sessions/:sessionId/navigate        operator browser navigation
+DELETE /api/browser-sessions/:sessionId               operator browser release
 POST /api/fights/:raceId/orders                      OrderRequest → OrderResponse
 POST /api/users                                      201 created, 200 existing
 GET  /api/users/:userId
@@ -155,6 +160,13 @@ POST /races/:raceId/market/sell
 ```
 
 `POST /races` accepts the original fields plus the optional `title`, `taskDetail`, `successCondition`, `checkpointLabels`, `sabotage`, `agents` and `startsAt` (see the contract). A future `startsAt` creates an upcoming fight: it is armed and tradable immediately, and the ticker starts it once it is due. Otherwise the fight creates four sessions, prepares all four agents, passes the readiness barrier and starts. Obstacles stay disabled unless `obstaclesEnabled` is `true`.
+
+Live fight responses include `agents[].browserView.viewerUrl` when a Steel
+session is available. It is read-only (`interactive=false`) and intended for
+an iframe; simulated fights and viewer failures use the existing frame
+endpoint. Browser-session routes own creation, navigation and release on the
+backend. They are unauthenticated in this development server and must be
+protected by application authentication before public deployment.
 
 When `obstaclesEnabled` is `true`, one immutable race-wide sabotage plan (tier, trigger checkpoint and policy) is armed before the race starts: the fixed `sabotage.policy` when given, otherwise the master's `armRace` choice, with a deterministic fallback. The trigger is `sabotage.checkpoint`, default 1. Each racer independently triggers that same plan when its verified report of the trigger checkpoint also verifies the target opening, and cannot report further progress until its recovery (`recoverAt`) elapses. Repeated reports are idempotent.
 

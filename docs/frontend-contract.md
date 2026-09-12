@@ -12,7 +12,7 @@ This document binds the Sabotage Markets UI (`docs/sabotage-markets-handoff.md`)
 | Sabotage | One sabotage per fight at a named checkpoint, revealed to bettors upfront, armed → fired | One immutable race-wide plan with a tier (basic, intermediate, difficult), fired per racer at the first verified target-opening milestone | The engine's `SabotagePlan` (tier, trigger checkpoint, policy, source) is the source of truth. It is armed once, before the fight goes live: the policy is the fixed `sabotage.policy` (source `operator`), else the master's `armRace` choice (`model`, with a deterministic `fallback`). Its trigger checkpoint is `sabotage.checkpoint`, default 1. It fires independently for each agent whose verified report of that checkpoint also verifies the target opening. The bettor-facing text (`summary`, `detail`) is presentation metadata (`SabotageBrief`) on the fight. |
 | Duration | 30-minute cap | 180 s target, 300 s cap | Durations are per race and supplied by the backend (`freezesAt`, `closesAt`). The UI never hard-codes them. |
 | Void | Rules undefined | Cap reached → unresolved, credits returned | A voided fight refunds each open position at its average price. The history shows a `refund` entry. |
-| Capture | Undecided | Steel viewer URL | Periodic frames. Live mode stores a JPEG screenshot per racer; simulated mode renders SVG frames. The UI polls by `frame.seq`. Viewer URLs are never sent to spectators because Steel viewers can be interactive. |
+| Capture | Undecided | Steel viewer URL | Live mode exposes a read-only Steel debug viewer in `agent.browserView` (`interactive=false`, `showControls=false`); simulated mode and viewer failures use periodic frames. The UI must keep the frame path as a fallback and must not reset the viewer iframe while polling. |
 | Agents | GPT-5.2, Claude Opus 4.6, Gemini 3 Pro, Grok 4.1 | One Anthropic competitor model | Each fight has a per-race roster (`AgentIdentity` × 4). In live mode each racer is driven by its own OpenRouter model from `COMPETITOR_LLM_MODELS`, and its identity reports `provider: "openrouter"` with that model id. Without an operator `agents` roster, each agent's `name` and `key` are derived from the model it runs (e.g. `openai/gpt-5.6-luna` → "GPT-5.6 Luna", key `gpt`), so bettors never see one model under another's name. An operator roster keeps its keys and names. |
 | Selling | Not designed | Supported | Sell is available from the Portfolio open-positions table. |
 
@@ -57,6 +57,10 @@ The default roster, in racer order, is: `gpt` "GPT-5.2" (openai), `claude` "Clau
 | GET | `/api/fights/:raceId` | `FightDetailResponse` |
 | GET | `/api/fights/:raceId/me?userId=` | `MyFightResponse` |
 | GET | `/api/fights/:raceId/agents/:racerId/frame?seq=` | Frame bytes with their stored content type and `Cache-Control: no-store`. 404 if there is no frame. |
+| POST | `/api/browser-sessions` | Operator-only `{ url }` → creates one backend-owned Steel browser session and returns read-only `viewerUrl` metadata. |
+| GET | `/api/browser-sessions/:sessionId` | Operator-only browser session status, current page URL/title and read-only viewer metadata. |
+| POST | `/api/browser-sessions/:sessionId/navigate` | Operator-only `{ url }` → navigates the backend-owned session to a validated HTTP(S) URL. |
+| DELETE | `/api/browser-sessions/:sessionId` | Operator-only release; closes Playwright and releases the Steel session. |
 | POST | `/api/fights/:raceId/orders` | `OrderRequest` → `OrderResponse` |
 | POST | `/api/users` | `EnsureUserRequest` → `AccountResponse`: 201 when created (starting balance credited as a `deposit` entry), 200 when existing. `userId` must match `^[A-Za-z0-9_-]{6,64}$`. |
 | GET | `/api/users/:userId` | `AccountResponse` |
@@ -64,6 +68,20 @@ The default roster, in racer order, is: `gpt` "GPT-5.2" (openai), `claude` "Clau
 | POST | `/api/users/:userId/deposit` | `WalletTransferRequest` → `WalletTransferResponse` |
 | POST | `/api/users/:userId/withdraw` | `WalletTransferRequest` → `WalletTransferResponse` |
 | GET | `/api/leaderboard` | `LeaderboardResponse` (30-day window) |
+
+Each `FightAgentDetail` includes:
+
+```ts
+browserView: {
+  status: "pending" | "live" | "released" | "unavailable";
+  viewerUrl: string | null;
+}
+```
+
+When `status` is `live`, render `viewerUrl` in a read-only iframe. The backend
+already adds `interactive=false&showControls=false`; the frontend must also
+set `pointer-events: none` and keep the iframe `src` stable during SSE updates.
+Use the existing frame endpoint when the status is not `live`.
 
 Errors return `ApiError` (`{ error, code }`):
 

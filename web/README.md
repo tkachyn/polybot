@@ -111,7 +111,8 @@ rethrow the AbortError; test with `isAbortError`).
 | `listFights` | `(params?: { status?: FightStatus }, signal?) => Promise<FightListResponse>` |
 | `getFight` | `(raceId, signal?) => Promise<FightDetailResponse>` |
 | `getMyFight` | `(raceId, userId, signal?) => Promise<MyFightResponse>` |
-| `fightFrameUrl` | `(raceId, racerId, seq: number) => string` — `<img src>` for `agent.frame.seq` |
+| `fightFrameUrl` | `(raceId, racerId, seq: number) => string` — `<img src>` fallback for `agent.frame.seq` |
+| `agent.browserView` | Live fights may provide a read-only Steel `viewerUrl`; render it in a non-interactive iframe and keep the frame fallback for simulated/unavailable sessions. |
 | `placeOrder` | `(raceId, order: OrderRequest, signal?) => Promise<OrderResponse>` |
 | `ensureUser` | `(body: EnsureUserRequest, signal?) => Promise<AccountResponse>` |
 | `getUser` | `(userId, signal?) => Promise<AccountResponse>` |

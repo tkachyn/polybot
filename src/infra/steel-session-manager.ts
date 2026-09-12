@@ -53,6 +53,10 @@ export class SteelSessionManager {
     const { result: session, lease } = await this.keys.run(({ client }) =>
       client.sessions.create({
         timeout: this.sessionTimeoutSeconds * 1000,
+        debugConfig: {
+          interactive: false,
+          systemCursor: false,
+        },
       }),
     );
     let browser: Browser;
@@ -71,7 +75,7 @@ export class SteelSessionManager {
       steelSessionId: session.id,
       browser,
       page,
-      viewerUrl: session.sessionViewerUrl,
+      viewerUrl: buildSteelViewerUrl(session.debugUrl ?? session.sessionViewerUrl),
     };
 
     this.active.set(racerId, racerSession);
@@ -92,15 +96,26 @@ export class SteelSessionManager {
     const client = this.clients.get(racerId);
     if (!session || !client) return;
 
-    this.active.delete(racerId);
-    this.clients.delete(racerId);
     await session.browser.close().catch(() => undefined);
     await client.sessions.release(session.steelSessionId);
+    this.active.delete(racerId);
+    this.clients.delete(racerId);
   }
 
   async releaseAll(): Promise<void> {
-    await Promise.all(
+    const results = await Promise.allSettled(
       [...this.active.keys()].map((racerId) => this.release(racerId)),
     );
+    const failure = results.find(
+      (result): result is PromiseRejectedResult => result.status === "rejected",
+    );
+    if (failure) throw failure.reason;
   }
+}
+
+export function buildSteelViewerUrl(value: string): string {
+  const url = new URL(value);
+  url.searchParams.set("interactive", "false");
+  url.searchParams.set("showControls", "false");
+  return url.toString();
 }

@@ -114,6 +114,11 @@ export type RaceSnapshot = {
   };
 };
 
+export type BrowserView = {
+  status: "pending" | "live" | "released" | "unavailable";
+  viewerUrl: string | null;
+};
+
 export type RaceChange =
   | { kind: "fight" }
   | { kind: "price"; point: PricePoint }
@@ -381,6 +386,7 @@ export class RaceCoordinator {
     if (won && !this.stopped) {
       await this.stopRacers();
       await this.dependencies.sessionManager.releaseAll();
+      await this.cleanupObstacleProvider();
       this.stopped = true;
     }
     this.flush(changes);
@@ -522,6 +528,19 @@ export class RaceCoordinator {
     };
   }
 
+  browserView(racerId: string): BrowserView {
+    if (!this.engine.racers.has(racerId)) {
+      throw new DomainError("not_found", `Unknown racer: ${racerId}`);
+    }
+    const session = this.sessions.get(racerId);
+    if (!session) return { status: "pending", viewerUrl: null };
+    if (this.stopped || ["finished", "timed_out"].includes(this.engine.race.status)) {
+      return { status: "released", viewerUrl: null };
+    }
+    if (!session.viewerUrl) return { status: "unavailable", viewerUrl: null };
+    return { status: "live", viewerUrl: session.viewerUrl };
+  }
+
   /** A copy of the fight metadata. `sabotage` reflects the effective plan. */
   get fight(): FightMetadata {
     return structuredClone(this.fightMeta);
@@ -585,9 +604,15 @@ export class RaceCoordinator {
   }
 
   async shutdown(): Promise<void> {
-    if (this.stopped) return;
-    await this.stopRacers();
-    await this.dependencies.sessionManager.releaseAll();
+    if (!this.stopped) {
+      await this.stopRacers();
+      await this.dependencies.sessionManager.releaseAll();
+    }
+    await this.cleanupObstacleProvider();
+    this.stopped = true;
+  }
+
+  private async cleanupObstacleProvider(): Promise<void> {
     const cleanup = this.dependencies.obstacleProvider &&
       "cleanup" in this.dependencies.obstacleProvider
       ? (this.dependencies.obstacleProvider as ObstacleProvider & {
@@ -595,7 +620,6 @@ export class RaceCoordinator {
         }).cleanup
       : undefined;
     await cleanup?.();
-    this.stopped = true;
   }
 
   /** Fixed operator policy, else provider.armRace, else the getPolicy fallback. */
@@ -887,6 +911,7 @@ export class RaceCoordinator {
       await this.persistNewEvents();
       await this.stopRacers();
       await this.dependencies.sessionManager.releaseAll();
+      await this.cleanupObstacleProvider();
       this.stopped = true;
     }
   }
