@@ -20,7 +20,7 @@ import { CdpObstacleProvider } from "../infra/cdp-obstacle-provider.js";
 import { SteelSessionManager } from "../infra/steel-session-manager.js";
 import { JsonlRaceEventStore } from "../persistence/jsonl-event-store.js";
 import type { CreditLedger } from "../wallet/credit-ledger.js";
-import { DEFAULT_AGENT_ROSTER, type FightMetadata } from "./fight-metadata.js";
+import type { FightMetadata } from "./fight-metadata.js";
 import { RaceCoordinator } from "./race-coordinator.js";
 
 /** What the registry supplies alongside the operator's input. */
@@ -28,8 +28,8 @@ export type ProductionRaceContext = {
   /** The shared wallet every market settles into. */
   ledger: CreditLedger;
   /**
-   * Fight metadata. Each agent keeps its key and name; its provider and
-   * model are replaced by the OpenRouter roster from COMPETITOR_LLM_MODELS.
+   * Fight metadata. Its agents are replaced by the OpenRouter roster from
+   * COMPETITOR_LLM_MODELS (see openRouterAgents).
    */
   fight: Partial<FightMetadata>;
 };
@@ -67,19 +67,70 @@ export function competitorRoster(
   return new Map(models.map((model, index) => [`racer-${index + 1}`, model]));
 }
 
-/** The fight's agents (or the default roster) driven by the OpenRouter roster. */
+/** UI identity keys for OpenRouter vendors; colours in the web app key on these. */
+const VENDOR_AGENT_KEYS: Record<string, string> = {
+  openai: "gpt",
+  anthropic: "claude",
+  google: "gemini",
+  "x-ai": "grok",
+};
+const UPPERCASE_TOKENS = new Set(["gpt", "it", "ai", "llm"]);
+const BRAND_TOKENS: Record<string, string> = { deepseek: "DeepSeek" };
+
+/**
+ * A readable label for an OpenRouter model id, so a racer is never shown
+ * under another model's name: "openai/gpt-5.6-luna" → "GPT-5.6 Luna",
+ * "google/gemma-3-27b-it" → "Gemma 3 27B IT".
+ */
+export function displayNameForModel(model: string): string {
+  const slug = (model.split("/").pop() ?? model).split(":")[0] ?? model;
+  const words = slug
+    .split("-")
+    .filter(Boolean)
+    .map((token) => {
+      const lower = token.toLowerCase();
+      const brand = BRAND_TOKENS[lower];
+      if (brand) return brand;
+      if (UPPERCASE_TOKENS.has(lower) || /^\d+(\.\d+)?b$/.test(lower) || /^v\d/.test(lower)) {
+        return token.toUpperCase();
+      }
+      return token.charAt(0).toUpperCase() + token.slice(1);
+    });
+  return words.join(" ").replace(/^GPT (\d)/, "GPT-$1");
+}
+
+/** The identity key for a model: its vendor's key, else the vendor name. */
+export function agentKeyForModel(model: string): string {
+  const vendor = model.includes("/") ? model.split("/")[0].toLowerCase() : "";
+  const key = VENDOR_AGENT_KEYS[vendor] ?? vendor;
+  return key || displayNameForModel(model).toLowerCase().replace(/[^a-z0-9]+/g, "-");
+}
+
+/**
+ * The live fight's agents, each driven by its OpenRouter roster model. An
+ * operator-supplied roster keeps its keys and names. Otherwise each agent is
+ * named after the model it actually runs, with keys made unique.
+ */
 export function openRouterAgents(
   agents: readonly AgentIdentity[] | undefined,
   roster: ReadonlyMap<string, string>,
 ): AgentIdentity[] {
-  const base = agents ?? DEFAULT_AGENT_ROSTER;
-  if (base.length !== COMPETITOR_ROSTER_SIZE) {
-    throw new Error(`A live fight needs exactly ${COMPETITOR_ROSTER_SIZE} agents, got ${base.length}`);
+  if (agents && agents.length !== COMPETITOR_ROSTER_SIZE) {
+    throw new Error(`A live fight needs exactly ${COMPETITOR_ROSTER_SIZE} agents, got ${agents.length}`);
   }
-  return base.map((agent, index) => {
+  const usedKeys = new Set<string>();
+  return Array.from({ length: COMPETITOR_ROSTER_SIZE }, (_, index) => {
     const model = roster.get(`racer-${index + 1}`);
     if (!model) throw new Error(`No OpenRouter model configured for racer-${index + 1}`);
-    return { key: agent.key, name: agent.name, provider: OPENROUTER_PROVIDER, model };
+    const operator = agents?.[index];
+    if (operator) {
+      return { key: operator.key, name: operator.name, provider: OPENROUTER_PROVIDER, model };
+    }
+    const base = agentKeyForModel(model);
+    let key = base;
+    for (let suffix = 2; usedKeys.has(key); suffix += 1) key = `${base}-${suffix}`;
+    usedKeys.add(key);
+    return { key, name: displayNameForModel(model), provider: OPENROUTER_PROVIDER, model };
   });
 }
 
@@ -89,7 +140,9 @@ export function createProductionRaceCoordinator(
 ): RaceCoordinator {
   // Resolve models first so misconfiguration fails before any session exists.
   const roster = competitorRoster();
-  const agents = openRouterAgents(context.fight.agents, roster);
+  // context.fight.agents is always the normalised default roster; only an
+  // explicit operator roster (input.agents) may override model-derived names.
+  const agents = openRouterAgents(input.agents, roster);
   const budget = new OpenRouterUsageBudget(
     positiveNumberEnv("RACE_LLM_BUDGET_USD", 0.25),
   );

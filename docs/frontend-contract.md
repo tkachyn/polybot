@@ -13,7 +13,7 @@ This document binds the Sabotage Markets UI (`docs/sabotage-markets-handoff.md`)
 | Duration | 30-minute cap | 180 s target, 300 s cap | Durations are per race and supplied by the backend (`freezesAt`, `closesAt`). The UI never hard-codes them. |
 | Void | Rules undefined | Cap reached → unresolved, credits returned | A voided fight refunds each open position at its average price. The history shows a `refund` entry. |
 | Capture | Undecided | Steel viewer URL | Periodic frames. Live mode stores a JPEG screenshot per racer; simulated mode renders SVG frames. The UI polls by `frame.seq`. Viewer URLs are never sent to spectators because Steel viewers can be interactive. |
-| Agents | GPT-5.2, Claude Opus 4.6, Gemini 3 Pro, Grok 4.1 | One Anthropic competitor model | Each fight has a per-race roster (`AgentIdentity` × 4). In live mode each racer is driven by its own OpenRouter model from `COMPETITOR_LLM_MODELS`; the agent keeps its `key` and `name`, and its identity reports `provider: "openrouter"` with the OpenRouter model id. |
+| Agents | GPT-5.2, Claude Opus 4.6, Gemini 3 Pro, Grok 4.1 | One Anthropic competitor model | Each fight has a per-race roster (`AgentIdentity` × 4). In live mode each racer is driven by its own OpenRouter model from `COMPETITOR_LLM_MODELS`, and its identity reports `provider: "openrouter"` with that model id. Without an operator `agents` roster, each agent's `name` and `key` are derived from the model it runs (e.g. `openai/gpt-5.6-luna` → "GPT-5.6 Luna", key `gpt`), so bettors never see one model under another's name. An operator roster keeps its keys and names. |
 | Selling | Not designed | Supported | Sell is available from the Portfolio open-positions table. |
 
 ## Modes
