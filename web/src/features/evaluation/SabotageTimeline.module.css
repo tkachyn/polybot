@@ -1,0 +1,244 @@
+.timeline {
+  display: flex;
+  flex-direction: column;
+}
+
+.row {
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr);
+  gap: var(--space-3);
+  padding: var(--space-3-5) 0;
+  border-top: 1px solid var(--color-hairline);
+}
+
+.row:first-child {
+  padding-top: var(--space-1);
+  border-top: 0;
+}
+
+.row:last-child {
+  padding-bottom: 0;
+}
+
+.step {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: 1px solid var(--tint-sabotage-border);
+  border-radius: 50%;
+  background-color: var(--tint-sabotage);
+  color: var(--color-sabotage);
+  font-size: var(--fs-label);
+  font-weight: var(--fw-semibold);
+  line-height: 1;
+}
+
+.content {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2-5);
+  min-width: 0;
+}
+
+.head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-2) var(--space-4);
+}
+
+.what {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-0-5);
+  min-width: 0;
+}
+
+.preset {
+  color: var(--color-text);
+  font-size: var(--fs-body-lg);
+  font-weight: var(--fw-semibold);
+  line-height: var(--lh-snug);
+}
+
+.where {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 var(--space-1-5);
+  color: var(--color-text-secondary);
+  font-size: var(--fs-body-sm);
+}
+
+.where > span + span::before {
+  content: "·";
+  margin-right: var(--space-1-5);
+  color: var(--color-text-muted);
+}
+
+.verdict {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2-5);
+  flex-shrink: 0;
+}
+
+.score {
+  color: var(--color-text-muted);
+  font-size: var(--fs-body-sm);
+  white-space: nowrap;
+}
+
+.scoreValue {
+  color: var(--color-text);
+  font-size: var(--fs-body-lg);
+  font-weight: var(--fw-semibold);
+}
+
+.metrics {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--space-2) var(--space-6);
+}
+
+.metric {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-0-5);
+  min-width: 0;
+}
+
+.metricValue {
+  color: var(--color-text);
+  font-size: var(--fs-body);
+  font-weight: var(--fw-medium);
+  white-space: nowrap;
+}
+
+.negative {
+  color: var(--color-negative);
+}
+
+.firstResponse {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-1) var(--space-2);
+  font-size: var(--fs-body);
+}
+
+/* The step as the runner logged it: a log line, not a quotation. */
+.response {
+  min-width: 0;
+  padding: 1px var(--space-1-5);
+  border-radius: var(--radius-xs);
+  background-color: var(--color-inset);
+  color: var(--color-text);
+  overflow-wrap: anywhere;
+}
+
+.explanation {
+  max-width: 76ch;
+  color: var(--color-text-secondary);
+  font-size: var(--fs-body);
+  line-height: var(--lh-body);
+}
+
+.muted,
+.none {
+  color: var(--color-text-muted);
+  font-size: var(--fs-body);
+}
+
+/* --- Evidence -------------------------------------------------------------------- */
+
+.evidence {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--space-2-5);
+}
+
+.thumb {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--color-text-secondary);
+  text-align: left;
+}
+
+.thumb:focus-visible {
+  outline: none;
+}
+
+.thumbImage {
+  position: relative;
+  display: block;
+  width: 128px;
+  aspect-ratio: 16 / 10;
+  overflow: hidden;
+  border: 1px solid var(--color-hairline);
+  border-radius: var(--radius-md);
+  background-color: var(--color-inset);
+  transition: border-color var(--duration-fast) var(--ease-standard);
+}
+
+.thumbImage img {
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  object-fit: cover;
+  object-position: top left;
+}
+
+.thumb:hover:not(:disabled) .thumbImage {
+  border-color: var(--color-edge);
+}
+
+.thumb:focus-visible .thumbImage {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 2px;
+}
+
+.thumb:disabled {
+  cursor: default;
+}
+
+.thumbMissing {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-text-muted);
+  font-size: var(--fs-body-sm);
+}
+
+.thumbCaption {
+  font-size: var(--fs-body-sm);
+  white-space: nowrap;
+}
+
+.replay {
+  margin-bottom: var(--space-5);
+}
+
+@media (max-width: 759px) {
+  .thumbImage {
+    width: 104px;
+  }
+
+  .metrics {
+    gap: var(--space-2) var(--space-4);
+  }
+
+  .replay {
+    margin-bottom: 0;
+  }
+}

@@ -69,6 +69,9 @@ export default defineConfig(({ mode }) => {
     build: {
       target: "es2022",
       sourcemap: true,
+      // hls.js (~575 kB) is its own chunk, loaded only when a replay opens,
+      // so it never weighs on first load. Warn only above that.
+      chunkSizeWarningLimit: 700,
     },
     test: {
       environment: "node",

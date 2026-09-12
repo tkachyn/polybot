@@ -1,0 +1,182 @@
+/* --- Disclosure ------------------------------------------------------------ */
+
+.disclosure {
+  min-width: 0;
+}
+
+.summary {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1-5);
+  max-width: 100%;
+  padding: var(--space-1) 0;
+  color: var(--color-text-secondary);
+  font-size: var(--fs-body-sm);
+  font-weight: var(--fw-medium);
+  list-style: none;
+  cursor: pointer;
+  user-select: none;
+}
+
+.summary::-webkit-details-marker {
+  display: none;
+}
+
+.summary:hover {
+  color: var(--color-text);
+}
+
+.chevron {
+  flex-shrink: 0;
+  color: var(--color-text-muted);
+  transition: transform var(--duration-fast) var(--ease-standard);
+}
+
+.disclosure[open] > .summary .chevron {
+  transform: rotate(90deg);
+}
+
+.summaryText {
+  min-width: 0;
+}
+
+.summaryAlert {
+  color: var(--color-negative);
+}
+
+.body {
+  margin-top: var(--space-1-5);
+}
+
+.empty {
+  color: var(--color-text-muted);
+  font-size: var(--fs-body-sm);
+}
+
+/* --- Tables ------------------------------------------------------------------ */
+
+.scroll {
+  overflow: auto;
+  max-height: 320px;
+  border: 1px solid var(--color-hairline);
+  border-radius: var(--radius-md);
+  background-color: var(--color-surface);
+}
+
+.scrollTall {
+  max-height: 440px;
+}
+
+.table {
+  min-width: 640px;
+}
+
+.table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background-color: var(--color-surface);
+}
+
+.table td {
+  vertical-align: top;
+}
+
+.offset,
+.time {
+  color: var(--color-text-secondary);
+}
+
+.type {
+  color: var(--color-text-secondary);
+  white-space: nowrap;
+}
+
+.text {
+  min-width: 200px;
+  max-width: 420px;
+  overflow-wrap: anywhere;
+}
+
+.kind {
+  font-weight: var(--fw-semibold);
+}
+
+.errorText {
+  color: var(--color-negative);
+}
+
+.noteText {
+  color: var(--color-text-muted);
+}
+
+.target {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-1) var(--space-1-5);
+  min-width: 0;
+}
+
+.targetText {
+  color: var(--color-text-secondary);
+  overflow-wrap: anywhere;
+}
+
+.code {
+  padding: 1px var(--space-1);
+  border-radius: var(--radius-xs);
+  background-color: var(--color-inset);
+  color: var(--color-text-secondary);
+  font-family: var(--font-mono);
+  font-size: var(--fs-body-sm);
+  white-space: nowrap;
+}
+
+.selectorCell {
+  max-width: 220px;
+}
+
+.selector {
+  display: inline-block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: bottom;
+}
+
+.none {
+  color: var(--color-text-muted);
+}
+
+.decoyRow td {
+  background-color: var(--tint-sabotage);
+}
+
+.errorRow td:first-child {
+  box-shadow: inset 2px 0 0 var(--color-negative);
+}
+
+.hitRow td {
+  padding-top: var(--space-2);
+  padding-bottom: var(--space-2);
+  border-top: 1px solid var(--tint-sabotage-border);
+  border-bottom: 1px solid var(--tint-sabotage-border);
+  background-color: var(--tint-sabotage);
+}
+
+.hitMarker {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1-5) var(--space-2);
+}
+
+.hitText {
+  color: var(--color-text);
+  font-weight: var(--fw-medium);
+}
+
+.hitTime {
+  color: var(--color-text-secondary);
+}

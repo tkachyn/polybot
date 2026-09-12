@@ -39,10 +39,11 @@ Routes:
 | --- | --- |
 | `/` | `features/home/HomePage` (`HomePage`) |
 | `/resolved` | `features/resolved/ResolvedPage` (`ResolvedPage`) |
-| `/fights/:raceId` | `features/fight/FightRoute` (`FightRoute`), renders `features/settled/SettledFight` for resolved fights and `features/market/MarketRail` in the rail |
+| `/fights/:raceId` | `features/fight/FightRoute` (`FightRoute`), renders `features/settled/SettledFight` (with `features/evaluation/EvaluationReport`) for resolved fights and `features/market/MarketRail` in the rail |
 | `/portfolio` | `features/portfolio/PortfolioPage` (`PortfolioPage`) |
 | `/wallet` | `features/wallet/WalletPage` (`WalletPage`), `?tab=deposit\|withdraw` |
 | `/leaderboard` | `features/leaderboard/LeaderboardPage` (`LeaderboardPage`) |
+| `/evaluations` | `features/evaluation/EvaluationsPage` (`EvaluationsPage`): robustness matrix, dataset export, recent reports; `?mode=live\|simulated\|all&days=7\|30\|90` |
 | `*` | `app/NotFoundPage` |
 
 Feature folders own their files. Keep the exported component names and file
@@ -119,6 +120,11 @@ rethrow the AbortError; test with `isAbortError`).
 | `getPortfolio` | `(userId, signal?) => Promise<PortfolioResponse>` |
 | `deposit` / `withdraw` | `(userId, body: WalletTransferRequest, signal?) => Promise<WalletTransferResponse>` |
 | `getLeaderboard` | `(signal?) => Promise<LeaderboardResponse>` |
+| `getFightEvaluation` | `(raceId, signal?) => Promise<FightEvaluationResponse>` |
+| `evidenceFrameUrl` | `(raceId, racerId, key) => string`: keyframe `<img src>` |
+| `replayUrl` | `(raceId, racerId) => string`: Steel HLS playlist, live fights only |
+| `getRobustnessMatrix` | `(params?: EvaluationQuery, signal?) => Promise<RobustnessMatrixResponse>` |
+| `evaluationExportUrl` | `(params?: EvaluationQuery) => string`: the `.jsonl` dataset download |
 | `fightsStreamUrl` / `fightStreamUrl(raceId)` / `userStreamUrl(userId)` | SSE URLs |
 | `api` | all of the above as one object |
 | `request<T>` | `(path, { method?, body?, query?, signal? }) => Promise<T>` low level |
