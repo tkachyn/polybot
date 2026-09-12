@@ -263,7 +263,7 @@ export class RaceCoordinator {
 
     if (dependencies.obstacleProvider) {
       const checkpoint = this.fightMeta.sabotage?.checkpoint ??
-        (input.checkpointCount >= 4 ? 2 : Math.min(DEFAULT_SABOTAGE_CHECKPOINT, input.checkpointCount));
+        Math.min(DEFAULT_SABOTAGE_CHECKPOINT, input.checkpointCount);
       this.sabotageBrief = this.fightMeta.sabotage
         ? { ...this.fightMeta.sabotage }
         : { checkpoint, summary: sabotagePlaceholder(this.checkpointLabel(checkpoint)) };
@@ -360,8 +360,8 @@ export class RaceCoordinator {
           reportCheckpoint: (checkpoint) =>
             this.recordCheckpoint(session.racerId, checkpoint),
           reportFinish: () => this.recordFinish(session.racerId),
-          checkFinish: () => this.checkFinish(session.racerId),
           syncProgress: () => this.syncProgress(session.racerId),
+          checkFinish: () => this.checkFinish(session.racerId),
         };
         const task = this.dependencies.agentRunner
           .run(context)
@@ -445,13 +445,19 @@ export class RaceCoordinator {
    * Returning false is normal while the task is still in progress.
    */
   private async checkFinish(racerId: string, now = Date.now()): Promise<boolean> {
+    await this.syncProgress(racerId);
+    return this.enqueueLifecycle(() => this.checkFinishInternal(racerId, now));
+  }
+
+  private async checkFinishInternal(racerId: string, now: number): Promise<boolean> {
     if (this.stopped) return this.engine.racers.get(racerId)?.status === "finished";
     const racer = this.engine.racers.get(racerId);
     if (!racer || racer.status === "failed" || racer.status === "timed_out") return false;
     if (racer.status === "finished") return true;
+    let verified = false;
     try {
       const session = this.getSession(racerId);
-      const verified = await this.dependencies.courseVerifier.verifyFinish({
+      verified = await this.dependencies.courseVerifier.verifyFinish({
         raceId: this.engine.race.id,
         racerId,
         courseId: this.engine.race.courseId,
@@ -459,9 +465,18 @@ export class RaceCoordinator {
         session,
       });
       if (!verified) return false;
-      await this.recordFinish(racerId, now);
+      await this.recordFinishInternal(racerId, now);
       return this.engine.racers.get(racerId)?.status === "finished";
-    } catch {
+    } catch (error) {
+      if (verified) {
+        const reason = error instanceof Error ? error.message : String(error);
+        this.telemetry.appendLog(racerId, {
+          kind: "status",
+          text: `Verified completion could not be finalized: ${reason}`,
+          at: now,
+        });
+        this.flush({ ...createChanges(), fight: true });
+      }
       return false;
     }
   }

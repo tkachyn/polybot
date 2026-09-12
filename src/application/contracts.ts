@@ -97,6 +97,17 @@ export interface CompetitorAgentRunner {
 }
 
 export interface CourseVerifier {
+  /** Returns verified course progress when the verifier supports progress reads. */
+  getProgress?(input: {
+    raceId: string;
+    racerId: string;
+    courseId: string;
+    seed?: string;
+    session: RacerSessionHandle;
+  }): Promise<{
+    completedCheckpoints: number[];
+    finished: boolean;
+  } | null>;
   verifyTargetOpening(input: {
     raceId: string;
     racerId: string;

@@ -564,6 +564,54 @@ test("applies the configured action timeout and tolerates unreadable evidence", 
   );
 });
 
+test("does not impose a default action ceiling", async () => {
+  const page = new FakePage();
+  const reports: AgentActionReport[] = [];
+  const decisions: AgentDecision[] = [
+    ...Array.from({ length: 20 }, () => ({ type: "inspect" as const })),
+    { type: "finish" },
+  ];
+  const runner = new PlaywrightCompetitorRunner({
+    task: "Complete the course",
+    startUrl: "https://course.test/start",
+    model: new SequenceModel(decisions),
+  });
+  const base = contextFor(page);
+  await runner.prepare(base);
+  await runner.run({
+    ...base,
+    async reportCheckpoint() {},
+    async reportFinish() {},
+    reportAction(report) { reports.push(report); },
+  });
+
+  assert.equal(reports.length, 21);
+  assert.equal(reports.at(-1)?.step, 21);
+  assert.equal(reports.at(-1)?.maxSteps, 0);
+});
+
+test("checks completion after a browser action error", async () => {
+  const page = new ScreenshotPage();
+  page.failClicksOn.add("missing");
+  let synced = false;
+  const runner = new PlaywrightCompetitorRunner({
+    task: "Complete the course",
+    startUrl: "https://course.test/start",
+    model: new SequenceModel([{ type: "click", targetRole: "missing" }]),
+  });
+  const base = contextFor(page);
+  await runner.prepare(base);
+  await runner.run({
+    ...base,
+    async reportCheckpoint() {},
+    async reportFinish() {},
+    async syncProgress() { synced = true; },
+    async checkFinish() { return synced; },
+  });
+
+  assert.equal(synced, true);
+});
+
 test("captures frames on an interval without overlap and stops when the run ends", async () => {
   const page = new ScreenshotPage();
   page.shotDelayMs = 15;

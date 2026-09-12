@@ -63,6 +63,27 @@ export class HttpCourseStateGateway implements CourseStateGateway {
 export class DeterministicCourseVerifier implements CourseVerifier {
   constructor(private readonly gateway: CourseStateGateway) {}
 
+  async getProgress(input: {
+    raceId: string;
+    racerId: string;
+    courseId: string;
+    seed?: string;
+    session: RacerSessionHandle;
+  }): Promise<{ completedCheckpoints: number[]; finished: boolean } | null> {
+    const state = await this.gateway.getState({
+      raceId: input.raceId,
+      racerId: input.racerId,
+      courseId: input.courseId,
+      seed: input.seed,
+      steelSessionId: input.session.steelSessionId,
+    });
+    if (!this.matchesRun(state, input)) return null;
+    return {
+      completedCheckpoints: [...state.completedCheckpoints],
+      finished: state.finished,
+    };
+  }
+
   async verifyTargetOpening(input: {
     raceId: string;
     racerId: string;

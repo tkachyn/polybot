@@ -165,7 +165,6 @@ export function createProductionRaceCoordinator(
       if (!model) throw new Error(`No OpenRouter model configured for ${racerId}`);
       return model;
     },
-    maxActions: positiveNumberEnv("COMPETITOR_MAX_ACTIONS", 20),
   });
   const courseVerifier = new DeterministicCourseVerifier(
     new HttpCourseStateGateway(

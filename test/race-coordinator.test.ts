@@ -69,19 +69,25 @@ class FakeVerifier implements CourseVerifier {
   }
 }
 
+class FinishProgressVerifier extends FakeVerifier {
+  async getProgress(): Promise<{ completedCheckpoints: number[]; finished: boolean }> {
+    return { completedCheckpoints: [1, 2, 3], finished: true };
+  }
+}
+
 function createCoordinator(): {
   coordinator: RaceCoordinator;
   sessions: FakeSessions;
   runner: FakeRunner;
   events: InMemoryRaceEventStore;
 };
-function createCoordinator<T extends CompetitorAgentRunner>(runner: T): {
+function createCoordinator<T extends CompetitorAgentRunner>(runner: T, verifier?: CourseVerifier): {
   coordinator: RaceCoordinator;
   sessions: FakeSessions;
   runner: T;
   events: InMemoryRaceEventStore;
 };
-function createCoordinator<T extends CompetitorAgentRunner>(runner?: T) {
+function createCoordinator<T extends CompetitorAgentRunner>(runner?: T, verifier?: CourseVerifier) {
   const actualRunner = runner ?? new FakeRunner();
   const sessions = new FakeSessions();
   const events = new InMemoryRaceEventStore();
@@ -97,7 +103,7 @@ function createCoordinator<T extends CompetitorAgentRunner>(runner?: T) {
     {
       sessionManager: sessions,
       agentRunner: actualRunner,
-      courseVerifier: new FakeVerifier(),
+      courseVerifier: verifier ?? new FakeVerifier(),
       eventStore: events,
     },
   );
@@ -155,6 +161,18 @@ test("auto-finishes when the verifier confirms the final browser state", async (
   assert.equal(completed, true);
   assert.equal(coordinator.engine.race.winnerRacerId, "racer-1");
   assert.equal(coordinator.market.status, "resolved");
+});
+
+test("reconciles verified course progress before declaring a winner", async () => {
+  const { coordinator, runner } = createCoordinator(new FakeRunner(), new FinishProgressVerifier());
+  await coordinator.prepareAndStart(Date.now());
+
+  const completed = await runner.running.get("racer-1")?.checkFinish?.();
+
+  assert.equal(completed, true);
+  assert.equal(coordinator.engine.racers.get("racer-1")?.checkpoint, 3);
+  assert.equal(coordinator.engine.race.winnerRacerId, "racer-1");
+  assert.equal(coordinator.market.winnerRacerId, "racer-1");
 });
 
 test("ends and releases the race when every runner fails", async () => {

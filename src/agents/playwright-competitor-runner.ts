@@ -39,6 +39,7 @@ export interface CompetitorDecisionModel {
     racerId: string;
     observation: BrowserObservation;
     history: Array<{ decision: AgentDecision; error?: string }>;
+    signal?: AbortSignal;
   }): Promise<AgentDecision>;
 }
 
@@ -99,7 +100,14 @@ export class PlaywrightCompetitorRunner implements CompetitorAgentRunner {
   private readonly actionTimeoutMs: number;
 
   constructor(private readonly options: PlaywrightCompetitorRunnerOptions) {
-    this.maxActions = options.maxActions ?? 60;
+    this.maxActions = options.maxActions ?? Number.POSITIVE_INFINITY;
+    if (!Number.isFinite(this.maxActions) && this.maxActions !== Number.POSITIVE_INFINITY) {
+      throw new Error("maxActions must be a positive number");
+    }
+    if (this.maxActions !== Number.POSITIVE_INFINITY &&
+      (!Number.isInteger(this.maxActions) || this.maxActions <= 0)) {
+      throw new Error("maxActions must be a positive integer");
+    }
     this.actionTimeoutMs = options.actionTimeoutMs ?? DEFAULT_ACTION_TIMEOUT_MS;
     if (!Number.isFinite(this.actionTimeoutMs) || this.actionTimeoutMs <= 0) {
       throw new Error("actionTimeoutMs must be a positive number");
@@ -146,6 +154,7 @@ export class PlaywrightCompetitorRunner implements CompetitorAgentRunner {
           racerId: context.racerId,
           observation,
           history: history.slice(-10),
+          signal: controller.signal,
         });
         if (controller.signal.aborted) return;
         const step = action + 1;
@@ -171,7 +180,9 @@ export class PlaywrightCompetitorRunner implements CompetitorAgentRunner {
         if (await this.verifiedFinish(context)) return;
         await this.captureFrame(page, context, capture);
       }
-      throw new Error(`${context.racerId} exceeded ${this.maxActions} actions`);
+      if (this.maxActions !== Number.POSITIVE_INFINITY) {
+        throw new Error(`${context.racerId} exceeded ${this.maxActions} actions`);
+      }
     } finally {
       this.stopFrames(context.racerId);
       this.controllers.delete(context.racerId);
@@ -202,7 +213,7 @@ export class PlaywrightCompetitorRunner implements CompetitorAgentRunner {
         text: describeDecision(decision),
         url: outcome.url,
         step,
-        maxSteps: this.maxActions,
+        maxSteps: Number.isFinite(this.maxActions) ? this.maxActions : 0,
         signature: JSON.stringify(decision),
         ...(outcome.error === undefined ? {} : { error: outcome.error }),
         ...(Object.keys(outcome.evidence).length === 0 ? {} : { evidence: outcome.evidence }),

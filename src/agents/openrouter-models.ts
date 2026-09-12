@@ -113,6 +113,7 @@ abstract class OpenRouterModelBase {
       | ReturnType<typeof obstacleTool>
       | ReturnType<typeof sabotageTool>
       | ReturnType<typeof sabotageSequenceTool>,
+    signal?: AbortSignal,
   ): Promise<unknown> {
     this.options.budget?.assertAvailable();
     const response = await this.client.chat.completions.create({
@@ -124,7 +125,7 @@ abstract class OpenRouterModelBase {
       ],
       tools: [tool],
       tool_choice: { type: "function", function: { name: tool.function.name } },
-    });
+    }, signal ? { signal } : undefined);
     const usage = response.usage as (typeof response.usage & { cost?: number }) | undefined;
     this.options.budget?.record(usage?.cost ?? 0);
     const call = response.choices[0]?.message.tool_calls?.[0];
@@ -213,8 +214,14 @@ export class OpenRouterCompetitorDecisionModel
     racerId: string;
     observation: BrowserObservation;
     history: Array<{ decision: AgentDecision; error?: string }>;
+    signal?: AbortSignal;
   }): Promise<AgentDecision> {
-    const value = await this.call(COMPETITOR_SYSTEM_PROMPT, input, browserActionTool);
+    const value = await this.call(
+      COMPETITOR_SYSTEM_PROMPT,
+      input,
+      browserActionTool,
+      input.signal,
+    );
     return parseDecision(value);
   }
 }
