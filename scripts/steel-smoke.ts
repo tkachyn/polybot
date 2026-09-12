@@ -1,7 +1,8 @@
+import { steelKeysFromEnv } from "../src/infra/steel-key-pool.js";
 import { SteelSessionManager } from "../src/infra/steel-session-manager.js";
 
-if (!process.env.STEEL_API_KEY) {
-  throw new Error("STEEL_API_KEY is required for the Steel smoke test");
+if (steelKeysFromEnv().length === 0) {
+  throw new Error("STEEL_API_KEYS or STEEL_API_KEY is required for the Steel smoke test");
 }
 
 const manager = new SteelSessionManager({

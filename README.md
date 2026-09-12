@@ -25,7 +25,7 @@ npm run build
 npm run smoke:steel
 ```
 
-The Steel smoke test requires `STEEL_API_KEY`. Copy `.env.example` to `.env`, populate the required keys, and load those variables before starting the server.
+The Steel smoke test requires `STEEL_API_KEYS` or `STEEL_API_KEY`. `STEEL_API_KEYS` takes a comma-separated list; new sessions use the current key until Steel rejects it (401/402/403, a credits/quota error, or a 429 rate limit, which benches the key for 60 seconds), then rotate to the next key. Live sessions keep the key that created them. Copy `.env.example` to `.env`, populate the required keys, and load those variables before starting the server.
 
 ## API
 

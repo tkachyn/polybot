@@ -12,6 +12,7 @@ export * from "./domain/race-engine.js";
 export * from "./domain/types.js";
 export * from "./infra/cdp-obstacle-provider.js";
 export * from "./infra/session-command-queue.js";
+export * from "./infra/steel-key-pool.js";
 export * from "./infra/steel-session-manager.js";
 export * from "./prediction/virtual-market.js";
 export * from "./persistence/in-memory-event-store.js";
