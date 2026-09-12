@@ -13,7 +13,7 @@
 }
 
 .innerPadded {
-  padding: var(--space-6) var(--page-gutter) var(--space-12);
+  padding: var(--space-6) max(var(--page-gutter), var(--safe-right)) max(var(--space-12), var(--safe-bottom)) max(var(--page-gutter), var(--safe-left));
 }
 
 .default {
@@ -38,7 +38,7 @@
 }
 
 .fixedPadded {
-  padding: var(--space-3) var(--space-4);
+  padding: var(--space-3) max(var(--space-4), var(--safe-right)) max(var(--space-3), var(--safe-bottom)) max(var(--space-4), var(--safe-left));
   gap: var(--space-3);
 }
 
