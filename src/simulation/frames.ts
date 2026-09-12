@@ -264,7 +264,7 @@ export function renderSimFrame(input: SimFrameInput): string {
     }));
     parts.push(lines(430, 310, [420, 380, 300]));
     parts.push(button({ x: 470, y: 420, w: 340, h: 52 }, "Yes, show me", "#f08c2e"));
-    parts.push(text(640, 505, "No thanks", { size: 12, fill: "#9aa5b1", anchor: "middle" }));
+    parts.push(text(640, 505, "Close", { size: 12, fill: "#9aa5b1", anchor: "middle" }));
     parts.push(cursor(700, 450, color));
   }
 

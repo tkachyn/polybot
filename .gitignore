@@ -9,3 +9,6 @@ dist/
 
 # Claude Code agent worktrees
 /.claude/worktrees/
+
+# Local race events, evaluations and evidence written at runtime
+/data/

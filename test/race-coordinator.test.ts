@@ -69,19 +69,25 @@ class FakeVerifier implements CourseVerifier {
   }
 }
 
+class FinishProgressVerifier extends FakeVerifier {
+  async getProgress(): Promise<{ completedCheckpoints: number[]; finished: boolean }> {
+    return { completedCheckpoints: [1, 2, 3], finished: true };
+  }
+}
+
 function createCoordinator(): {
   coordinator: RaceCoordinator;
   sessions: FakeSessions;
   runner: FakeRunner;
   events: InMemoryRaceEventStore;
 };
-function createCoordinator<T extends CompetitorAgentRunner>(runner: T): {
+function createCoordinator<T extends CompetitorAgentRunner>(runner: T, verifier?: CourseVerifier): {
   coordinator: RaceCoordinator;
   sessions: FakeSessions;
   runner: T;
   events: InMemoryRaceEventStore;
 };
-function createCoordinator<T extends CompetitorAgentRunner>(runner?: T) {
+function createCoordinator<T extends CompetitorAgentRunner>(runner?: T, verifier?: CourseVerifier) {
   const actualRunner = runner ?? new FakeRunner();
   const sessions = new FakeSessions();
   const events = new InMemoryRaceEventStore();
@@ -97,7 +103,7 @@ function createCoordinator<T extends CompetitorAgentRunner>(runner?: T) {
     {
       sessionManager: sessions,
       agentRunner: actualRunner,
-      courseVerifier: new FakeVerifier(),
+      courseVerifier: verifier ?? new FakeVerifier(),
       eventStore: events,
     },
   );
@@ -157,6 +163,18 @@ test("auto-finishes when the verifier confirms the final browser state", async (
   assert.equal(coordinator.market.status, "resolved");
 });
 
+test("reconciles verified course progress before declaring a winner", async () => {
+  const { coordinator, runner } = createCoordinator(new FakeRunner(), new FinishProgressVerifier());
+  await coordinator.prepareAndStart(Date.now());
+
+  const completed = await runner.running.get("racer-1")?.checkFinish?.();
+
+  assert.equal(completed, true);
+  assert.equal(coordinator.engine.racers.get("racer-1")?.checkpoint, 3);
+  assert.equal(coordinator.engine.race.winnerRacerId, "racer-1");
+  assert.equal(coordinator.market.winnerRacerId, "racer-1");
+});
+
 test("ends and releases the race when every runner fails", async () => {
   const runner = new ExitingRunner();
   const { coordinator, sessions } = createCoordinator(runner);
@@ -187,4 +205,130 @@ test("marks the market unresolved and releases sessions at the safety cap", asyn
   assert.equal(coordinator.market.status, "unresolved");
   assert.equal(sessions.released, true);
   assert.equal(runner.stopped.length, 4);
+});
+
+/** Reports each racer's course progress as the verifier's ground truth. */
+class ProgressVerifier implements CourseVerifier {
+  readonly completed = new Map<string, number>();
+  readonly checkpointCalls: Array<[string, number]> = [];
+  fail = false;
+
+  async verifyTargetOpening(): Promise<boolean> {
+    return true;
+  }
+
+  async verifyCheckpoint(input: { racerId: string; checkpoint: number }): Promise<boolean> {
+    this.checkpointCalls.push([input.racerId, input.checkpoint]);
+    if (this.fail) throw new Error("course state unavailable");
+    return input.checkpoint <= (this.completed.get(input.racerId) ?? 0);
+  }
+
+  async verifyFinish(): Promise<boolean> {
+    return false;
+  }
+}
+
+function createSyncCoordinator(options: { sabotage?: boolean } = {}) {
+  const verifier = new ProgressVerifier();
+  const runner = new FakeRunner();
+  const coordinator = new RaceCoordinator(
+    {
+      raceId: "race-sync",
+      courseId: "course-1",
+      seed: "seed-1",
+      checkpointCount: 4,
+      fight: options.sabotage
+        ? {
+            sabotage: {
+              checkpoint: 2,
+              summary: "A long modal at checkpoint 2",
+              policy: {
+                hazardType: "blocking_modal",
+                targetRole: "primary-action",
+                durationMs: 30_000,
+                intensity: 2,
+              },
+            },
+          }
+        : undefined,
+    },
+    {
+      sessionManager: new FakeSessions(),
+      agentRunner: runner,
+      courseVerifier: verifier,
+      eventStore: new InMemoryRaceEventStore(),
+      obstacleProvider: options.sabotage
+        ? {
+            async getPolicy() {
+              return null;
+            },
+            async apply() {
+              return { applied: true };
+            },
+          }
+        : undefined,
+    },
+  );
+  return { coordinator, runner, verifier };
+}
+
+function claimedCheckpoints(coordinator: RaceCoordinator, racerId: string): number[] {
+  return coordinator.engine.events
+    .filter((event) => event.type === "checkpoint_reached" && event.racerId === racerId)
+    .map((event) => event.checkpoint ?? 0);
+}
+
+test("syncProgress records verified checkpoints in order and stops at the first unverified one", async () => {
+  const { coordinator, runner, verifier } = createSyncCoordinator();
+  await coordinator.prepareAndStart(Date.now());
+  const context = runner.running.get("racer-1");
+  assert.ok(context?.syncProgress);
+
+  verifier.completed.set("racer-1", 3);
+  await context.syncProgress();
+  assert.deepEqual(claimedCheckpoints(coordinator, "racer-1"), [1, 2, 3]);
+  assert.equal(coordinator.engine.racers.get("racer-1")?.checkpoint, 3);
+  assert.deepEqual(
+    verifier.checkpointCalls.filter(([racerId]) => racerId === "racer-1").at(-1),
+    ["racer-1", 4],
+    "checkpoint 4 was checked and refused",
+  );
+
+  // Concurrent syncs and an explicit report never claim a checkpoint twice.
+  verifier.completed.set("racer-1", 4);
+  await Promise.all([
+    context.syncProgress(),
+    context.syncProgress(),
+    context.reportCheckpoint(4).catch(() => undefined),
+  ]);
+  assert.deepEqual(claimedCheckpoints(coordinator, "racer-1"), [1, 2, 3, 4]);
+  assert.deepEqual(claimedCheckpoints(coordinator, "racer-2"), []);
+
+  verifier.fail = true;
+  await assert.doesNotReject(runner.running.get("racer-2")?.syncProgress?.() ?? Promise.resolve());
+  await coordinator.shutdown();
+});
+
+test("syncProgress skips a recovering racer and records again once it recovers", async () => {
+  const { coordinator, runner, verifier } = createSyncCoordinator({ sabotage: true });
+  const start = Date.now();
+  await coordinator.prepareAndStart(start);
+  const context = runner.running.get("racer-1");
+  assert.ok(context?.syncProgress);
+
+  verifier.completed.set("racer-1", 3);
+  await context.syncProgress();
+  assert.deepEqual(claimedCheckpoints(coordinator, "racer-1"), [1, 2]);
+  assert.equal(coordinator.engine.racers.get("racer-1")?.status, "recovering");
+
+  const calls = verifier.checkpointCalls.length;
+  await context.syncProgress();
+  assert.equal(verifier.checkpointCalls.length, calls, "nothing is verified while recovering");
+  assert.deepEqual(claimedCheckpoints(coordinator, "racer-1"), [1, 2]);
+
+  await context.reportRecovery?.();
+  assert.equal(coordinator.engine.racers.get("racer-1")?.status, "running");
+  await context.syncProgress();
+  assert.deepEqual(claimedCheckpoints(coordinator, "racer-1"), [1, 2, 3]);
+  await coordinator.shutdown();
 });

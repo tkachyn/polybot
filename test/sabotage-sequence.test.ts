@@ -66,10 +66,12 @@ test("ordered sabotage steps trigger independently and wait for recovery", async
     /cannot reach a checkpoint while recovering/,
   );
 
-  await race.reachCheckpoint("racer-1", 3, 102);
-  await race.reachCheckpoint("racer-1", 4, 202);
-  await race.reachCheckpoint("racer-2", 1, 203);
-  await race.reachCheckpoint("racer-2", 2, 204);
+  race.markRecovered("racer-1", 102);
+  await race.reachCheckpoint("racer-1", 3, 103);
+  race.markRecovered("racer-1", 202);
+  await race.reachCheckpoint("racer-1", 4, 203);
+  await race.reachCheckpoint("racer-2", 1, 204);
+  await race.reachCheckpoint("racer-2", 2, 205);
 
   assert.deepEqual(
     provider.applied.map(({ racerId, policy }) => [racerId, policy.disruptionId]),
@@ -82,15 +84,15 @@ test("ordered sabotage steps trigger independently and wait for recovery", async
   );
 });
 
-test("master chooses three bounded preset ids for checkpoints 2, 3, and 4", async () => {
+test("master chooses one bounded policy at the requested checkpoint", async () => {
   const observations: RaceObservationSource = {
     async observe(raceId, checkpoint) {
       return { raceId, checkpoint, racers: [] };
     },
   };
   const model: MasterPolicyModel = {
-    async selectSabotageSequence() {
-      return { presetIds: ["plant-decoy-control", "disable-primary-action", "shift-primary-action"] };
+    async selectSabotage() {
+      return { tier: "basic", policy: policies[0] };
     },
   };
   const provider = new MasterObstacleProvider(model, observations, {
@@ -104,10 +106,8 @@ test("master chooses three bounded preset ids for checkpoints 2, 3, and 4", asyn
     trigger: { kind: "target_opened", checkpoint: 2, milestone: "first_verified_checkpoint" },
   });
 
-  assert.deepEqual(plan?.steps?.map((step) => [step.stepId, step.checkpoint]), [
-    ["plant-decoy-control", 2],
-    ["disable-primary-action", 3],
-    ["shift-primary-action", 4],
-  ]);
+  assert.equal(plan?.steps, undefined);
+  assert.equal(plan?.trigger.checkpoint, 2);
+  assert.deepEqual(plan?.policy, policies[0]);
 });
 

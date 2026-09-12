@@ -42,7 +42,7 @@ export function FightRoute() {
   if (fight.status === "resolved") {
     return (
       <Page title={title}>
-        <SettledFight key={fight.raceId} fight={fight} priceHistory={priceHistory} />
+        <SettledFight key={fight.raceId} fight={fight} priceHistory={priceHistory} evaluation={fight.evaluation ?? null} />
       </Page>
     );
   }

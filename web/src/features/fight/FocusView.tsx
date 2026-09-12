@@ -30,6 +30,7 @@ export function FocusView({ fight, agent, visual, slip, markers, onClose }: Focu
   const status = agentStatusView(agent);
   const inSlip = slip?.racerId === agent.racerId;
   const name = agent.agent.name;
+  const cursorEntry = agent.log.slice().reverse().find((entry) => entry.cursor);
   const closeRef = useRef<HTMLButtonElement>(null);
 
   // Move keyboard focus into the expanded view when it opens.
@@ -67,6 +68,8 @@ export function FocusView({ fight, agent, visual, slip, markers, onClose }: Focu
           fightStatus={fight.status}
           startsAt={fight.startsAt}
           agentName={name}
+          cursor={cursorEntry?.cursor ?? null}
+          cursorSeq={cursorEntry?.seq ?? null}
           className={styles.capture}
           overlay={
             <span className={styles.url} title={agent.url ?? undefined}>

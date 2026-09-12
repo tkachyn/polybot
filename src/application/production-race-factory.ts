@@ -18,6 +18,7 @@ import {
 import type { DisruptionCommand } from "../domain/types.js";
 import { CdpObstacleProvider } from "../infra/cdp-obstacle-provider.js";
 import { SteelSessionManager } from "../infra/steel-session-manager.js";
+import type { EvaluationStore } from "../evaluation/store.js";
 import { JsonlRaceEventStore } from "../persistence/jsonl-event-store.js";
 import type { CreditLedger } from "../wallet/credit-ledger.js";
 import type { FightMetadata } from "./fight-metadata.js";
@@ -32,6 +33,8 @@ export type ProductionRaceContext = {
    * COMPETITOR_LLM_MODELS (see openRouterAgents).
    */
   fight: Partial<FightMetadata>;
+  /** Where the fight's final evaluation is stored once it closes. */
+  evaluationStore?: EvaluationStore;
 };
 
 export const OPENROUTER_PROVIDER = "openrouter";
@@ -162,7 +165,6 @@ export function createProductionRaceCoordinator(
       if (!model) throw new Error(`No OpenRouter model configured for ${racerId}`);
       return model;
     },
-    maxActions: positiveNumberEnv("COMPETITOR_MAX_ACTIONS", 20),
   });
   const courseVerifier = new DeterministicCourseVerifier(
     new HttpCourseStateGateway(
@@ -238,6 +240,8 @@ export function createProductionRaceCoordinator(
       obstacleProvider,
       ledger: context.ledger,
       llmUsage: () => budget.snapshot(),
+      evaluationStore: context.evaluationStore,
+      mode: "live",
     },
   );
   return coordinator;

@@ -1,0 +1,356 @@
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.note {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--tint-edge-border);
+  border-radius: var(--radius-md);
+  background-color: var(--tint-edge);
+  color: var(--color-text);
+  font-size: var(--fs-body);
+}
+
+.noteIcon {
+  flex-shrink: 0;
+  margin-top: 2px;
+  color: var(--color-edge);
+}
+
+/* --- Panels ----------------------------------------------------------------------- */
+
+.panel {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  border: 1px solid var(--color-hairline);
+  border-radius: var(--radius-lg);
+  background-color: var(--color-surface);
+}
+
+.panelHeader {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--color-divider);
+}
+
+.panelTitle {
+  color: var(--color-text);
+  font-size: var(--fs-body-lg);
+  font-weight: var(--fw-semibold);
+}
+
+.panelMeta {
+  color: var(--color-text-muted);
+  font-size: var(--fs-body-sm);
+}
+
+.panelBody {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-3-5) var(--space-4);
+}
+
+.panelNote {
+  padding: var(--space-3-5) var(--space-4);
+  color: var(--color-text-secondary);
+  font-size: var(--fs-body);
+}
+
+.caption {
+  padding: var(--space-3) var(--space-4);
+  border-top: 1px solid var(--color-hairline);
+  color: var(--color-text-muted);
+  font-size: var(--fs-body-sm);
+  line-height: var(--lh-body);
+}
+
+.columns {
+  display: grid;
+  grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr);
+  align-items: start;
+  gap: var(--space-3);
+}
+
+/* --- Matrix ------------------------------------------------------------------------- */
+
+.matrixWrap {
+  width: 100%;
+  overflow-x: auto;
+  transition: opacity var(--duration-base) var(--ease-standard);
+}
+
+.stale {
+  opacity: 0.55;
+}
+
+.matrix {
+  min-width: 720px;
+}
+
+.matrix thead th {
+  vertical-align: bottom;
+}
+
+.matrix td {
+  vertical-align: top;
+}
+
+/* The agent column stays put while the hazard columns scroll. */
+.agentHead,
+.agentCell {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  background-color: var(--color-surface);
+  box-shadow: inset -1px 0 0 var(--color-hairline);
+}
+
+.matrix tbody tr:hover td.agentCell {
+  background-color: var(--color-surface);
+}
+
+.agent {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2-5);
+  min-width: 0;
+}
+
+.agentText {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.agentName {
+  color: var(--color-text);
+  font-size: var(--fs-body-lg);
+  font-weight: var(--fw-semibold);
+  white-space: nowrap;
+}
+
+.agentModel {
+  max-width: 220px;
+  overflow: hidden;
+  color: var(--color-text-muted);
+  font-size: var(--fs-body-sm);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cellInner {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: var(--space-1);
+}
+
+.figure {
+  color: var(--color-text);
+  font-weight: var(--fw-semibold);
+}
+
+.bar {
+  width: 56px;
+}
+
+.cell {
+  min-width: 112px;
+}
+
+.headline {
+  color: var(--color-text);
+  font-size: var(--fs-price);
+  font-weight: var(--fw-semibold);
+  letter-spacing: var(--tracking-tight);
+  line-height: var(--lh-tight);
+}
+
+.sub {
+  color: var(--color-text-muted);
+  font-size: var(--fs-body-sm);
+  font-weight: var(--fw-regular);
+  white-space: nowrap;
+}
+
+.cellEmpty .headline {
+  color: var(--color-text-muted);
+  font-weight: var(--fw-medium);
+}
+
+.overallHead,
+.overallCell {
+  box-shadow: inset 1px 0 0 var(--color-divider);
+}
+
+.overallHead {
+  color: var(--color-text-secondary);
+}
+
+/* --- Dataset export ------------------------------------------------------------------ */
+
+.text {
+  color: var(--color-text-secondary);
+  font-size: var(--fs-body);
+  line-height: var(--lh-body);
+}
+
+.code {
+  padding: 1px var(--space-1);
+  border-radius: var(--radius-xs);
+  background-color: var(--color-inset);
+  color: var(--color-text-secondary);
+  font-family: var(--font-mono);
+  font-size: var(--fs-body-sm);
+  white-space: nowrap;
+}
+
+.schema {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.schemaRow {
+  display: grid;
+  grid-template-columns: 76px minmax(0, 1fr);
+  align-items: baseline;
+  gap: var(--space-2);
+}
+
+.schemaRow dd {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.fields {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+}
+
+.fieldNote {
+  color: var(--color-text-muted);
+  font-size: var(--fs-body-sm);
+}
+
+.exportRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+  padding-top: var(--space-1);
+}
+
+/* --- Recent reports ------------------------------------------------------------------- */
+
+.recent {
+  display: flex;
+  flex-direction: column;
+}
+
+.recentRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2-5) var(--space-4);
+  border-bottom: 1px solid var(--color-hairline);
+  transition: background-color var(--duration-fast) var(--ease-standard);
+}
+
+.recent li:last-child .recentRow {
+  border-bottom: 0;
+}
+
+.recentRow:hover {
+  background-color: var(--tint-hover);
+}
+
+.recentNumber {
+  flex-shrink: 0;
+  width: 48px;
+  color: var(--color-text-muted);
+  font-size: var(--fs-body-sm);
+  font-weight: var(--fw-semibold);
+}
+
+.recentMain {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.recentTitle {
+  color: var(--color-text);
+  font-size: var(--fs-body);
+  font-weight: var(--fw-medium);
+}
+
+.recentMeta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1-5);
+  color: var(--color-text-muted);
+  font-size: var(--fs-body-sm);
+}
+
+.recentWinner {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  color: var(--color-text-secondary);
+}
+
+.recentGo {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: var(--space-1);
+  color: var(--color-edge);
+  font-size: var(--fs-body-sm);
+  font-weight: var(--fw-semibold);
+}
+
+/* --- Reflow ---------------------------------------------------------------------------- */
+
+@media (max-width: 999px) {
+  .columns {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 759px) {
+  .schemaRow {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--space-1);
+  }
+
+  .agentModel {
+    max-width: 140px;
+  }
+}

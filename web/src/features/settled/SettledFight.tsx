@@ -1,12 +1,21 @@
 /**
- * Resolved fight (handoff 2.4): settled header, per-agent settlement table
- * with the winning row tinted, sabotage recap, and the viewer's payout card.
+ * Resolved fight (handoff 2.4): settled header, the agent evaluation report,
+ * then the market: per-agent settlement table with the winning row tinted,
+ * sabotage recap, the viewer's payout card and the price history.
  *
  * Rendered by FightRoute inside a scrolling <Page> when fight.status is
  * "resolved". Renders no Page of its own.
  */
 import { useEffect, useState, type ReactNode } from "react";
-import type { FightAgentDetail, FightDetail, FightSettlementLine, MyFightResponse, PricePoint, SettlementResult } from "@contract";
+import type {
+  FightAgentDetail,
+  FightDetail,
+  FightEvaluationPointer,
+  FightSettlementLine,
+  MyFightResponse,
+  PricePoint,
+  SettlementResult,
+} from "@contract";
 import { getMyFight } from "../../api/client";
 import {
   AgentMonogram,
@@ -32,21 +41,32 @@ import { formatDateTime, formatDuration, formatFightNumber, formatLogTime, forma
 import { HAZARD_LABEL, SABOTAGE_HIDDEN_COPY, SETTLEMENT_RESULT_LABEL } from "../../lib/labels";
 import { useApiResource } from "../../state/resource";
 import { useSession } from "../../state/session";
+import { EvaluationReport } from "../evaluation/EvaluationReport";
 import { ProbabilityChart } from "../market/ProbabilityChart";
 import styles from "./SettledFight.module.css";
 
-export type SettledFightProps = { fight: FightDetail; priceHistory: PricePoint[] };
+export type SettledFightProps = {
+  fight: FightDetail;
+  priceHistory: PricePoint[];
+  /**
+   * The evaluation pointer (`fight.evaluation`), passed through by FightRoute.
+   * The report refetches only when its `updatedAt` changes. Defaults to
+   * `fight.evaluation` when omitted.
+   */
+  evaluation?: FightEvaluationPointer | null;
+};
 
 /** Poll the payout while the market is still settling. */
 const SETTLING_POLL_MS = 3_000;
 
-export function SettledFight({ fight, priceHistory }: SettledFightProps) {
+export function SettledFight({ fight, priceHistory, evaluation }: SettledFightProps) {
   return (
     <div className={styles.root}>
       <ButtonLink to="/resolved" variant="subtle" size="sm" icon={<IconArrowLeft size={14} />} className={styles.back}>
         Resolved fights
       </ButtonLink>
       <SettledHeader fight={fight} />
+      <EvaluationReport raceId={fight.raceId} pointer={evaluation === undefined ? fight.evaluation : evaluation} />
       <AgentSettlementTable fight={fight} />
       <SabotageRecap fight={fight} />
       <PayoutCard fight={fight} />

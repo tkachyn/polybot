@@ -23,10 +23,11 @@ export function envApiOptions(
   mode: ServerMode,
 ): Pick<
   ApiServerOptions,
-  "mode" | "showSabotageUpfront" | "startingBalance" | "fightNumberStart" | "webDist"
+  "mode" | "demoMode" | "showSabotageUpfront" | "startingBalance" | "fightNumberStart" | "webDist"
 > {
   return {
     mode,
+    demoMode: envBoolean("DEMO_MODE", false),
     showSabotageUpfront: envBoolean("SHOW_SABOTAGE_UPFRONT", true),
     startingBalance: envNumber("STARTING_BALANCE", 1_000),
     fightNumberStart: envNumber("FIGHT_NUMBER_START", mode === "simulated" ? 401 : 1),

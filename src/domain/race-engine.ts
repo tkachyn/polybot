@@ -242,10 +242,9 @@ export class RaceEngine {
       return { claimed: true, obstacleApplied: false };
     }
     // The race may have ended, or the racer failed, while the sabotage was
-    // being applied; only a still-running racer enters recovery.
+    // being applied; only a still-running racer enters persistent recovery.
     if (result.applied && !this.isOver() && racer.status === "running") {
       racer.status = "recovering";
-      racer.recoverAt = now + step.policy.durationMs;
       this.emit({
         type: "sabotage_applied",
         racerId,
@@ -273,7 +272,7 @@ export class RaceEngine {
     return { claimed: true, obstacleApplied: false };
   }
 
-  /** Ends a racer's recovery early. Emits only when the status changes. */
+  /** Ends a racer's persistent recovery. Emits only when the status changes. */
   markRecovered(racerId: string, now = Date.now(), cause: RecoveryCause = "manual"): void {
     const racer = this.getRacer(racerId);
     if (racer.status !== "recovering" || this.isOver()) {
@@ -364,16 +363,6 @@ export class RaceEngine {
     ) {
       this.race.status = "hazards_frozen";
       this.emit({ type: "hazards_frozen", occurredAt: now });
-    }
-
-    for (const racer of this.racers.values()) {
-      if (
-        racer.status === "recovering" &&
-        racer.recoverAt !== undefined &&
-        now >= racer.recoverAt
-      ) {
-        this.markRecovered(racer.racerId, now, "duration");
-      }
     }
 
     if (now >= this.race.absoluteDeadlineAt && !this.isOver()) {

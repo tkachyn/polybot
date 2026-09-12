@@ -31,6 +31,15 @@ export type RacerPlan = {
   loopRate: number;
   /** Step at which the agent crashes, or null. */
   failAtStep: number | null;
+  /**
+   * Chance, per sabotage hit, of reading the page before acting and handling
+   * the hazard cleanly (see script.ts). Traits vary per fight like skill.
+   */
+  vigilance?: number;
+  /** Chance of not hammering a blocked control until the hazard reverts. */
+  composure?: number;
+  /** Chance of repeating a blocked or decoy click before adapting. */
+  haste?: number;
 };
 
 export type FightPlan = {
@@ -77,6 +86,10 @@ export function planFight(
       errorRate: rng.range(0.03, 0.12),
       loopRate: rng.range(0.05, 0.25),
       failAtStep: rng.chance(FAILURE_CHANCE) ? rng.int(3, Math.max(4, totalSteps - 1)) : null,
+      // Drawn last so the earlier skill draws keep their values.
+      vigilance: rng.range(0.1, 0.7),
+      composure: rng.range(0.45, 1),
+      haste: rng.range(0.3, 0.85),
     };
   }
   return { difficulty, racers: plans };

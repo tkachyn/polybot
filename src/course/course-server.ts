@@ -1,54 +1,18 @@
 import Fastify, { type FastifyInstance } from "fastify";
-import type { CourseState } from "./deterministic-course-verifier.js";
+import {
+  assertRunProof,
+  positiveInteger,
+  requireString,
+  stateKey,
+  type CourseKey,
+  type CourseRunProof,
+  type StoredCourseState,
+} from "./course-state.js";
+import { SHOP_COURSE_ID, createShopCourse } from "./shop-course.js";
 
-type CourseKey = {
-  raceId: string;
-  racerId: string;
-  courseId: string;
-};
-
-type CourseRunProof = {
-  seed?: string;
-  steelSessionId?: string;
-};
-
-type StoredCourseState = CourseState & {
-  checkpointCount: number;
-};
-
-function requireString(value: unknown, name: string): string {
-  if (typeof value !== "string" || value.length === 0 || value.length > 200) {
-    throw new Error(`${name} is required`);
-  }
-  return value;
-}
-
-function positiveInteger(value: unknown, name: string): number {
-  const parsed = Number(value);
-  if (!Number.isInteger(parsed) || parsed < 1 || parsed > 20) {
-    throw new Error(`${name} must be an integer between 1 and 20`);
-  }
-  return parsed;
-}
-
-function stateKey(input: CourseKey): string {
-  return `${input.raceId}\u0000${input.racerId}\u0000${input.courseId}`;
-}
-
-function assertRunProof(
-  state: StoredCourseState,
-  proof: CourseRunProof,
-): void {
-  if (state.seed !== undefined && proof.seed !== state.seed) {
-    throw new Error("Course run seed does not match");
-  }
-  if (
-    state.steelSessionId !== undefined &&
-    proof.steelSessionId !== state.steelSessionId
-  ) {
-    throw new Error("Steel session does not match course run");
-  }
-}
+/** The storefront earns its checkpoints through its own pages and forms. */
+const SHOP_SHORTCUT_ERROR =
+  `${SHOP_COURSE_ID} progress is recorded by the storefront, not by direct reports`;
 
 function safeJson(value: unknown): string {
   return JSON.stringify(value).replaceAll("<", "\\u003c");
@@ -138,6 +102,11 @@ export function buildCourseApp(options: { verifierToken?: string } = {}): Fastif
     void reply.status(400).send({ error: message });
   });
 
+  // The arena-shop storefront shares this state map and its run-proof rules.
+  // Its /shop/* routes (and form-body parser) live in an encapsulated plugin.
+  const shop = createShopCourse(states);
+  void app.register(shop.plugin);
+
   app.get<{ Querystring: Partial<CourseKey & CourseRunProof> & { checkpointCount?: string } }>(
     "/",
     async (request, reply) => {
@@ -146,6 +115,7 @@ export function buildCourseApp(options: { verifierToken?: string } = {}): Fastif
         racerId: requireString(request.query.racerId, "racerId"),
         courseId: requireString(request.query.courseId, "courseId"),
       };
+      if (identity.courseId === SHOP_COURSE_ID) return shop.home(request.query, reply);
       const proof: CourseRunProof = {
         seed: typeof request.query.seed === "string" ? request.query.seed : undefined,
         steelSessionId: typeof request.query.steelSessionId === "string"
@@ -209,6 +179,7 @@ export function buildCourseApp(options: { verifierToken?: string } = {}): Fastif
         racerId: requireString(request.body?.racerId, "racerId"),
         courseId: requireString(request.body?.courseId, "courseId"),
       };
+      if (identity.courseId === SHOP_COURSE_ID) throw new Error(SHOP_SHORTCUT_ERROR);
       const checkpoint = positiveInteger(request.body?.checkpoint, "checkpoint");
       const state = states.get(stateKey(identity));
       if (!state) throw new Error("Course run was not initialized");
@@ -232,6 +203,7 @@ export function buildCourseApp(options: { verifierToken?: string } = {}): Fastif
       racerId: requireString(request.body?.racerId, "racerId"),
       courseId: requireString(request.body?.courseId, "courseId"),
     };
+    if (identity.courseId === SHOP_COURSE_ID) throw new Error(SHOP_SHORTCUT_ERROR);
     const state = states.get(stateKey(identity));
     if (!state) throw new Error("Course run was not initialized");
     assertRunProof(state, request.body ?? {});

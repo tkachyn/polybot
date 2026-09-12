@@ -56,6 +56,30 @@ export function validateDisruptionCommand(
   }
 }
 
+/** Decoy labels by intensity (1-3). Later entries are collision fallbacks. */
+export const DECOY_LABELS = [
+  "Continue",
+  "Proceed to next step",
+  "Continue (recommended)",
+] as const;
+const DECOY_FALLBACK_LABELS = ["Next", "Go on", "Keep going", "Skip ahead"] as const;
+/** rename_control labels by intensity (1-3). */
+export const RENAME_LABELS = ["Unavailable", "Not now", "Cancel"] as const;
+/** The Close control inside a blocking_modal overlay. */
+export const DISMISS_OVERLAY_ROLE = "dismiss-overlay";
+export const DISMISS_OVERLAY_LABEL = "Close";
+/** The disclosure that hides the target during move_primary_action. */
+export const MORE_ACTIONS_ROLE = "more-actions";
+export const MORE_ACTIONS_LABEL = "More options";
+/** Planted decoys get `id="arena-decoy-…"`; Steel traces report ids, not data-*. */
+export const DECOY_ID_PREFIX = "arena-decoy-";
+
+/**
+ * The page script for one hazard, evaluated through CDP. Hazards persist until
+ * a visible recovery control or the bounded competitor recovery action calls
+ * `revert`, restoring the exact original attributes, children and nodes.
+ * Returns `{ applied, reason? }`.
+ */
 export function buildDisruptionScript(
   command: DisruptionCommand,
   disruptionId: string,
@@ -63,6 +87,7 @@ export function buildDisruptionScript(
   validateDisruptionCommand(command);
   const role = JSON.stringify(command.targetRole);
   const id = JSON.stringify(disruptionId);
+  const hazard = JSON.stringify(command.hazardType);
   const duration = command.durationMs;
   const intensity = command.intensity;
 
@@ -70,71 +95,236 @@ export function buildDisruptionScript(
     (() => {
       const role = ${role};
       const disruptionId = ${id};
+      const hazardType = ${hazard};
       const durationMs = ${duration};
       const intensity = ${intensity};
+      const decoyLabels = ${JSON.stringify([...DECOY_LABELS, ...DECOY_FALLBACK_LABELS])};
+      const renameLabels = ${JSON.stringify(RENAME_LABELS)};
+      const registryKey = "__arenaDisruptions";
+      const recoveryKey = "__arenaRecoverDisruptions";
+      if (!window[registryKey]) {
+        Object.defineProperty(window, registryKey, { value: Object.create(null), configurable: true });
+      }
+      const registry = window[registryKey];
+      if (!window[recoveryKey]) {
+        Object.defineProperty(window, recoveryKey, {
+          configurable: true,
+          value: () => {
+            let count = 0;
+            Object.values(registry).forEach((entry) => {
+              if (entry && entry.active) {
+                entry.revert();
+                count += 1;
+              }
+            });
+            return count;
+          },
+        });
+      }
       const selector = '[data-arena-role="' + CSS.escape(role) + '"]';
-      const target = document.querySelector(selector);
-      const marker = '[data-arena-disruption-id="' + disruptionId + '"]';
+      const marker = '[data-arena-disruption-id="' + CSS.escape(disruptionId) + '"]';
 
-      if (document.querySelector(marker)) {
+      if (registry[disruptionId] || document.querySelector(marker)) {
         return { applied: false, reason: "already_applied" };
       }
 
-      if (!target && ${JSON.stringify(command.hazardType)} !== "blocking_modal") {
+      // Never aim at a decoy planted by an earlier hazard.
+      const target = document.querySelector(selector + ':not([data-arena-decoy="true"])');
+      if (!target && hazardType !== "blocking_modal") {
         return { applied: false, reason: "target_not_found" };
       }
 
-      const cleanup = [];
-      const rememberStyle = (element, property) => {
-        const previous = element.style[property];
-        cleanup.push(() => { element.style[property] = previous; });
+      const undo = [];
+      const saved = new Map();
+      const rememberAttribute = (element, name) => {
+        let attributes = saved.get(element);
+        if (!attributes) {
+          attributes = new Map();
+          saved.set(element, attributes);
+        }
+        if (attributes.has(name)) return;
+        attributes.set(name, element.getAttribute(name));
+        undo.push(() => restoreAttribute(element, name));
+      };
+      const restoreAttribute = (element, name) => {
+        const attributes = saved.get(element);
+        if (!attributes || !attributes.has(name)) return;
+        const previous = attributes.get(name);
+        if (previous === null) element.removeAttribute(name);
+        else element.setAttribute(name, previous);
+      };
+      const setStyle = (element, property, value) => {
+        rememberAttribute(element, "style");
+        element.style.setProperty(property, value, "important");
+      };
+      const normalize = (text) => String(text || "").replace(/\\s+/g, " ").trim();
+      const labelOf = (element) => normalize(
+        element.innerText || element.textContent ||
+        element.getAttribute("aria-label") || element.value || "",
+      );
+      const sameLabel = (a, b) => normalize(a).toLowerCase() === normalize(b).toLowerCase();
+      const overlaps = (a, b) => {
+        const left = normalize(a).toLowerCase();
+        const right = normalize(b).toLowerCase();
+        return left.length > 0 && right.length > 0 && (left.includes(right) || right.includes(left));
+      };
+      // Replaces the visible label; the original child nodes come back on revert.
+      const setLabel = (element, label, reversible) => {
+        if (element.tagName === "INPUT") {
+          if (reversible) rememberAttribute(element, "value");
+          element.setAttribute("value", label);
+        } else {
+          const children = Array.from(element.childNodes);
+          element.replaceChildren(document.createTextNode(label));
+          if (reversible) undo.push(() => element.replaceChildren(...children));
+        }
+        if (element.hasAttribute("aria-label")) {
+          if (reversible) rememberAttribute(element, "aria-label");
+          element.setAttribute("aria-label", label);
+        }
+      };
+      const uniqueId = (base) => {
+        let candidate = base;
+        for (let suffix = 2; document.getElementById(candidate); suffix += 1) {
+          candidate = base + "-" + suffix;
+        }
+        return candidate;
       };
 
-      if (${JSON.stringify(command.hazardType)} === "blocking_modal") {
-        const modal = document.createElement("div");
-        modal.dataset.arenaDisruptionId = disruptionId;
-        modal.textContent = "The interface is temporarily unavailable";
-        Object.assign(modal.style, {
-          position: "fixed",
-          inset: "0",
-          zIndex: "2147483647",
-          display: "grid",
-          placeItems: "center",
-          background: "rgba(0, 0, 0, 0.72)",
-          color: "white",
-          fontSize: (16 + intensity * 2) + "px",
-          fontFamily: "sans-serif",
+      let reverted = false;
+      let entry;
+      const revert = () => {
+        if (reverted) return;
+        reverted = true;
+        undo.reverse().forEach((step) => {
+          try { step(); } catch (error) { /* keep reverting */ }
         });
-        document.body.appendChild(modal);
-        cleanup.push(() => modal.remove());
-      } else if (${JSON.stringify(command.hazardType)} === "move_primary_action") {
-        rememberStyle(target, "position");
-        rememberStyle(target, "top");
-        rememberStyle(target, "left");
-        target.style.position = "relative";
-        target.style.top = (12 * intensity) + "px";
-        target.style.left = (18 * intensity) + "px";
-      } else if (${JSON.stringify(command.hazardType)} === "insert_decoy") {
-        const decoy = target.cloneNode(true);
-        decoy.dataset.arenaDisruptionId = disruptionId;
-        decoy.removeAttribute("data-arena-role");
-        decoy.textContent = "Continue";
-        target.parentElement?.insertBefore(decoy, target);
-        cleanup.push(() => decoy.remove());
-      } else if (${JSON.stringify(command.hazardType)} === "temporary_disable") {
-        rememberStyle(target, "pointerEvents");
-        rememberStyle(target, "opacity");
-        target.style.pointerEvents = "none";
-        target.style.opacity = "0.45";
-      } else if (${JSON.stringify(command.hazardType)} === "rename_control") {
-        const element = target;
-        const previousText = element.textContent;
-        element.textContent = "Unavailable";
-        cleanup.push(() => { element.textContent = previousText; });
+        if (entry) entry.active = false;
+      };
+
+      try {
+        if (target) {
+          rememberAttribute(target, "data-arena-disruption-id");
+        }
+
+        if (hazardType === "blocking_modal") {
+          const overlay = document.createElement("div");
+          overlay.setAttribute("data-arena-disruption-id", disruptionId);
+          overlay.setAttribute("role", "dialog");
+          overlay.setAttribute("aria-modal", "true");
+          Object.assign(overlay.style, {
+            position: "fixed",
+            inset: "0",
+            zIndex: "2147483647",
+            display: "grid",
+            placeItems: "center",
+            background: "rgba(0, 0, 0, 0.72)",
+            color: "white",
+            fontSize: (16 + intensity * 2) + "px",
+            fontFamily: "sans-serif",
+          });
+          const panel = document.createElement("div");
+          Object.assign(panel.style, {
+            display: "grid",
+            gap: "16px",
+            justifyItems: "center",
+            padding: "24px 32px",
+            borderRadius: "12px",
+            background: "rgba(20, 20, 20, 0.95)",
+          });
+          const message = document.createElement("p");
+          message.style.margin = "0";
+          message.textContent = "The interface is temporarily unavailable";
+          panel.appendChild(message);
+          const close = document.createElement("button");
+          close.type = "button";
+          close.setAttribute("data-arena-role", ${JSON.stringify(DISMISS_OVERLAY_ROLE)});
+          close.textContent = ${JSON.stringify(DISMISS_OVERLAY_LABEL)};
+          Object.assign(close.style, {
+            padding: "8px 20px",
+            fontSize: "16px",
+            cursor: "pointer",
+          });
+          close.addEventListener("click", (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            revert();
+          });
+          overlay.appendChild(panel);
+          panel.appendChild(close);
+          (document.body || document.documentElement).appendChild(overlay);
+          undo.push(() => overlay.remove());
+        } else if (hazardType === "move_primary_action") {
+          const disclosure = document.createElement("button");
+          disclosure.type = "button";
+          disclosure.setAttribute("data-arena-role", ${JSON.stringify(MORE_ACTIONS_ROLE)});
+          disclosure.setAttribute("data-arena-disruption-id", disruptionId);
+          disclosure.setAttribute("aria-expanded", "false");
+          disclosure.textContent = ${JSON.stringify(MORE_ACTIONS_LABEL)};
+          disclosure.addEventListener("click", (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            revert();
+          });
+          setStyle(target, "display", "none");
+          target.parentNode.insertBefore(disclosure, target);
+          undo.push(() => disclosure.remove());
+        } else if (hazardType === "insert_decoy") {
+          const decoy = target.cloneNode(true);
+          [decoy, ...decoy.querySelectorAll("*")].forEach((element) => {
+            Array.from(element.attributes).forEach((attribute) => {
+              if (/^on/i.test(attribute.name)) element.removeAttribute(attribute.name);
+            });
+            if (element !== decoy) element.removeAttribute("id");
+          });
+          ["name", "form", "aria-labelledby", "aria-describedby"].forEach((name) => {
+            decoy.removeAttribute(name);
+          });
+          // Placed first, a submit clone would become the form's default
+          // button and swallow Enter-key submission; it only traps clicks.
+          if ((decoy.tagName === "BUTTON" || decoy.tagName === "INPUT") && decoy.type === "submit") {
+            decoy.setAttribute("type", "button");
+          }
+          decoy.setAttribute("data-arena-decoy", "true");
+          decoy.setAttribute("data-arena-disruption-id", disruptionId);
+          const suffix = disruptionId.replace(/^disruption-/, "").replace(/[^A-Za-z0-9_-]+/g, "-") || "1";
+          decoy.id = uniqueId(${JSON.stringify(DECOY_ID_PREFIX)} + suffix);
+          const targetLabel = labelOf(target);
+          const preferred = [decoyLabels[intensity - 1], ...decoyLabels];
+          const label = preferred.find((candidate) => !overlaps(candidate, targetLabel)) ||
+            preferred.find((candidate) => !sameLabel(candidate, targetLabel)) ||
+            preferred[0];
+          setLabel(decoy, label, false);
+          decoy.addEventListener("click", (event) => {
+            event.preventDefault();
+            event.stopImmediatePropagation();
+          });
+          target.parentNode.insertBefore(decoy, target);
+          undo.push(() => decoy.remove());
+        } else if (hazardType === "temporary_disable") {
+          if ("disabled" in target) {
+            rememberAttribute(target, "disabled");
+            target.setAttribute("disabled", "");
+          }
+          rememberAttribute(target, "aria-disabled");
+          target.setAttribute("aria-disabled", "true");
+          setStyle(target, "pointer-events", "none");
+          setStyle(target, "opacity", "0.45");
+        } else if (hazardType === "rename_control") {
+          const current = labelOf(target);
+          const preferred = [renameLabels[intensity - 1], ...renameLabels];
+          const label = preferred.find((candidate) => !sameLabel(candidate, current)) || preferred[0];
+          setLabel(target, label, true);
+        }
+
+        if (target) target.setAttribute("data-arena-disruption-id", disruptionId);
+      } catch (error) {
+        revert();
+        return { applied: false, reason: "apply_failed" };
       }
 
-      if (target) target.setAttribute("data-arena-disruption-id", disruptionId);
-      window.setTimeout(() => cleanup.forEach((undo) => undo()), durationMs);
+      entry = { hazardType, active: true, revert };
+      registry[disruptionId] = entry;
       return { applied: true, disruptionId };
     })()
   `;

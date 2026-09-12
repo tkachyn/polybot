@@ -1,19 +1,19 @@
 import type { AgentIdentity, HazardType } from "../api/dto.js";
 import type {
-  AgentActionReport,
   CompetitorAgentRunner,
   CompetitorContext,
 } from "../application/contracts.js";
 import { effectLabelFor, type SimPage, type SimTemplate } from "./catalogue.js";
 import { renderSimFrame } from "./frames.js";
-import {
-  SIM_MAX_STEPS,
-  STEP_DELAY_MAX_MS,
-  STEP_DELAY_MIN_MS,
-  type FightPlan,
-  type RacerPlan,
-} from "./plan.js";
+import { SIM_MAX_STEPS, type FightPlan, type RacerPlan } from "./plan.js";
 import { Rng } from "./rng.js";
+import {
+  SimRacerScript,
+  actionReport,
+  stepCaption,
+  type ScriptHazard,
+  type ScriptStep,
+} from "./script.js";
 import type { SimulatedWorld } from "./world.js";
 
 type PrepareContext = Omit<CompetitorContext, "reportCheckpoint" | "reportFinish">;
@@ -51,59 +51,6 @@ function untilAborted(signal: AbortSignal): Promise<void> {
   });
 }
 
-type StepReport = { kind: "action" | "error"; text: string; error?: string; signature?: string };
-
-/** Texts for a step spent fighting an active sabotage. */
-export function blockedStep(
-  hazardType: HazardType,
-  page: SimPage,
-  effectLabel: string,
-  attempt: number,
-): StepReport {
-  const target = page.target;
-  const options: StepReport[] = (() => {
-    switch (hazardType) {
-      case "blocking_modal":
-        return [
-          { kind: "error", text: `click "${target}"`, error: "click intercepted by an overlay" },
-          { kind: "action", text: `look for a close button on "${effectLabel}"` },
-          { kind: "action", text: "press Escape to dismiss the overlay" },
-          { kind: "action", text: "click \"No thanks\" on the modal" },
-        ];
-      case "insert_decoy":
-        return [
-          { kind: "action", text: `click "${effectLabel}"` },
-          { kind: "error", text: `expected "${page.heading}"`, error: "landed on an unrelated sign-up page" },
-          { kind: "action", text: "navigate back to the previous page" },
-          { kind: "action", text: `compare "${effectLabel}" with "${target}"` },
-        ];
-      case "temporary_disable":
-        return [
-          { kind: "error", text: `click "${target}"`, error: "button is disabled" },
-          { kind: "action", text: `wait for "${target}" to become enabled`, signature: `wait:${target}` },
-          { kind: "action", text: `wait for "${target}" to become enabled`, signature: `wait:${target}` },
-          { kind: "action", text: "re-check the form for validation errors" },
-        ];
-      case "rename_control":
-        return [
-          { kind: "action", text: `search the page for "${target}"` },
-          { kind: "error", text: `click "${target}"`, error: "no control with that label" },
-          { kind: "action", text: `inspect the "${effectLabel}" button` },
-          { kind: "action", text: "read the surrounding page copy" },
-        ];
-      case "move_primary_action":
-      default:
-        return [
-          { kind: "error", text: `click "${target}" at its usual position`, error: "no element at that point" },
-          { kind: "action", text: `scroll to find "${target}"` },
-          { kind: "action", text: `locate "${target}" in the page footer` },
-          { kind: "action", text: "take a fresh page snapshot" },
-        ];
-    }
-  })();
-  return options[attempt % options.length];
-}
-
 export type SimulatedRunnerOptions = {
   /** Fitted to the fight's checkpoint count. */
   template: SimTemplate;
@@ -117,9 +64,10 @@ export type SimulatedRunnerOptions = {
 };
 
 /**
- * Seeded stand-in for a browser agent. Each racer steps through the course,
- * reporting actions and SVG frames, and advances only through the real
- * reportCheckpoint/reportFinish callbacks.
+ * Seeded stand-in for a browser agent. Each racer follows its SimRacerScript
+ * through the course, reporting actions (with browser evidence) and SVG
+ * frames, and advances only through the real reportCheckpoint/reportFinish
+ * callbacks.
  */
 export class SimulatedCompetitorRunner implements CompetitorAgentRunner {
   private readonly controllers = new Map<string, AbortController>();
@@ -185,141 +133,75 @@ export class SimulatedCompetitorRunner implements CompetitorAgentRunner {
     };
   }
 
+  /** The racer's active sabotage as its current page shows it. */
+  private activeHazard(racerId: string, page: SimPage): ScriptHazard | null {
+    const disruption = this.options.world.disruption(racerId);
+    if (!disruption) return null;
+    const hazardType = disruption.policy.hazardType;
+    return {
+      hazardType,
+      intensity: disruption.policy.intensity,
+      appliedAt: disruption.appliedAt,
+      until: disruption.until,
+      effectLabel: effectLabelFor(this.options.template, hazardType, page),
+    };
+  }
+
   private async loop(context: CompetitorContext, signal: AbortSignal): Promise<void> {
     const { template, world, timeScale } = this.options;
     const racerId = context.racerId;
     const plan = this.planFor(racerId);
-    const rng = new Rng(`${this.options.seed}/run/${racerId}`);
-    const stageCount = template.stages.length;
-    let step = 0;
+    const script = new SimRacerScript(plan, template, new Rng(`${this.options.seed}/run/${racerId}`));
 
-    const report = (
-      page: SimPage,
-      stageNumber: number,
-      entry: StepReport,
-      disruption: { hazardType: HazardType; effectLabel: string } | null,
-    ): void => {
-      step += 1;
-      const action: AgentActionReport = {
-        kind: entry.kind,
-        text: entry.text,
-        url: page.url,
-        step,
-        maxSteps: this.maxSteps,
-        signature: entry.signature ?? entry.text,
-      };
-      if (entry.error) action.error = entry.error;
-      context.reportAction?.(action);
-      const shown = entry.error ? `${entry.text} (${entry.error})` : entry.text;
-      this.reportFrame(context, page, stageNumber, step, shown, disruption, "working");
+    const report = (entry: ScriptStep, page: SimPage, stageNumber: number): void => {
+      context.reportAction?.(actionReport(entry, page, script.steps, this.maxSteps));
+      this.reportFrame(context, page, stageNumber, script.steps, stepCaption(entry), entry.disruption, "working");
     };
 
-    for (let stage = 0; stage <= stageCount; stage += 1) {
-      const page = stage < stageCount ? template.stages[stage] : template.finish;
-      const stageNumber = stage + 1;
-      let remaining = plan.stepsPerStage[stage] ?? 2;
-      let actionIndex = 0;
-      const loopAt = rng.chance(plan.loopRate) ? rng.int(0, Math.max(0, remaining - 1)) : -1;
-      let looped = false;
-      let loopLeft = 0;
-      let blockedAttempts = 0;
-      let lastHazard: { hazardType: HazardType; intensity: number } | null = null;
-      let recoverySteps = 0;
-
-      while (remaining > 0) {
-        const delay = rng.range(STEP_DELAY_MIN_MS, STEP_DELAY_MAX_MS) * plan.speed / timeScale;
-        await sleep(delay, signal);
-        if (signal.aborted) return;
-
-        if (step >= this.maxSteps) {
-          context.reportAction?.({
-            kind: "note",
-            text: "Step budget exhausted; waiting for the referee",
-            url: page.url,
-            step,
-            maxSteps: this.maxSteps,
-          });
-          this.reportFrame(context, page, stageNumber, step, "step budget exhausted", null, "idle");
-          await untilAborted(signal);
+    for (;;) {
+      if (script.pageDone) {
+        if (script.onFinishPage) {
+          if (!await this.reportProgress(() => context.reportFinish(), signal)) return;
+          this.reportFrame(
+            context, script.page, script.stageNumber, script.steps, "final task state verified", null, "finished",
+          );
           return;
         }
-        if (plan.failAtStep !== null && step + 1 >= plan.failAtStep) {
-          report(page, stageNumber, {
-            kind: "error",
-            text: "take page snapshot",
-            error: "browser context lost",
-          }, null);
-          this.reportFrame(context, page, stageNumber, step, "browser context lost", null, "failed");
-          throw new Error("simulated agent crashed: browser context lost");
-        }
-
-        const disruption = world.disruption(racerId);
-        if (disruption) {
-          const hazardType = disruption.policy.hazardType;
-          const effect = {
-            hazardType,
-            effectLabel: effectLabelFor(template, hazardType, page),
-          };
-          report(page, stageNumber, blockedStep(hazardType, page, effect.effectLabel, blockedAttempts), effect);
-          blockedAttempts += 1;
-          lastHazard = { hazardType, intensity: disruption.policy.intensity };
-          continue;
-        }
-        if (lastHazard) {
-          recoverySteps = Math.max(0, lastHazard.intensity - 1);
-          lastHazard = null;
-          blockedAttempts = 0;
-          report(page, stageNumber, { kind: "action", text: `resume: "${page.target}" is usable again` }, null);
-          continue;
-        }
-        if (recoverySteps > 0) {
-          recoverySteps -= 1;
-          report(page, stageNumber, { kind: "action", text: "re-check the page state after the disruption" }, null);
-          continue;
-        }
-        if (loopLeft > 0) {
-          loopLeft -= 1;
-          report(page, stageNumber, {
-            kind: "action",
-            text: `click "${page.target}" (no visible change)`,
-            signature: `loop:${page.targetRole}`,
-          }, null);
-          continue;
-        }
-        if (!looped && actionIndex === loopAt) {
-          looped = true;
-          loopLeft = rng.int(2, 3);
-          report(page, stageNumber, {
-            kind: "action",
-            text: `click "${page.target}" (no visible change)`,
-            signature: `loop:${page.targetRole}`,
-          }, null);
-          continue;
-        }
-
-        const text = page.actions[actionIndex % page.actions.length] ?? `click "${page.target}"`;
-        if (rng.chance(plan.errorRate)) {
-          report(page, stageNumber, {
-            kind: "error",
-            text,
-            error: rng.pick(["element not interactable", "timed out waiting for selector", "stale element reference"]),
-          }, null);
-          continue;
-        }
-        report(page, stageNumber, { kind: "action", text }, null);
-        actionIndex += 1;
-        remaining -= 1;
+        const checkpoint = script.stage + 1;
+        if (!await this.reportProgress(() => context.reportCheckpoint(checkpoint), signal)) return;
+        if (signal.aborted) return;
+        script.advance();
+        continue;
       }
 
-      if (stage < stageCount) {
-        const checkpoint = stage + 1;
-        if (!await this.reportProgress(() => context.reportCheckpoint(checkpoint), signal)) return;
-      } else {
-        if (!await this.reportProgress(() => context.reportFinish(), signal)) return;
-        this.reportFrame(context, page, stageNumber, step, "final task state verified", null, "finished");
+      await sleep(script.nextDelay() / timeScale, signal);
+      if (signal.aborted) return;
+      const page = script.page;
+      const stageNumber = script.stageNumber;
+
+      if (script.steps >= this.maxSteps) {
+        context.reportAction?.({
+          kind: "note",
+          text: "Step budget exhausted; waiting for the referee",
+          url: page.url,
+          step: script.steps,
+          maxSteps: this.maxSteps,
+        });
+        this.reportFrame(context, page, stageNumber, script.steps, "step budget exhausted", null, "idle");
+        await untilAborted(signal);
         return;
       }
-      if (signal.aborted) return;
+      if (plan.failAtStep !== null && script.steps + 1 >= plan.failAtStep) {
+        report(script.crash(), page, stageNumber);
+        this.reportFrame(context, page, stageNumber, script.steps, "browser context lost", null, "failed");
+        throw new Error("simulated agent crashed: browser context lost");
+      }
+      const entry = script.next(this.activeHazard(racerId, page), world.now());
+      report(entry, page, stageNumber);
+      if (entry?.recovered) {
+        world.clear(racerId);
+        await context.reportRecovery?.();
+      }
     }
   }
 

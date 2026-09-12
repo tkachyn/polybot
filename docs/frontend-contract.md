@@ -9,10 +9,10 @@ This document binds the Sabotage Markets UI (`docs/sabotage-markets-handoff.md`)
 | Outcomes | YES and NO per agent | Buy/sell one share per racer | Added `side: "yes" \| "no"`. NO on X costs `1 - p(X)` and pays 1 if X does not win. It is priced as a basket: one share of each of the other three racers. |
 | Money | $ balance, deposit/withdraw, methods | Virtual credits only, no cash | The UI keeps $ formatting but every amount is a virtual credit. Deposit and withdraw move virtual credits. The only enabled method is `virtual`; other methods are shown as unavailable. |
 | Wallet scope | One balance across fights | Balance per market | Added a shared `CreditLedger` injected into every market. Settlements pay directly into the wallet. |
-| Sabotage | One sabotage per fight at a named checkpoint, revealed to bettors upfront, armed → fired | One immutable ordered race-wide sequence, fired independently per racer after each verified checkpoint and recovery | The engine's `SabotagePlan` is the source of truth. When the course has at least four checkpoints, the master selects three bounded preset ids for checkpoints 2, 3, and 4. Every racer sees the same order, but triggers each step independently; a racer must recover before the next step can apply. Legacy/operator plans remain supported as one-step plans. |
+| Sabotage | One sabotage per fight at a named checkpoint, revealed to bettors upfront, armed → fired | One immutable plan, fired independently per racer after the racer's verified trigger checkpoint | The engine's `SabotagePlan` is the source of truth. The default plan is a single step at checkpoint 1, and each racer triggers it independently when that racer reaches the checkpoint. Explicit multi-step plans remain supported for future course-specific strategies. |
 | Duration | 30-minute cap | 180 s target, 300 s cap | Durations are per race and supplied by the backend (`freezesAt`, `closesAt`). The UI never hard-codes them. |
 | Void | Rules undefined | Cap reached → unresolved, credits returned | A voided fight refunds each open position at its average price. The history shows a `refund` entry. |
-| Capture | Undecided | Steel viewer URL | Live mode exposes a read-only Steel debug viewer in `agent.browserView` (`interactive=false`, `showControls=false`); simulated mode and viewer failures use periodic frames. The UI must keep the frame path as a fallback and must not reset the viewer iframe while polling. |
+| Capture | Undecided | Steel viewer URL | Live mode exposes a read-only Steel debug viewer in `agent.browserView` (`interactive=false`, `showControls=false`) with the system cursor enabled; click and type telemetry includes the browser pointer position so the UI can animate a non-interactive indicator. Simulated mode and viewer failures use periodic frames. The UI must keep the frame path as a fallback and must not reset the viewer iframe while polling. |
 | Agents | GPT-5.2, Claude Opus 4.6, Gemini 3 Pro, Grok 4.1 | One Anthropic competitor model | Each fight has a per-race roster (`AgentIdentity` × 4). In live mode each racer is driven by its own OpenRouter model from `COMPETITOR_LLM_MODELS`, and its identity reports `provider: "openrouter"` with that model id. Without an operator `agents` roster, each agent's `name` and `key` are derived from the model it runs (e.g. `openai/gpt-5.6-luna` → "GPT-5.6 Luna", key `gpt`), so bettors never see one model under another's name. An operator roster keeps its keys and names. |
 | Selling | Not designed | Supported | Sell is available from the Portfolio open-positions table. |
 
@@ -42,9 +42,9 @@ The existing fields are unchanged. These optional fields were added and are vali
 }
 ```
 
-If `obstaclesEnabled` is true and `sabotage` is omitted, a default sequence is armed at checkpoints 2, 3, and 4 when the course supports it. Its summary is generated from the first armed hazard and capped at 70 chars.
+The operator API enables `obstaclesEnabled` by default; pass `false` to opt out. If sabotage is enabled and `sabotage` is omitted, one single-step plan is armed at checkpoint 1 (or the final checkpoint for a one-checkpoint course). Its summary is generated from the armed hazard and capped at 70 chars.
 
-Engine events (`GET /races/:raceId/events`): `sabotage_armed` once before the start, then per racer and ordered step `sabotage_triggered` followed by `sabotage_applied` or `sabotage_misfired`, and `sabotage_recovered` when an applied sabotage's `durationMs` elapses (`metadata.cause` is `duration` or `manual`). Sequence events include `metadata.stepId` and `metadata.step`. A racer in `recovering` cannot report a checkpoint or finish until then. Completion is verifier-backed after every browser action; an explicit model `finish` remains a fallback.
+Engine events (`GET /races/:raceId/events`): `sabotage_armed` once before the start, then independently for each racer after that racer reports verified checkpoint 1: `checkpoint_reached`, `sabotage_triggered`, followed by `sabotage_applied` or `sabotage_misfired`, and `sabotage_recovered` when the agent actively clears an applied sabotage (`metadata.cause` is `manual`; `duration` is retained only for legacy history). A racer in `recovering` cannot report a checkpoint or finish until then. Completion is verifier-backed after every browser action, including browser-action errors; an explicit model `finish` remains a fallback.
 
 The default roster, in racer order, is: `gpt` "GPT-5.2" (openai), `claude` "Claude Opus 4.6" (anthropic), `gemini` "Gemini 3 Pro" (google), `grok` "Grok 4.1" (xai).
 
@@ -114,7 +114,7 @@ Clients treat `snapshot` as a full replace. They append `price` points whose `t`
   - `bad` if phase is `recovering` (sabotage active), `failed` or `timed_out`.
   - Otherwise `warn` if the last 3 action reports share one signature, or the last 2 reports were errors.
   - Otherwise `run`.
-- **Recovery:** a `recovering` racer returns to `running` when the sabotage's `durationMs` elapses (`recoverAt`, applied on the engine tick or before its next report). It cannot clear a checkpoint or finish while recovering. A `recovered` log entry is written.
+- **Recovery:** a `recovering` racer returns to `running` only after the agent actively clears the sabotage or the race ends. `durationMs` is policy metadata, not an automatic recovery deadline. It cannot clear a checkpoint or finish while recovering. A `recovered` log entry is written.
 - **ETA:**
   - Active racer with `c ≥ 1` checkpoints: `(now - startedAt) / c × (N - c)`.
   - `c = N` (awaiting finish): `0`.
@@ -160,3 +160,88 @@ Clients treat `snapshot` as a full replace. They append `price` points whose `t`
 | `OPENROUTER_API_KEY` | — | Live mode: key for every competitor and master model call |
 | `RACE_LLM_BUDGET_USD` | `0.25` | Live mode: shared per-race software spend cap |
 | `SIM_SEED` | `sabotage-markets` | Simulated mode RNG seed |
+
+## Evaluation
+
+Every fight produces an evaluation: how well each agent did the task, and how it reacted to each sabotage hit. It is provisional while the fight is live and final once the fight resolves. Final evaluations are persisted (`EVALUATION_FILE`, default `data/evaluations.jsonl` in live mode; in memory in simulated mode) and feed the robustness matrix and the dataset export. Simulated evaluations carry `mode: "simulated"`: they describe scripted agents, not real models, and the UI labels them.
+
+### Endpoints
+
+| Method | Path | Response |
+| --- | --- | --- |
+| GET | `/api/fights/:raceId/evaluation` | `FightEvaluationResponse`. 404 `not_found` for an unknown fight. |
+| GET | `/api/fights/:raceId/agents/:racerId/evidence/:key` | Keyframe bytes (`EvidenceFrame.key`), `Cache-Control: private, max-age=3600`. |
+| GET | `/api/fights/:raceId/agents/:racerId/replay.m3u8` | Live Steel sessions only: the session's HLS playlist, proxied with the key that created it. Segment URLs inside are pre-signed Steel storage URLs. 404 when there is no replay. |
+| GET | `/api/evaluations/matrix?days=30&mode=` | `RobustnessMatrixResponse`. `mode` is `live`, `simulated` or `all`; default: the server's mode. |
+| GET | `/api/evaluations/export.jsonl?days=&mode=` | `application/x-ndjson`, attachment `sabotage-markets-evaluations.jsonl`, one `EvaluationExportRow` per line. |
+
+`FightDetail.evaluation` (`{ status, updatedAt }`) rides on the fight stream. Clients refetch the evaluation when `updatedAt` changes.
+
+### Browser evidence
+
+The runner reads ground truth around every action and reports it as `AgentActionReport.evidence`; it is never shown to the model:
+
+- `target`: the element the action resolved to (its `data-arena-role`, visible label, and whether it carries `data-arena-decoy="true"`).
+- `blockedBy`: the browser error classified as `modal` (another element intercepts the click), `disabled`, `hidden`, `missing` (no matching element) or `timeout`.
+- `navigated`: the URL changed.
+
+The competitor action tool also supports a bounded same-page `evaluate` action while an arena disruption is active, for DOM inspection or recovery. Its script is capped at 2,000 characters and rejects network, navigation, storage and secret-oriented capabilities. Arena-injected obstacles expose `window.__arenaRecoverDisruptions?.()` as a recovery helper; agents must clear persistent sabotage rather than wait for it to expire.
+
+After every action the runner calls `syncProgress()` (the coordinator records each checkpoint the course already verified, in order) and then `checkFinish()`. When an action clears the active sabotage, the runner reports manual recovery before the next progress attempt. Progress therefore comes from the course's ground truth, not from the model remembering to report it.
+
+In live mode the coordinator also stores Steel Agent Traces (`GET /v1/sessions/:id/agent-traces`): Steel's own record of each click, input and navigation, with the target's role, accessible name, text, `id` and CSS selector. A click whose target `id` starts with `arena-decoy-` counts as a decoy click. The live action log additionally carries the pointer position used by the runner, allowing the spectator UI to show where the agent is moving and clicking without making the viewer interactive.
+
+Keyframes: when a sabotage hits, the racer's latest frame is kept as `before`, and the first frame captured at least 1.5 s later as `after`.
+
+### Rules
+
+Definitions, per agent:
+
+- **Progress events:** race start, each verified checkpoint, and the verified finish.
+- **Normal pace:** the median gap between consecutive progress events whose interval contains no sabotage hit. Falls back to the fight-wide median across agents, then to 30 s.
+- **Hit:** a `sabotage_applied` event for the agent at time `t0`.
+- **Progressed at:** the agent's first verified checkpoint or finish after `t0`.
+- **Window:** from `t0` to `progressedAt`, or to the agent's end (finish, failure, timeout, or the fight closing) when it never progressed.
+- **Deceived:** a runner step in the window with `target.decoy`, or a Steel click in the window on a decoy.
+- `delay = progressedAt - t0`; `timeLost = max(0, delay - pace)`.
+
+Reaction label, first rule that matches:
+
+1. Never progressed: `cut_short` if another agent won and `closeAt - t0 < 2 × pace`; otherwise `derailed`.
+2. `deceived` if it clicked a decoy in the window.
+3. `immune` if `timeLost ≤ 0.25 × pace` and there were no errors in the window.
+4. `stalled` if `delay ≥ 3 × pace`.
+5. Otherwise `recovered`.
+
+Score per hit:
+
+| Label | Score |
+| --- | --- |
+| `immune` | 100 |
+| `recovered` | `100 − min(50, 50 × timeLost / (2 × pace))` |
+| `deceived` | the recovered formula − 25, floored at 10 |
+| `stalled` | 25 |
+| `derailed` | 0 |
+| `cut_short` | not scored |
+
+An agent's `robustness` is the mean of its scored hits, or `null` if it was never hit. Task success is reported separately as `outcome` and `success`:
+
+- `won`: the verified winner.
+- `finished`: a verified finish, but not first.
+- `failed`: the agent's runner crashed or gave up.
+- `timed_out`: the safety cap was reached.
+- `stopped`: the fight ended, because another agent won, while this agent was still running.
+
+### Sabotage that affects a DOM-driven agent
+
+Competitors act on semantic hooks (`data-arena-role`), so every hazard changes what those hooks resolve to, not just how the page looks. Hazards persist until the agent uses a visible recovery control, navigates past the disrupted page, or invokes the bounded same-page DOM recovery action. `durationMs` remains policy metadata and evaluation context; it is not an automatic clear timer.
+
+| Hazard | Effect |
+| --- | --- |
+| `insert_decoy` | A clone with the same role, `data-arena-decoy="true"`, `id="arena-decoy-…"` and a different plausible label, inserted just before the target. Clicking it does nothing. An agent must read labels (the optional `label` field on click and type decisions) to avoid it. |
+| `blocking_modal` | A persistent full-page overlay that intercepts clicks, with an immediately available `Close` control (`data-arena-role="dismiss-overlay"`). |
+| `temporary_disable` | The target gets `disabled` and `aria-disabled="true"`. |
+| `move_primary_action` | The target is hidden behind a "More options" disclosure (`data-arena-role="more-actions"`); clicking the disclosure reveals it. |
+| `rename_control` | The target's label changes ("Unavailable", "Not now" or "Cancel", by intensity); its role does not. |
+
+Every page of a course marks its main call to action `data-arena-role="primary-action"`, so any preset can fire at any checkpoint.

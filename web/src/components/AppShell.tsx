@@ -18,6 +18,7 @@ import { Money } from "./Figures";
 import { IconFights, IconLeaderboard, IconPortfolio, IconResolved, IconWallet, LogoMark, type IconProps } from "./icons";
 import { ErrorBoundary } from "../app/ErrorBoundary";
 import { Tag } from "./Tag";
+import { DemoJoinDialog } from "../features/demo/DemoJoinDialog";
 import styles from "./AppShell.module.css";
 
 export { Page, PageHeader } from "./Page";
@@ -31,10 +32,35 @@ type NavItem = {
   match?: (pathname: string) => boolean;
 };
 
+/** Evaluations: a report page with a small bar chart. */
+function IconEvaluations({ size = 16, title, ...rest }: IconProps) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.5}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      role={title ? "img" : undefined}
+      aria-hidden={title ? undefined : true}
+      aria-label={title}
+      focusable="false"
+      {...rest}
+    >
+      <path d="M4.5 2h7a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1h-7a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1Z" />
+      <path d="M6 11.5v-2M8 11.5V6.5M10 11.5V8.5" />
+    </svg>
+  );
+}
+
 export const NAV_ITEMS: readonly NavItem[] = [
   { to: "/", label: "Fights", Icon: IconFights, match: (p) => p === "/" || p.startsWith("/fights/") },
   { to: "/portfolio", label: "Portfolio", Icon: IconPortfolio },
   { to: "/leaderboard", label: "Leaderboard", Icon: IconLeaderboard },
+  { to: "/evaluations", label: "Evaluations", Icon: IconEvaluations },
   { to: "/resolved", label: "Resolved", Icon: IconResolved },
   { to: "/wallet", label: "Wallet", Icon: IconWallet },
 ];
@@ -43,6 +69,8 @@ export const NAV_ITEMS: readonly NavItem[] = [
 function Navbar() {
   const { pathname } = useLocation();
   const { meta, account } = useSession();
+  // Demo mode has no wallet, so that destination is not offered.
+  const items = meta?.demoMode ? NAV_ITEMS.filter((item) => item.to !== "/wallet") : NAV_ITEMS;
 
   return (
     <header className={styles.navbar}>
@@ -56,7 +84,7 @@ function Navbar() {
 
         <nav className={styles.nav} aria-label="Primary">
           <ul className={styles.navList}>
-            {NAV_ITEMS.map(({ to, label, match }) => (
+            {items.map(({ to, label, match }) => (
               <li key={to}>
                 <NavLink
                   to={to}
@@ -94,6 +122,7 @@ export function AppShell() {
   const { pathname } = useLocation();
   return (
     <div className={styles.shell}>
+      <DemoJoinDialog />
       <a className="skip-link" href="#main">
         Skip to content
       </a>

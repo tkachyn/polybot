@@ -82,6 +82,44 @@ http://127.0.0.1:4000/?raceId=demo&racerId=racer-1&courseId=course-1&checkpointC
 
 Steel sessions run remotely and cannot access your machine's localhost. A live Steel race must use a public deployment or tunnel URL for `startUrl`; the local backend can continue using `COURSE_BASE_URL=http://127.0.0.1:4000` for verification. When `COURSE_VERIFIER_TOKEN` is set, the course server requires the matching Bearer token on server-to-server arena-state verification requests; the browser course UI remains usable without exposing that secret.
 
+## Shop course
+
+`courseId=arena-shop` is a realistic storefront served by the same course app (`npm run dev:course` or `npm run dev:all`): Voltmart, a small electronics store with a header, department nav, promo banner, footer, product cards and a working cart. From the run seed it generates eight portable SSD listings. Exactly one satisfies the task, for example "Buy the cheapest new 1 TB portable SSD under $90 with standard shipping". The rest are near misses: a cheaper refurbished drive, a cheaper drive of the wrong capacity, a drive a few dollars over budget, a pricier drive that qualifies, a premium drive, and two larger drives, one of them on sale under budget. Results use a seeded "Featured" order, never price order.
+
+| Page | Path | Hooks (`data-arena-role`) |
+| --- | --- | --- |
+| Home | `/?courseId=arena-shop&…` | `search-input`, `primary-action` (Search), `product-link` (trending) |
+| Search results | `/shop/search?q=` | `search-input`, `primary-action` (Search), `product-link` |
+| Product | `/shop/product?sku=` | `primary-action` (Add to cart) |
+| Cart | `/shop/cart` | `remove-item`, `primary-action` (Checkout) |
+| Checkout | `/shop/checkout` | `shipping-name`, `shipping-address`, `shipping-method`, `primary-action` (Place order) |
+| Confirmation | `/shop/order?order=` | `primary-action` (Continue shopping) |
+
+Every link and form carries the run identity (`raceId`, `racerId`, `courseId`, `seed`, `steelSessionId`, `checkpointCount`), so an agent only clicks and types. Changes are POST forms that redirect with a 303. Pages are plain server-rendered HTML with inline CSS: no scripts and no external assets.
+
+Checkpoints complete strictly in order and are stored in the same course state as the test course, so `/arena/state` and the deterministic verifier are unchanged:
+
+1. **Product found**: opening the correct product's page. This also sets `targetOpened`, the milestone that arms sabotage. Other products do nothing.
+2. **Added to cart**: the cart holds exactly one unit of the correct product. It is evaluated on every add and remove.
+3. **Shipping details**: a checkout with a non-empty name and address, Standard shipping and that cart. It then sets `finished` and shows an order number. Express shipping or a missing field re-renders checkout with an error. The store accepts any other valid order, but it completes nothing.
+
+Standard shipping is preselected because the runner's `type` action cannot drive a native `<select>`. For `arena-shop`, `POST /arena/checkpoint` and `POST /arena/finish` are rejected: progress comes only from the store's own pages. The run must use `checkpointCount=3`. The seeded catalogue and task are exported from `src/course/shop-course.ts` (`shopTaskForSeed`, `shopCatalogueForSeed`, `shopCorrectProductId`). Try it locally at `http://127.0.0.1:4000/?courseId=arena-shop&raceId=demo&racerId=racer-1&seed=demo&checkpointCount=3`.
+
+**Running a live race.** Steel browsers run in the cloud, so the course server must be publicly reachable, for example through a tunnel:
+
+```bash
+npm run dev:all                                  # live API on :3001, course on :4000
+cloudflared tunnel --url http://127.0.0.1:4000   # or: ngrok http 4000
+```
+
+Set `COURSE_BASE_URL` in `.env` to the tunnel's public URL before you start the API. The verifier also reads `/arena/state` through it, and both URLs must reach the same course process. Then create the fight:
+
+```bash
+SEED=demo npm run race:shop    # SEED is optional; API_URL defaults to http://127.0.0.1:3001
+```
+
+The script sends `POST /races` with `courseId: "arena-shop"`, three checkpoints, `obstaclesEnabled: true`, the title, task, detail, success condition and checkpoint labels from `shopTaskForSeed`, and `startUrl: ${COURSE_BASE_URL}/?courseId=arena-shop`. The runner appends the run parameters. The script then prints the answer key and the fight URL, `http://localhost:5173/fights/<raceId>` (start the UI with `npm run web:dev`). It warns when `COURSE_BASE_URL` is a local address, and it prints the status and error when the API rejects the request. The live API needs `STEEL_API_KEYS`, `OPENROUTER_API_KEY`, `COMPETITOR_LLM_MODELS` and `MASTER_LLM_MODEL`.
+
 ## Configuration
 
 | Variable | Default | Purpose |
@@ -90,6 +128,7 @@ Steel sessions run remotely and cannot access your machine's localhost. A live S
 | `PORT` / `HOST` | `3001` / `127.0.0.1` | API listen address |
 | `COURSE_PORT` / `COURSE_HOST` | `4000` / `127.0.0.1` | Test course listen address (`dev:course`, `dev:all`) |
 | `STARTING_BALANCE` | `1000` | Credits granted to new users |
+| `DEMO_MODE` | `false` | Lock equal bankrolls, block wallet transfers and enable QR judge onboarding |
 | `SHOW_SABOTAGE_UPFRONT` | `true` | Reveal sabotage text before fights open |
 | `FIGHT_NUMBER_START` | `1` (simulated: `401`) | First fight number |
 | `WEB_DIST` | `web/dist` | Built SPA, served with an SPA fallback when the directory exists |
@@ -100,10 +139,10 @@ Steel sessions run remotely and cannot access your machine's localhost. A live S
 | `OPENROUTER_APP_URL` / `OPENROUTER_APP_NAME` | `http://localhost:3001` / `Browser Agent Arena` | OpenRouter attribution headers |
 | `COMPETITOR_LLM_MODELS` | none | Live mode: four comma-separated OpenRouter model ids |
 | `MASTER_LLM_MODEL` | none | Live mode: OpenRouter model for the sabotage director (needed when `obstaclesEnabled`) |
-| `COMPETITOR_MAX_ACTIONS` | `20` | Live mode: action cap per racer |
 | `RACE_LLM_BUDGET_USD` | `0.25` | Live mode: shared per-race LLM spend cap |
 | `COURSE_BASE_URL` / `COURSE_VERIFIER_TOKEN` | none | Live mode: course verifier endpoint and token |
 | `RACE_EVENT_FILE` | `data/race-events.jsonl` | Live mode: append-only event log |
+| `EVALUATION_FILE` | `data/evaluations.jsonl` (live) | Final fight evaluations, appended as JSON lines (in memory in simulated mode unless set) |
 | `VITE_API_TARGET` | `http://127.0.0.1:3001` | Web dev server: where `/api` is proxied |
 | `VITE_DEFAULT_LAYOUT` | `grid` | Web: default arena layout (`grid` or `lanes`) |
 
@@ -146,6 +185,41 @@ Streams start with `retry: 2000` and send a `: ping` comment every 15 s.
 
 Clients treat `snapshot` as a full replace and append `price` points newer than their last one.
 
+## Evaluation
+
+Every fight produces an evaluation: how each agent did the task, and how it reacted to each sabotage hit. It is provisional while the fight is live and final once the fight resolves.
+
+- **Where to see it:**
+  - A resolved fight shows the full report: findings, each agent's outcome and robustness, a sabotage timeline with reaction labels, before/after keyframes, the Steel trace and replay for live runs, and the full action trace.
+  - The **Evaluations** page shows the robustness matrix (models × sabotage types) and the dataset export.
+- **Reaction labels:**
+
+  | Label | Meaning |
+  | --- | --- |
+  | `immune` | Kept its normal pace, with no errors |
+  | `recovered` | Lost time, but made verified progress |
+  | `deceived` | Clicked a planted decoy, then progressed |
+  | `stalled` | Took at least 3× its normal pace |
+  | `derailed` | Never made verified progress again |
+  | `cut_short` | The fight ended before it could react; not scored |
+
+  Scores run from 0 to 100, and an agent's robustness is the mean of its scored hits. The exact rules are in [docs/frontend-contract.md](docs/frontend-contract.md#evaluation).
+- **Evidence:**
+  - The runner records what the browser actually did around every action: the element it hit, whether that was a decoy, and what blocked it.
+  - Progress comes from the course's own verification, not from the model's claims.
+  - For live runs, the coordinator also stores Steel's Agent Traces and links the session recording at each sabotage moment.
+- **Simulated data:** with `RACE_MODE=simulated` the agents are scripted. Their evaluations are labelled simulated and should not be read as real model behaviour.
+
+```text
+GET /api/fights/:raceId/evaluation
+GET /api/fights/:raceId/agents/:racerId/evidence/:key
+GET /api/fights/:raceId/agents/:racerId/replay.m3u8      live Steel sessions only
+GET /api/evaluations/matrix?days=30&mode=live|simulated|all
+GET /api/evaluations/export.jsonl?days=30&mode=…         one row per agent per fight
+```
+
+To produce a real evaluation, run a race on the [shop course](#shop-course) with obstacles enabled.
+
 ## Operator API
 
 ```text
@@ -159,7 +233,7 @@ POST /races/:raceId/market/buy
 POST /races/:raceId/market/sell
 ```
 
-`POST /races` accepts the original fields plus the optional `title`, `taskDetail`, `successCondition`, `checkpointLabels`, `sabotage`, `agents` and `startsAt` (see the contract). A future `startsAt` creates an upcoming fight: it is armed and tradable immediately, and the ticker starts it once it is due. Otherwise the fight creates four sessions, prepares all four agents, passes the readiness barrier and starts. Obstacles stay disabled unless `obstaclesEnabled` is `true`.
+`POST /races` accepts the original fields plus the optional `title`, `taskDetail`, `successCondition`, `checkpointLabels`, `sabotage`, `agents` and `startsAt` (see the contract). A future `startsAt` creates an upcoming fight: it is armed and tradable immediately, and the ticker starts it once it is due. Otherwise the fight creates four sessions, prepares all four agents, passes the readiness barrier and starts. Obstacles are enabled by default; pass `obstaclesEnabled: false` to opt out.
 
 Live fight responses include `agents[].browserView.viewerUrl` when a Steel
 session is available. It is read-only (`interactive=false`) and intended for
@@ -168,7 +242,7 @@ endpoint. Browser-session routes own creation, navigation and release on the
 backend. They are unauthenticated in this development server and must be
 protected by application authentication before public deployment.
 
-When `obstaclesEnabled` is `true`, one immutable race-wide sabotage plan (tier, trigger checkpoint and policy) is armed before the race starts: the fixed `sabotage.policy` when given, otherwise the master's `armRace` choice, with a deterministic fallback. The trigger is `sabotage.checkpoint`, default 1. Each racer independently triggers that same plan when its verified report of the trigger checkpoint also verifies the target opening, and cannot report further progress until its recovery (`recoverAt`) elapses. Repeated reports are idempotent.
+When `obstaclesEnabled` is `true`, one immutable race-wide single-step sabotage plan (tier, trigger checkpoint and policy) is armed before the race starts: the fixed `sabotage.policy` when given, otherwise the master's `armRace` choice, with a deterministic fallback. The trigger is `sabotage.checkpoint`, default 1. Each racer independently triggers that same plan when its own verified report of the trigger checkpoint also verifies the target opening; racers are not synchronized. A racer cannot report further progress until its recovery (`recoverAt`) elapses. Repeated reports are idempotent.
 
 ## Timing
 

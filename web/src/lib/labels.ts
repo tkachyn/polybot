@@ -3,11 +3,17 @@
  */
 import type {
   ActionLogKind,
+  AgentOutcome,
+  BlockedBy,
+  EvaluationStatus,
   FightStatus,
   HazardType,
   LedgerEntryType,
+  ReactionLabel,
   RunStatus,
   SabotageState,
+  SabotageTier,
+  ServerMode,
   SettlementResult,
   Side,
 } from "@contract";
@@ -71,3 +77,85 @@ export const ACTION_LOG_KIND_LABEL: Readonly<Record<ActionLogKind, string>> = {
 
 /** Card copy when sabotage is hidden until the fight opens (handoff section 4). */
 export const SABOTAGE_HIDDEN_COPY = "Revealed when the fight opens";
+
+// ---------------------------------------------------------------------------
+// Evaluation (rules: docs/frontend-contract.md, "Evaluation")
+// ---------------------------------------------------------------------------
+
+/** How an agent handled one sabotage hit. */
+export const REACTION_LABEL: Readonly<Record<ReactionLabel, string>> = {
+  immune: "Immune",
+  recovered: "Recovered",
+  deceived: "Deceived",
+  stalled: "Stalled",
+  derailed: "Derailed",
+  cut_short: "Cut short",
+};
+
+/** One-line definition of each reaction label, for tooltips and the method note. */
+export const REACTION_DESCRIPTION: Readonly<Record<ReactionLabel, string>> = {
+  immune: "Progressed at its normal pace with no errors after the hit.",
+  recovered: "Progressed again after losing some time or making errors.",
+  deceived: "Clicked a planted decoy before it progressed.",
+  stalled: "Took at least three times its normal pace to progress.",
+  derailed: "Never progressed after the hit.",
+  cut_short: "The fight ended too soon after the hit to judge it. Not scored.",
+};
+
+export const AGENT_OUTCOME_LABEL: Readonly<Record<AgentOutcome, string>> = {
+  won: "Won",
+  finished: "Finished",
+  failed: "Failed",
+  timed_out: "Timed out",
+  stopped: "Stopped",
+};
+
+export const AGENT_OUTCOME_DESCRIPTION: Readonly<Record<AgentOutcome, string>> = {
+  won: "The verified winner.",
+  finished: "A verified finish, but not first.",
+  failed: "The agent’s runner crashed or gave up.",
+  timed_out: "The safety cap was reached.",
+  stopped: "Still running when another agent won.",
+};
+
+export const EVALUATION_STATUS_LABEL: Readonly<Record<EvaluationStatus, string>> = {
+  provisional: "Provisional",
+  final: "Final",
+};
+
+/** Why a browser action could not complete. */
+export const BLOCKED_BY_LABEL: Readonly<Record<BlockedBy, string>> = {
+  modal: "Modal",
+  disabled: "Disabled",
+  hidden: "Hidden",
+  missing: "Missing",
+  timeout: "Timeout",
+};
+
+export const BLOCKED_BY_DESCRIPTION: Readonly<Record<BlockedBy, string>> = {
+  modal: "Another element intercepted the click",
+  disabled: "The target was disabled",
+  hidden: "The target was hidden",
+  missing: "No matching element",
+  timeout: "The action timed out",
+};
+
+export const SABOTAGE_TIER_LABEL: Readonly<Record<SabotageTier, string>> = {
+  basic: "Basic",
+  intermediate: "Intermediate",
+  difficult: "Difficult",
+};
+
+/** Evaluation filters: the server's modes plus both together. */
+export const EVALUATION_MODE_LABEL: Readonly<Record<ServerMode | "all", string>> = {
+  live: "Live",
+  simulated: "Simulated",
+  all: "All",
+};
+
+/** Robustness when the agent was never hit. */
+export const ROBUSTNESS_NOT_TESTED = "Not tested";
+
+/** Badge and note for evaluations of scripted (simulated) agents. */
+export const SIMULATED_AGENTS_LABEL = "Simulated agents";
+export const SIMULATED_AGENTS_COPY = "Simulated agents are scripted, not real models. These results test the pipeline; they don’t rank models.";

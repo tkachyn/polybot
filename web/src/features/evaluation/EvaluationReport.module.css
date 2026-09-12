@@ -1,0 +1,422 @@
+.report {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  min-width: 0;
+  padding: var(--space-4) var(--space-5);
+  border: 1px solid var(--color-hairline);
+  border-radius: var(--radius-lg);
+  background-color: var(--color-surface);
+}
+
+/* --- Header -------------------------------------------------------------------- */
+
+.header {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.titleRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-2) var(--space-4);
+}
+
+.titleText {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.title {
+  color: var(--color-text);
+  font-size: var(--fs-title);
+  font-weight: var(--fw-semibold);
+  letter-spacing: var(--tracking-tight);
+  line-height: var(--lh-snug);
+}
+
+.lede {
+  color: var(--color-text-secondary);
+  font-size: var(--fs-body);
+}
+
+.badges {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.updating {
+  color: var(--color-text-muted);
+}
+
+.badges .simTag {
+  height: 20px;
+  padding: 0 var(--space-2);
+  font-size: var(--fs-label);
+}
+
+.simNote {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--tint-edge-border);
+  border-radius: var(--radius-md);
+  background-color: var(--tint-edge);
+  color: var(--color-text);
+  font-size: var(--fs-body);
+}
+
+.simIcon {
+  flex-shrink: 0;
+  margin-top: 2px;
+  color: var(--color-edge);
+}
+
+.task {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2-5);
+  min-width: 0;
+}
+
+.taskLabel {
+  flex-shrink: 0;
+}
+
+.taskText {
+  min-width: 0;
+  color: var(--color-text);
+  font-size: var(--fs-body-lg);
+  line-height: var(--lh-snug);
+}
+
+.meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3) var(--space-8);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--color-hairline);
+}
+
+.metaItem {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.metaItem dd {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1-5);
+  color: var(--color-text);
+  font-size: var(--fs-body-lg);
+  font-weight: var(--fw-medium);
+  white-space: nowrap;
+}
+
+.code {
+  color: var(--color-text-secondary);
+  font-family: var(--font-mono);
+  font-size: var(--fs-body);
+}
+
+.muted {
+  color: var(--color-text-muted);
+  font-size: var(--fs-body);
+  font-weight: var(--fw-regular);
+}
+
+/* --- Sections ------------------------------------------------------------------- */
+
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.sequence {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: var(--space-2);
+}
+
+.sequenceStep {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  min-width: 0;
+  padding: var(--space-2) var(--space-2-5);
+  border: 1px solid var(--color-hairline);
+  border-radius: var(--radius-md);
+  background-color: var(--color-inset);
+}
+
+.stepBadge {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border: 1px solid var(--tint-sabotage-border);
+  border-radius: 50%;
+  background-color: var(--tint-sabotage);
+  color: var(--color-sabotage);
+  font-size: var(--fs-label);
+  font-weight: var(--fw-semibold);
+  line-height: 1;
+}
+
+.sequenceText {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-0-5);
+  min-width: 0;
+}
+
+.sequenceLabel {
+  color: var(--color-text);
+  font-size: var(--fs-body);
+  font-weight: var(--fw-medium);
+}
+
+.sequenceMeta {
+  color: var(--color-text-secondary);
+  font-size: var(--fs-body-sm);
+}
+
+.findings {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1-5);
+}
+
+.finding {
+  position: relative;
+  max-width: 92ch;
+  padding-left: var(--space-4);
+  color: var(--color-text);
+  font-size: var(--fs-body-lg);
+  line-height: var(--lh-body);
+}
+
+.finding::before {
+  content: "";
+  position: absolute;
+  top: 0.62em;
+  left: var(--space-1);
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background-color: var(--color-text-muted);
+}
+
+/* --- Overview tiles ---------------------------------------------------------------- */
+
+.overviewList {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--space-2-5);
+}
+
+.tile {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  height: 100%;
+  padding: var(--space-2-5) var(--space-3);
+  border: 1px solid var(--color-hairline);
+  border-radius: var(--radius-md);
+  background-color: var(--color-inset);
+  transition: border-color var(--duration-fast) var(--ease-standard);
+}
+
+.tile:hover {
+  border-color: var(--color-edge);
+}
+
+.tileTop {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.tileName {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--color-text);
+  font-size: var(--fs-body);
+  font-weight: var(--fw-semibold);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tileScore {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.tileValue {
+  color: var(--color-text);
+  font-size: var(--fs-price);
+  font-weight: var(--fw-semibold);
+  letter-spacing: var(--tracking-tight);
+  line-height: var(--lh-tight);
+}
+
+.tileUntested {
+  color: var(--color-text-muted);
+  font-size: var(--fs-body);
+  font-weight: var(--fw-medium);
+  line-height: var(--lh-tight);
+}
+
+.notHit {
+  color: var(--color-text-muted);
+  font-size: var(--fs-body-sm);
+  line-height: 16px;
+}
+
+.marks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+}
+
+.mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 16px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-xs);
+  font-size: var(--fs-label-sm);
+  font-weight: var(--fw-semibold);
+  line-height: 1;
+}
+
+.mark_positive {
+  color: var(--color-positive);
+  background-color: var(--tint-positive);
+  border-color: var(--tint-positive-border);
+}
+
+.mark_edge {
+  color: var(--color-edge);
+  background-color: var(--tint-edge);
+  border-color: var(--tint-edge-border);
+}
+
+.mark_negative {
+  color: var(--color-negative);
+  background-color: var(--tint-negative);
+  border-color: var(--tint-negative-border);
+}
+
+/* Stalled: the LOOPING treatment, as on the reaction chip. */
+.mark_warn {
+  color: var(--color-text-secondary);
+  background-color: transparent;
+  border-color: var(--color-divider);
+  border-style: dashed;
+}
+
+.mark_neutral {
+  color: var(--color-text-secondary);
+  background-color: transparent;
+  border-color: var(--color-divider);
+}
+
+.mark_muted {
+  color: var(--color-text-muted);
+  background-color: transparent;
+  border-color: var(--color-divider);
+}
+
+/* --- Agents and method ------------------------------------------------------------- */
+
+.agents {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.method {
+  padding: var(--space-2-5) var(--space-5);
+  border: 1px solid var(--color-hairline);
+  border-radius: var(--radius-lg);
+  background-color: var(--color-surface);
+}
+
+.methodBody {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  max-width: 96ch;
+  padding: var(--space-1) 0 var(--space-2);
+  color: var(--color-text-secondary);
+  font-size: var(--fs-body);
+  line-height: var(--lh-body);
+}
+
+.methodBody strong {
+  color: var(--color-text);
+  font-weight: var(--fw-semibold);
+}
+
+.rules {
+  border: 1px solid var(--color-hairline);
+  border-radius: var(--radius-md);
+}
+
+.rules table td {
+  vertical-align: top;
+}
+
+@media (max-width: 999px) {
+  .overviewList {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 759px) {
+  .card {
+    padding: var(--space-3-5) var(--space-4);
+  }
+
+  .method {
+    padding: var(--space-2) var(--space-4);
+  }
+
+  .meta {
+    gap: var(--space-3) var(--space-5);
+  }
+}
+
+@media (max-width: 559px) {
+  .overviewList {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

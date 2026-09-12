@@ -1,7 +1,13 @@
 import { existsSync, statSync } from "node:fs";
+import { resolve } from "node:path";
 import fastifyStatic from "@fastify/static";
 import Fastify, { type FastifyError, type FastifyInstance, type FastifyRequest } from "fastify";
 import { DomainError, isDomainError } from "../domain/errors.js";
+import {
+  InMemoryEvaluationStore,
+  JsonlEvaluationStore,
+  type EvaluationStore,
+} from "../evaluation/index.js";
 import type { ApiErrorCode, ServerMode } from "./dto.js";
 import type { ApiCreateRaceInput, CoordinatorFactory } from "./race-registry.js";
 import { RaceRegistry } from "./race-registry.js";
@@ -27,6 +33,8 @@ export type ApiServerOptions = {
   enableTicker?: boolean;
   tickIntervalMs?: number;
   mode?: ServerMode;
+  /** Locks wallet transfers and enables the judge onboarding flow. */
+  demoMode?: boolean;
   /** Reveal sabotage text before fights open. Default true. */
   showSabotageUpfront?: boolean;
   /** Credits granted to new users. Default 1000. */
@@ -46,7 +54,25 @@ export type ApiServerOptions = {
   ssePingMs?: number;
   /** Server-side browser lifecycle for an authenticated operator/frontend. */
   browserSessionService?: SteelBrowserSessionService;
+  /** Where final evaluations are kept. Default: `defaultEvaluationStore(mode)`. */
+  evaluationStore?: EvaluationStore;
 };
+
+export const DEFAULT_EVALUATION_FILE = "data/evaluations.jsonl";
+
+/**
+ * Live mode appends final evaluations to EVALUATION_FILE (default
+ * data/evaluations.jsonl). Simulated mode keeps them in memory unless
+ * EVALUATION_FILE is set. The file is only touched when first used.
+ */
+export function defaultEvaluationStore(
+  mode: ServerMode,
+  env: NodeJS.ProcessEnv = process.env,
+): EvaluationStore {
+  const file = env.EVALUATION_FILE?.trim();
+  if (mode === "simulated" && !file) return new InMemoryEvaluationStore();
+  return new JsonlEvaluationStore(resolve(file || DEFAULT_EVALUATION_FILE));
+}
 
 const ERROR_STATUS: Record<ApiErrorCode, number> = {
   invalid: 400,
@@ -94,9 +120,11 @@ function isDirectory(path: string | undefined): path is string {
 
 export function buildApi(options: ApiServerOptions): FastifyInstance {
   const app = Fastify({ logger: false });
+  const mode = options.mode ?? "live";
   const registry = new RaceRegistry(options.coordinatorFactory, {
     fightNumberStart: options.fightNumberStart,
     startingBalance: options.startingBalance,
+    evaluationStore: options.evaluationStore ?? defaultEvaluationStore(mode),
   });
   const hub = new SseHub(options.ssePingMs ?? SSE_PING_MS);
   const now = options.now ?? (() => Date.now());
@@ -154,7 +182,8 @@ export function buildApi(options: ApiServerOptions): FastifyInstance {
     registry,
     hub,
     now,
-    mode: options.mode ?? "live",
+    mode,
+    demoMode: options.demoMode ?? false,
     showSabotageUpfront: options.showSabotageUpfront ?? true,
     throttles: { ...DEFAULT_STREAM_THROTTLES, ...options.streamThrottles },
   });
@@ -211,7 +240,7 @@ export function buildApi(options: ApiServerOptions): FastifyInstance {
         checkpointCount: requirePositiveInteger(body.checkpointCount, "checkpointCount"),
         task: requireString(body.task, "task"),
         startUrl: requireString(body.startUrl, "startUrl"),
-        obstaclesEnabled: body.obstaclesEnabled ?? false,
+        obstaclesEnabled: body.obstaclesEnabled ?? true,
         targetDurationMs: body.targetDurationMs,
         absoluteDurationMs: body.absoluteDurationMs,
         title: body.title,

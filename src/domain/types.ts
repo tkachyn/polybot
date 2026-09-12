@@ -70,7 +70,7 @@ export type Racer = {
   status: RacerStatus;
   startedAt?: number;
   finishedAt?: number;
-  /** Set while `recovering`: when the applied sabotage's duration elapses. */
+  /** Legacy recovery deadline; persistent sabotage now ends only manually. */
   recoverAt?: number;
   /** Number of ordered sabotage steps already claimed by this racer. */
   sabotageStep: number;

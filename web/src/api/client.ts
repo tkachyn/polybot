@@ -12,6 +12,7 @@ import type {
   ApiErrorCode,
   EnsureUserRequest,
   FightDetailResponse,
+  FightEvaluationResponse,
   FightListResponse,
   FightStatus,
   LeaderboardResponse,
@@ -19,7 +20,10 @@ import type {
   OrderRequest,
   OrderResponse,
   PortfolioResponse,
+  RobustnessMatrixResponse,
   ServerMeta,
+  ServerMode,
+  TraderLeaderboardResponse,
   WalletTransferRequest,
   WalletTransferResponse,
 } from "@contract";
@@ -187,6 +191,15 @@ export function getMyFight(raceId: string, userId: string, signal?: AbortSignal)
   return request<MyFightResponse>(`/api/fights/${seg(raceId)}/me`, { query: { userId }, signal });
 }
 
+/** GET /api/fights/:raceId/traders */
+export function getFightTraders(raceId: string, signal?: AbortSignal): Promise<TraderLeaderboardResponse> {
+  return request<TraderLeaderboardResponse>(`/api/fights/${seg(raceId)}/traders`, { signal });
+}
+
+export function traderStreamUrl(raceId: string): string {
+  return `${API_BASE}/api/fights/${seg(raceId)}/traders/stream`;
+}
+
 /**
  * GET /api/fights/:raceId/agents/:racerId/frame?seq= — use as an <img src>.
  * `seq` comes from `agent.frame.seq`; a new seq means a new capture.
@@ -231,6 +244,48 @@ export function getLeaderboard(signal?: AbortSignal): Promise<LeaderboardRespons
 }
 
 // ---------------------------------------------------------------------------
+// Evaluation
+// ---------------------------------------------------------------------------
+
+/** Which evaluations to aggregate. The server defaults to its own mode. */
+export type EvaluationMode = ServerMode | "all";
+
+export type EvaluationQuery = {
+  /** Window in days (the server default is 30). */
+  days?: number;
+  /** Omit for the server's own mode. */
+  mode?: EvaluationMode;
+};
+
+/** GET /api/fights/:raceId/evaluation (404 for an unknown fight) */
+export function getFightEvaluation(raceId: string, signal?: AbortSignal): Promise<FightEvaluationResponse> {
+  return request<FightEvaluationResponse>(`/api/fights/${seg(raceId)}/evaluation`, { signal });
+}
+
+/** GET /api/fights/:raceId/agents/:racerId/evidence/:key — a keyframe, use as an <img src>. */
+export function evidenceFrameUrl(raceId: string, racerId: string, key: string): string {
+  return `${API_BASE}/api/fights/${seg(raceId)}/agents/${seg(racerId)}/evidence/${seg(key)}`;
+}
+
+/**
+ * GET /api/fights/:raceId/agents/:racerId/replay.m3u8 — the Steel session's
+ * HLS playlist. Live Steel sessions only; 404 when there is no replay.
+ */
+export function replayUrl(raceId: string, racerId: string): string {
+  return `${API_BASE}/api/fights/${seg(raceId)}/agents/${seg(racerId)}/replay.m3u8`;
+}
+
+/** GET /api/evaluations/matrix?days=&mode= */
+export function getRobustnessMatrix(params: EvaluationQuery = {}, signal?: AbortSignal): Promise<RobustnessMatrixResponse> {
+  return request<RobustnessMatrixResponse>("/api/evaluations/matrix", { query: { days: params.days, mode: params.mode }, signal });
+}
+
+/** GET /api/evaluations/export.jsonl?days=&mode= — NDJSON attachment, one EvaluationExportRow per line. */
+export function evaluationExportUrl(params: EvaluationQuery = {}): string {
+  return `${API_BASE}${withQuery("/api/evaluations/export.jsonl", { days: params.days, mode: params.mode })}`;
+}
+
+// ---------------------------------------------------------------------------
 // SSE stream URLs (consume with useEventStream from ./stream)
 // ---------------------------------------------------------------------------
 
@@ -263,6 +318,11 @@ export const api = {
   deposit,
   withdraw,
   getLeaderboard,
+  getFightEvaluation,
+  evidenceFrameUrl,
+  replayUrl,
+  getRobustnessMatrix,
+  evaluationExportUrl,
   fightsStreamUrl,
   fightStreamUrl,
   userStreamUrl,

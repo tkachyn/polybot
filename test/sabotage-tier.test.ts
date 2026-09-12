@@ -135,7 +135,7 @@ test("deduplicates concurrent reports for one racer", async () => {
   assert.equal(engine.events.some((event) => event.type === "sabotage_misfired"), true);
 });
 
-test("recovers automatically when the bounded sabotage duration elapses", async () => {
+test("recovers only when the agent manually clears persistent sabotage", async () => {
   const obstacleProvider: ObstacleProvider = {
     async getPolicy() {
       return null;
@@ -168,6 +168,8 @@ test("recovers automatically when the bounded sabotage duration elapses", async 
   await engine.reachCheckpoint("racer-1", 1, 20);
   assert.equal(engine.racers.get("racer-1")?.status, "recovering");
   engine.tick(1_020);
+  assert.equal(engine.racers.get("racer-1")?.status, "recovering");
+  engine.markRecovered("racer-1", 1_020);
   assert.equal(engine.racers.get("racer-1")?.status, "running");
   assert.equal(
     engine.events.filter((event) => event.type === "sabotage_recovered").length,

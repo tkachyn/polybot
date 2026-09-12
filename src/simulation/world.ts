@@ -9,7 +9,7 @@ import { Rng } from "./rng.js";
 export type Disruption = {
   policy: DisruptionCommand;
   appliedAt: number;
-  /** Wall-clock time at which the disruption stops affecting the agent. */
+  /** Legacy timestamp retained for frame/evaluation compatibility. */
   until: number;
 };
 
@@ -44,22 +44,17 @@ export class SimulatedWorld {
     const disruption: Disruption = {
       policy: { ...policy },
       appliedAt,
-      // Sim policies already carry the scaled duration, so the world and the
-      // engine's recoverAt agree at any time scale.
+      // Sim policies carry the scaled duration as evaluation metadata.
       until: appliedAt + policy.durationMs,
     };
     this.disruptions.set(racerId, disruption);
     return { ...disruption, policy: { ...disruption.policy } };
   }
 
-  /** The racer's active disruption, or null once it has elapsed. */
+  /** The racer's active disruption, or null once explicitly cleared. */
   disruption(racerId: string): Disruption | null {
     const disruption = this.disruptions.get(racerId);
     if (!disruption) return null;
-    if (this.clock() >= disruption.until) {
-      this.disruptions.delete(racerId);
-      return null;
-    }
     return { ...disruption, policy: { ...disruption.policy } };
   }
 
@@ -70,9 +65,9 @@ export class SimulatedWorld {
 
 /**
  * Obstacle executor for simulated fights. `apply` flags the racer as disrupted
- * for the policy's durationMs and always succeeds. `getPolicy` supplies a
- * seeded policy, with its duration already scaled, for fights whose sabotage
- * brief has no fixed policy.
+ * until the runner explicitly clears it. `getPolicy` supplies a seeded policy,
+ * with its duration retained as metadata, for fights whose sabotage brief has
+ * no fixed policy.
  */
 export class SimulatedObstacleExecutor implements ObstacleProvider {
   private readonly rng: Rng;

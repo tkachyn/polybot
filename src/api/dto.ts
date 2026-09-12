@@ -187,6 +187,8 @@ export type ActionLogEntry = {
   kind: ActionLogKind;
   text: string;
   url: string | null;
+  /** Last browser pointer position used for a click or text input. */
+  cursor?: CursorPosition;
 };
 
 export type FrameInfo = {
@@ -194,6 +196,14 @@ export type FrameInfo = {
   seq: number;
   capturedAt: number;
   contentType: string;
+};
+
+export type CursorPosition = {
+  x: number;
+  y: number;
+  viewportWidth: number;
+  viewportHeight: number;
+  action: "click" | "type";
 };
 
 export type BrowserView = {
@@ -242,6 +252,8 @@ export type FightDetail = Omit<FightSummary, "agents" | "sabotage"> & {
   checkpoints: CheckpointInfo[];
   sabotage: SabotageDetail | null;
   agents: FightAgentDetail[];
+  /** Present once the fight has started; refetch the evaluation when `updatedAt` changes. */
+  evaluation?: FightEvaluationPointer | null;
 };
 
 /** One sample of every agent's YES price, keyed by racerId. */
@@ -479,9 +491,30 @@ export type LeaderboardResponse = {
   rows: LeaderboardRow[];
 };
 
+/** One judge's mark-to-market result in a single fight. */
+export type TraderLeaderboardRow = {
+  rank: number;
+  userId: string;
+  displayName: string;
+  /** Current fight P/L, including the value of open positions. */
+  pnl: number;
+  /** pnl / buy cost. Null until the judge places a buy. */
+  returnPct: number | null;
+  wagered: number;
+  openPositions: number;
+};
+
+export type TraderLeaderboardResponse = {
+  serverTime: number;
+  raceId: string;
+  rows: TraderLeaderboardRow[];
+};
+
 export type ServerMeta = {
   serverTime: number;
   mode: ServerMode;
+  /** Audience-demo safeguards, including locked equal bankrolls. */
+  demoMode: boolean;
   showSabotageUpfront: boolean;
   startingBalance: number;
 };
@@ -498,6 +531,247 @@ export type ApiErrorCode =
 export type ApiError = {
   error: string;
   code: ApiErrorCode;
+};
+
+// ---------------------------------------------------------------------------
+// Evaluation (rules: docs/frontend-contract.md, "Evaluation")
+// ---------------------------------------------------------------------------
+
+/** How an agent handled one sabotage hit. `cut_short` hits are never scored. */
+export type ReactionLabel =
+  | "immune"
+  | "recovered"
+  | "deceived"
+  | "stalled"
+  | "derailed"
+  | "cut_short";
+
+export type AgentOutcome = "won" | "finished" | "failed" | "timed_out" | "stopped";
+
+export type EvaluationStatus = "provisional" | "final";
+
+/** Why a browser action could not complete. */
+export type BlockedBy = "modal" | "disabled" | "hidden" | "missing" | "timeout";
+
+/** A stored keyframe: GET /api/fights/:raceId/agents/:racerId/evidence/:key */
+export type EvidenceFrame = {
+  key: string;
+  capturedAt: number;
+  contentType: string;
+};
+
+/** One competitor step, with browser-side evidence. */
+export type TraceEntry = {
+  step: number;
+  at: number;
+  kind: "action" | "error" | "note";
+  text: string;
+  url: string | null;
+  targetRole: string | null;
+  targetText: string | null;
+  /** The step clicked a planted decoy. */
+  decoy: boolean;
+  blockedBy: BlockedBy | null;
+};
+
+/** One Steel Agent Traces event, normalised. */
+export type SteelTraceEntry = {
+  at: number;
+  /** "click" | "input" | "navigate" | "scroll" | "drag" | "error" | ... */
+  type: string;
+  /** Accessible name or visible text of the target. */
+  label: string | null;
+  role: string | null;
+  selector: string | null;
+  url: string | null;
+  /** The target was a planted decoy. */
+  decoy: boolean;
+};
+
+export type SabotageReaction = {
+  stepId: string;
+  /** 1-based position in the fight's sabotage sequence. */
+  stepIndex: number;
+  /** Preset label, e.g. "Plant a decoy control". */
+  label: string;
+  hazardType: HazardType;
+  tier: SabotageTier;
+  checkpoint: number;
+  checkpointLabel: string;
+  appliedAt: number;
+  /** When the hazard itself expired (engine recovery), if it did. */
+  expiredAt: number | null;
+  /** First verified progress after the hit: the next checkpoint or the finish. */
+  progressedAt: number | null;
+  reaction: ReactionLabel;
+  /** Delay beyond the agent's normal pace. Null when it never progressed. */
+  timeLostMs: number | null;
+  actionsInWindow: number;
+  errorsInWindow: number;
+  /** Clicked a planted decoy inside the window (runner or Steel evidence). */
+  deceived: boolean;
+  /** The first step taken after the hit. */
+  firstResponse: string | null;
+  /** One plain-language sentence explaining the label. */
+  explanation: string;
+  /** 0-100; null for cut_short. */
+  score: number | null;
+  evidence: {
+    before: EvidenceFrame | null;
+    after: EvidenceFrame | null;
+    /** Seconds into the Steel replay where the hit happens. Null without a replay. */
+    replayOffsetSec: number | null;
+  };
+};
+
+export type AgentCrowdSignal = {
+  openingYes: number;
+  /** YES price just before the agent's first sabotage hit. */
+  beforeFirstHitYes: number | null;
+  /** YES price 30 s after that hit, or the latest price before then. */
+  afterFirstHitYes: number | null;
+  /** YES price when the fight resolved (or the latest while live). */
+  finalYes: number;
+};
+
+export type AgentEvaluation = {
+  racerId: string;
+  agent: AgentIdentity;
+  outcome: AgentOutcome;
+  /** A verified finish. */
+  success: boolean;
+  /** Start to verified finish; null when it did not finish. */
+  durationMs: number | null;
+  checkpointsReached: number;
+  checkpointCount: number;
+  /** Actions used. */
+  steps: number;
+  maxSteps: number;
+  errors: number;
+  /** Episodes of three or more identical consecutive steps. */
+  loops: number;
+  /** Median time between verified progress events outside sabotage windows. */
+  paceMs: number | null;
+  sabotage: SabotageReaction[];
+  /** Mean reaction score over scored hits; null when never scored. */
+  robustness: number | null;
+  /** One sentence summarising the run. */
+  summary: string;
+  crowd: AgentCrowdSignal;
+  /** Oldest first, at most 500 steps. */
+  trace: TraceEntry[];
+  steel: {
+    /** Traces and recordings exist for live Steel sessions only. */
+    traceAvailable: boolean;
+    replayAvailable: boolean;
+    /** Oldest first, at most 300 events. */
+    trace: SteelTraceEntry[];
+  };
+};
+
+export type EvaluatedSabotageStep = {
+  stepId: string;
+  index: number;
+  label: string;
+  hazardType: HazardType;
+  tier: SabotageTier;
+  checkpoint: number;
+  checkpointLabel: string;
+};
+
+export type FightEvaluation = {
+  raceId: string;
+  number: number;
+  title: string;
+  task: string;
+  courseId: string;
+  /** Simulated fights run scripted agents, not real models. */
+  mode: ServerMode;
+  status: EvaluationStatus;
+  generatedAt: number;
+  startedAt: number | null;
+  finishedAt: number | null;
+  winnerRacerId: string | null;
+  voided: boolean;
+  sabotageSteps: EvaluatedSabotageStep[];
+  /** Exactly four, racer order. */
+  agents: AgentEvaluation[];
+  /** Plain-language findings, most notable first (at most 6). */
+  findings: string[];
+};
+
+export type FightEvaluationPointer = {
+  status: EvaluationStatus;
+  updatedAt: number;
+};
+
+export type FightEvaluationResponse = {
+  serverTime: number;
+  evaluation: FightEvaluation;
+};
+
+export type RobustnessCell = {
+  /** Scored hits (cut_short excluded). */
+  hits: number;
+  immune: number;
+  recovered: number;
+  deceived: number;
+  stalled: number;
+  derailed: number;
+  /** (immune + recovered + deceived) / hits; null when hits = 0. */
+  survivalRate: number | null;
+  /** Mean over hits that progressed. */
+  meanTimeLostMs: number | null;
+  meanScore: number | null;
+};
+
+export type RobustnessRow = {
+  agent: AgentIdentity;
+  /** Final evaluations this agent appears in. */
+  fights: number;
+  wins: number;
+  successRate: number;
+  meanRobustness: number | null;
+  overall: RobustnessCell;
+  byHazard: Partial<Record<HazardType, RobustnessCell>>;
+};
+
+export type RobustnessMatrixResponse = {
+  serverTime: number;
+  windowDays: number;
+  since: number;
+  mode: ServerMode | "all";
+  /** Hazard columns with at least one scored hit, in catalogue order. */
+  hazards: HazardType[];
+  /** Sorted by meanRobustness (nulls last), then successRate. */
+  rows: RobustnessRow[];
+  /** Final evaluations included. */
+  evaluations: number;
+};
+
+/** One line of GET /api/evaluations/export.jsonl */
+export type EvaluationExportRow = {
+  schemaVersion: 1;
+  raceId: string;
+  fightNumber: number;
+  mode: ServerMode;
+  task: string;
+  courseId: string;
+  startedAt: number | null;
+  finishedAt: number | null;
+  sabotageSteps: EvaluatedSabotageStep[];
+  agent: AgentIdentity;
+  outcome: AgentOutcome;
+  success: boolean;
+  durationMs: number | null;
+  steps: number;
+  errors: number;
+  loops: number;
+  robustness: number | null;
+  sabotage: Array<Omit<SabotageReaction, "evidence">>;
+  trace: TraceEntry[];
+  steelTrace: SteelTraceEntry[];
+  crowd: AgentCrowdSignal;
 };
 
 // ---------------------------------------------------------------------------
@@ -522,4 +796,9 @@ export type FightStreamEvents = {
 /** GET /api/users/:userId/stream */
 export type UserStreamEvents = {
   portfolio: PortfolioResponse;
+};
+
+/** GET /api/fights/:raceId/traders/stream */
+export type TraderStreamEvents = {
+  standings: TraderLeaderboardResponse;
 };
