@@ -6,7 +6,7 @@ import type {
 } from "./playwright-competitor-runner.js";
 import { parseAgentDecision } from "./playwright-competitor-runner.js";
 import type { MasterPolicyModel } from "./master-obstacle-provider.js";
-import type { DisruptionCommand } from "../domain/types.js";
+import type { DisruptionCommand, SabotageTier } from "../domain/types.js";
 import { validateDisruptionCommand } from "../infra/cdp-obstacle-provider.js";
 
 const browserActionTool = {
@@ -113,7 +113,10 @@ abstract class OpenRouterModelBase {
   protected async call(
     system: string,
     input: unknown,
-    tool: typeof browserActionTool | ReturnType<typeof obstacleTool>,
+    tool:
+      | typeof browserActionTool
+      | ReturnType<typeof obstacleTool>
+      | ReturnType<typeof sabotageTool>,
   ): Promise<unknown> {
     this.options.budget?.assertAvailable();
     const response = await this.client.chat.completions.create({
@@ -157,6 +160,31 @@ function obstacleTool(allowedHazards: DisruptionCommand["hazardType"][]) {
   };
 }
 
+function sabotageTool(
+  allowedHazards: DisruptionCommand["hazardType"][],
+  allowedTiers: SabotageTier[],
+) {
+  return {
+    type: "function" as const,
+    function: {
+      name: "choose_sabotage",
+      description: "Choose exactly one bounded race-wide sabotage plan.",
+      parameters: {
+        type: "object",
+        properties: {
+          tier: { type: "string", enum: allowedTiers },
+          hazardType: { type: "string", enum: allowedHazards },
+          targetRole: { type: "string", minLength: 1, maxLength: 100 },
+          durationMs: { type: "integer", minimum: 0, maximum: 30_000 },
+          intensity: { type: "integer", minimum: 1, maximum: 3 },
+        },
+        required: ["tier", "hazardType", "targetRole", "durationMs", "intensity"],
+        additionalProperties: false,
+      },
+    },
+  };
+}
+
 export class OpenRouterCompetitorDecisionModel
   extends OpenRouterModelBase
   implements CompetitorDecisionModel
@@ -190,5 +218,19 @@ export class OpenRouterMasterPolicyModel
     ) as DisruptionCommand;
     validateDisruptionCommand(value);
     return value;
+  }
+
+  async selectSabotage(
+    input: Parameters<NonNullable<MasterPolicyModel["selectSabotage"]>>[0],
+  ): Promise<{ tier: SabotageTier; policy: DisruptionCommand }> {
+    const tool = sabotageTool(input.allowedHazards, input.allowedTiers);
+    const value = await this.call(
+      "You are the race director for a browser-agent arena. Select exactly one race-wide sabotage tier and one bounded DOM obstacle. The plan is immutable and will apply independently when each racer reaches the first verified target-opening milestone. Never emit JavaScript.",
+      input,
+      tool,
+    ) as { tier: SabotageTier; hazardType: DisruptionCommand["hazardType"]; targetRole: string; durationMs: number; intensity: number };
+    const { tier, ...policy } = value;
+    validateDisruptionCommand(policy);
+    return { tier, policy };
   }
 }

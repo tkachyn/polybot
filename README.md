@@ -11,6 +11,9 @@ Backend for a four-racer browser-agent race using Steel cloud browser sessions a
 - Five-minute absolute safety cap
 - Deterministic winner selection
 - A no-op obstacle provider for obstacle-free development
+- One immutable race-wide sabotage plan with basic, intermediate, and difficult tiers
+- Per-racer, independently timed sabotage at the first verified target-opening milestone
+- Deterministic fallback sabotage and local course/verifier tests without live keys
 - OpenRouter adapters with one model per racer and a shared per-race budget
 - Anthropic adapters retained for direct-provider experiments
 - Persistent append-only race events
@@ -26,6 +29,10 @@ npm run build
 npm run smoke:steel
 npm run dev:all
 ```
+
+`npm test` and `npm run build` use fakes and the deterministic local course; they
+do not require Steel or OpenRouter credentials. The live Steel path is exercised
+only by `npm run smoke:steel`.
 
 Copy `.env.example` to `.env` and populate `OPENROUTER_API_KEY` plus either
 `STEEL_API_KEYS` or `STEEL_API_KEY`. The server loads `.env` automatically.
@@ -63,6 +70,9 @@ http://127.0.0.1:4000/?raceId=demo&racerId=racer-1&courseId=course-1&checkpointC
 Steel sessions run remotely and cannot access your machine's localhost. A live
 Steel race must use a public deployment or tunnel URL for `startUrl`; the local
 backend can continue using `COURSE_BASE_URL=http://127.0.0.1:4000` for verification.
+When `COURSE_VERIFIER_TOKEN` is set, the course server requires the matching
+Bearer token on server-to-server arena-state verification requests; the browser
+course UI remains usable without exposing that secret.
 
 Core routes:
 
@@ -77,7 +87,12 @@ POST /races/:raceId/market/buy
 POST /races/:raceId/market/sell
 ```
 
-`POST /races` creates four Steel sessions, prepares all four competitor agents, passes the readiness barrier, and begins the race. Obstacles remain disabled unless `obstaclesEnabled` is explicitly set to `true`.
+`POST /races` creates four Steel sessions, prepares all four competitor agents,
+passes the readiness barrier, and begins the race. When `obstaclesEnabled` is
+`true`, the master selects one immutable tier and policy before the race starts.
+Each racer independently triggers that same plan when its first verified course
+checkpoint opens the target site. Repeated reports are idempotent. Obstacles
+remain disabled unless `obstaclesEnabled` is explicitly set to `true`.
 
 ## Timing
 

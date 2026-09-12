@@ -24,6 +24,16 @@ test("builds a bounded disruption script without executing it", () => {
 test("rejects unsafe disruption bounds", () => {
   assert.throws(
     () => validateDisruptionCommand({
+      hazardType: "run_arbitrary_script" as never,
+      targetRole: "x",
+      durationMs: 100,
+      intensity: 1,
+    }),
+    /unsupported hazardType/,
+  );
+
+  assert.throws(
+    () => validateDisruptionCommand({
       hazardType: "blocking_modal",
       targetRole: "x",
       durationMs: 30_001,

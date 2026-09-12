@@ -32,17 +32,26 @@ export interface CompetitorAgentRunner {
 }
 
 export interface CourseVerifier {
+  verifyTargetOpening(input: {
+    raceId: string;
+    racerId: string;
+    courseId: string;
+    seed?: string;
+    session: RacerSessionHandle;
+  }): Promise<boolean>;
   verifyCheckpoint(input: {
     raceId: string;
     racerId: string;
     courseId: string;
     checkpoint: number;
+    seed?: string;
     session: RacerSessionHandle;
   }): Promise<boolean>;
   verifyFinish(input: {
     raceId: string;
     racerId: string;
     courseId: string;
+    seed?: string;
     session: RacerSessionHandle;
   }): Promise<boolean>;
 }

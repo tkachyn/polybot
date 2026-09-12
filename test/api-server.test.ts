@@ -21,6 +21,7 @@ const runner: CompetitorAgentRunner = {
   async stop() {},
 };
 const verifier: CourseVerifier = {
+  async verifyTargetOpening() { return true; },
   async verifyCheckpoint() { return true; },
   async verifyFinish() { return true; },
 };

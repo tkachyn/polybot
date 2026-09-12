@@ -1,4 +1,10 @@
-import type { ObstacleProvider, Race, Racer } from "../domain/types.js";
+import type {
+  DisruptionCommand,
+  ObstacleProvider,
+  Race,
+  Racer,
+  SabotagePlan,
+} from "../domain/types.js";
 import { RaceEngine } from "../domain/race-engine.js";
 import { VirtualPredictionMarket } from "../prediction/virtual-market.js";
 import type { TradeReceipt } from "../prediction/virtual-market.js";
@@ -100,6 +106,7 @@ export class RaceCoordinator {
           this.dependencies.agentRunner.prepare(this.baseContext(session)),
         ),
       );
+      await this.armSabotage(now);
       for (const session of sessions) {
         this.engine.markReady(session.racerId, now);
       }
@@ -137,10 +144,25 @@ export class RaceCoordinator {
       racerId,
       courseId: this.engine.race.courseId,
       checkpoint,
+      seed: this.engine.race.seed,
       session,
     });
     if (!verified) {
       throw new Error(`Checkpoint ${checkpoint} was not verified for ${racerId}`);
+    }
+
+    const plan = this.engine.race.sabotagePlan;
+    if (plan && checkpoint === plan.trigger.checkpoint) {
+      const openingVerified = await this.dependencies.courseVerifier.verifyTargetOpening({
+        raceId: this.engine.race.id,
+        racerId,
+        courseId: this.engine.race.courseId,
+        seed: this.engine.race.seed,
+        session,
+      });
+      if (!openingVerified) {
+        throw new Error(`Target opening was not verified for ${racerId}`);
+      }
     }
 
     await this.engine.reachCheckpoint(racerId, checkpoint, now);
@@ -154,6 +176,7 @@ export class RaceCoordinator {
       raceId: this.engine.race.id,
       racerId,
       courseId: this.engine.race.courseId,
+      seed: this.engine.race.seed,
       session,
     });
     if (!verified) {
@@ -225,7 +248,51 @@ export class RaceCoordinator {
     if (this.stopped) return;
     await this.stopRacers();
     await this.dependencies.sessionManager.releaseAll();
+    const cleanup = this.dependencies.obstacleProvider &&
+      "cleanup" in this.dependencies.obstacleProvider
+      ? (this.dependencies.obstacleProvider as ObstacleProvider & {
+          cleanup?: () => Promise<void>;
+        }).cleanup
+      : undefined;
+    await cleanup?.();
     this.stopped = true;
+  }
+
+  private async armSabotage(now: number): Promise<void> {
+    const provider = this.dependencies.obstacleProvider;
+    if (!provider) return;
+
+    let plan: SabotagePlan | null = null;
+    if (provider.armRace) {
+      plan = await provider.armRace({
+        raceId: this.engine.race.id,
+        courseId: this.engine.race.courseId,
+        seed: this.engine.race.seed,
+        checkpointCount: this.engine.race.checkpointCount,
+        trigger: {
+          kind: "target_opened",
+          checkpoint: 1,
+          milestone: "first_verified_checkpoint",
+        },
+      });
+    } else {
+      const policy = await provider.getPolicy(this.engine.race.id, 1);
+      if (policy) {
+        plan = {
+          raceId: this.engine.race.id,
+          tier: tierForPolicy(policy),
+          trigger: {
+            kind: "target_opened",
+            checkpoint: 1,
+            milestone: "first_verified_checkpoint",
+          },
+          policy,
+          selectedAt: now,
+          source: "fallback",
+        };
+      }
+    }
+    if (plan) this.engine.armSabotage(plan, now);
   }
 
   private baseContext(
@@ -284,4 +351,10 @@ export class RaceCoordinator {
       this.persistedEventCount += 1;
     }
   }
+}
+
+function tierForPolicy(policy: DisruptionCommand): SabotagePlan["tier"] {
+  if (policy.intensity <= 1) return "basic";
+  if (policy.intensity === 2) return "intermediate";
+  return "difficult";
 }

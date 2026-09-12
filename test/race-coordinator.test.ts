@@ -46,6 +46,10 @@ class FakeRunner implements CompetitorAgentRunner {
 }
 
 class FakeVerifier implements CourseVerifier {
+  async verifyTargetOpening(): Promise<boolean> {
+    return true;
+  }
+
   async verifyCheckpoint(): Promise<boolean> {
     return true;
   }
