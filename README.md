@@ -138,7 +138,6 @@ The script sends `POST /races` with `courseId: "arena-shop"`, three checkpoints,
 | `OPENROUTER_APP_URL` / `OPENROUTER_APP_NAME` | `http://localhost:3001` / `Browser Agent Arena` | OpenRouter attribution headers |
 | `COMPETITOR_LLM_MODELS` | none | Live mode: four comma-separated OpenRouter model ids |
 | `MASTER_LLM_MODEL` | none | Live mode: OpenRouter model for the sabotage director (needed when `obstaclesEnabled`) |
-| `COMPETITOR_MAX_ACTIONS` | `20` | Live mode: action cap per racer |
 | `RACE_LLM_BUDGET_USD` | `0.25` | Live mode: shared per-race LLM spend cap |
 | `COURSE_BASE_URL` / `COURSE_VERIFIER_TOKEN` | none | Live mode: course verifier endpoint and token |
 | `RACE_EVENT_FILE` | `data/race-events.jsonl` | Live mode: append-only event log |
@@ -233,7 +232,7 @@ POST /races/:raceId/market/buy
 POST /races/:raceId/market/sell
 ```
 
-`POST /races` accepts the original fields plus the optional `title`, `taskDetail`, `successCondition`, `checkpointLabels`, `sabotage`, `agents` and `startsAt` (see the contract). A future `startsAt` creates an upcoming fight: it is armed and tradable immediately, and the ticker starts it once it is due. Otherwise the fight creates four sessions, prepares all four agents, passes the readiness barrier and starts. Obstacles stay disabled unless `obstaclesEnabled` is `true`.
+`POST /races` accepts the original fields plus the optional `title`, `taskDetail`, `successCondition`, `checkpointLabels`, `sabotage`, `agents` and `startsAt` (see the contract). A future `startsAt` creates an upcoming fight: it is armed and tradable immediately, and the ticker starts it once it is due. Otherwise the fight creates four sessions, prepares all four agents, passes the readiness barrier and starts. Obstacles are enabled by default; pass `obstaclesEnabled: false` to opt out.
 
 Live fight responses include `agents[].browserView.viewerUrl` when a Steel
 session is available. It is read-only (`interactive=false`) and intended for
@@ -242,7 +241,7 @@ endpoint. Browser-session routes own creation, navigation and release on the
 backend. They are unauthenticated in this development server and must be
 protected by application authentication before public deployment.
 
-When `obstaclesEnabled` is `true`, one immutable race-wide sabotage plan (tier, trigger checkpoint and policy) is armed before the race starts: the fixed `sabotage.policy` when given, otherwise the master's `armRace` choice, with a deterministic fallback. The trigger is `sabotage.checkpoint`, default 1. Each racer independently triggers that same plan when its verified report of the trigger checkpoint also verifies the target opening, and cannot report further progress until its recovery (`recoverAt`) elapses. Repeated reports are idempotent.
+When `obstaclesEnabled` is `true`, one immutable race-wide single-step sabotage plan (tier, trigger checkpoint and policy) is armed before the race starts: the fixed `sabotage.policy` when given, otherwise the master's `armRace` choice, with a deterministic fallback. The trigger is `sabotage.checkpoint`, default 1. Each racer independently triggers that same plan when its own verified report of the trigger checkpoint also verifies the target opening; racers are not synchronized. A racer cannot report further progress until its recovery (`recoverAt`) elapses. Repeated reports are idempotent.
 
 ## Timing
 

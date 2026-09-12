@@ -237,7 +237,7 @@ export function buildApi(options: ApiServerOptions): FastifyInstance {
         checkpointCount: requirePositiveInteger(body.checkpointCount, "checkpointCount"),
         task: requireString(body.task, "task"),
         startUrl: requireString(body.startUrl, "startUrl"),
-        obstaclesEnabled: body.obstaclesEnabled ?? false,
+        obstaclesEnabled: body.obstaclesEnabled ?? true,
         targetDurationMs: body.targetDurationMs,
         absoluteDurationMs: body.absoluteDurationMs,
         title: body.title,

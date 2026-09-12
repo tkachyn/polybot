@@ -11,6 +11,20 @@ function build(options: Partial<Parameters<typeof buildApi>[0]> = {}) {
   return buildApi({ coordinatorFactory: factory, enableTicker: false, startingBalance: 500, ...options });
 }
 
+test("operator races enable checkpoint-one sabotage by default", async () => {
+  const app = build();
+  const response = await app.inject({
+    method: "POST",
+    url: "/races",
+    payload: raceInput("race-default"),
+  });
+
+  assert.equal(response.statusCode, 201);
+  assert.equal(app.registry.get("race-default").sabotage?.plan.checkpoint, 1);
+  assert.equal(app.registry.get("race-default").sabotage?.armed, true);
+  await app.close();
+});
+
 test("meta, users and wallet transfers", async () => {
   const app = build({ mode: "simulated" });
   const meta = await app.inject({ method: "GET", url: "/api/meta" });
@@ -81,8 +95,8 @@ test("fights, orders, frames, my-fight and leaderboard", async () => {
   const now = Date.now();
   const create = (payload: Record<string, unknown>) =>
     app.inject({ method: "POST", url: "/races", payload });
-  assert.equal((await create({ ...raceInput("race-done") })).statusCode, 201);
-  assert.equal((await create({ ...raceInput("race-live") })).statusCode, 201);
+  assert.equal((await create({ ...raceInput("race-done"), obstaclesEnabled: false })).statusCode, 201);
+  assert.equal((await create({ ...raceInput("race-live"), obstaclesEnabled: false })).statusCode, 201);
   assert.equal((await create({
     ...raceInput("race-up"),
     obstaclesEnabled: true,
@@ -183,15 +197,19 @@ test("operator /races routes keep message mapping and add codes", async () => {
   const app = build();
   const missing = await app.inject({ method: "GET", url: "/races/missing" });
   assert.deepEqual([missing.statusCode, missing.json().code], [404, "not_found"]);
-  await app.inject({ method: "POST", url: "/races", payload: raceInput("race-1") });
-  const duplicate = await app.inject({ method: "POST", url: "/races", payload: raceInput("race-1") });
+  await app.inject({ method: "POST", url: "/races", payload: { ...raceInput("race-1"), obstaclesEnabled: false } });
+  const duplicate = await app.inject({ method: "POST", url: "/races", payload: { ...raceInput("race-1"), obstaclesEnabled: false } });
   assert.deepEqual([duplicate.statusCode, duplicate.json().code], [409, "conflict"]);
-  const noId = await app.inject({ method: "POST", url: "/races", payload: { ...raceInput("x"), raceId: undefined } });
+  const noId = await app.inject({ method: "POST", url: "/races", payload: { ...raceInput("x"), obstaclesEnabled: false, raceId: undefined } });
   assert.deepEqual([noId.statusCode, noId.json().code, noId.json().error], [400, "invalid", "raceId is required"]);
-  const longTitle = await app.inject({ method: "POST", url: "/races", payload: { ...raceInput("race-2"), title: "x".repeat(91) } });
+  const longTitle = await app.inject({ method: "POST", url: "/races", payload: { ...raceInput("race-2"), obstaclesEnabled: false, title: "x".repeat(91) } });
   assert.deepEqual([longTitle.statusCode, longTitle.json().code], [400, "invalid"]);
   const noObstacles = await app.inject({
-    method: "POST", url: "/races", payload: { ...raceInput("race-3"), sabotage: { checkpoint: 1, summary: "Modal" } },
+    method: "POST", url: "/races", payload: {
+      ...raceInput("race-3"),
+      obstaclesEnabled: false,
+      sabotage: { checkpoint: 1, summary: "Modal" },
+    },
   });
   assert.deepEqual([noObstacles.statusCode, noObstacles.json().code], [400, "invalid"]);
   const badCheckpoint = await app.inject({
