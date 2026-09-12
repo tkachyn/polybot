@@ -1,0 +1,101 @@
+.band,
+.tag {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1-5);
+  font-size: var(--fs-label-sm);
+  font-weight: var(--fw-semibold);
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.band {
+  height: 22px;
+  padding: 0 var(--space-2-5);
+  border-bottom: 1px solid var(--color-hairline);
+}
+
+.tag {
+  display: inline-flex;
+  flex-shrink: 0;
+  height: 18px;
+  padding: 0 var(--space-1-5);
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+}
+
+.bandLabel {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.step {
+  flex-shrink: 0;
+  color: var(--color-text-muted);
+}
+
+.dot {
+  width: 6px;
+  height: 6px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background-color: currentColor;
+}
+
+.icon {
+  flex-shrink: 0;
+}
+
+/* ON TASK */
+.run {
+  color: var(--color-positive);
+  background-color: var(--tint-positive);
+}
+
+.tag.run {
+  border-color: var(--tint-positive-border);
+}
+
+/* LOOPING: no warning hue in the palette, so secondary text + glyph on inset. */
+.warn {
+  color: var(--color-text-secondary);
+  background-color: var(--color-inset);
+}
+
+.band.warn {
+  box-shadow: inset 2px 0 0 var(--color-text-secondary);
+}
+
+.tag.warn {
+  border-color: var(--color-divider);
+  border-style: dashed;
+}
+
+/* BLOCKED */
+.bad {
+  color: var(--color-sabotage);
+  background-color: var(--tint-sabotage);
+}
+
+.tag.bad {
+  border-color: var(--tint-sabotage-border);
+}
+
+/* Not started */
+.idle {
+  color: var(--color-text-muted);
+  background-color: var(--color-inset);
+}
+
+.idle .dot {
+  background-color: transparent;
+  border: 1.5px solid currentColor;
+}
+
+.tag.idle {
+  border-color: var(--color-divider);
+}

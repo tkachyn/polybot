@@ -1,0 +1,179 @@
+/**
+ * Live browser capture for one agent.
+ *
+ * Frames are periodic captures: a bumped `frame.seq` means a new image at
+ * GET /api/fights/:raceId/agents/:racerId/frame?seq=N (Cache-Control: no-store).
+ * To avoid flicker the next frame is fetched and decoded off-screen (double
+ * buffer) and only then swapped in. Loads never overlap: when frames arrive
+ * faster than they download, the newest wanted seq is fetched next and the
+ * ones in between are skipped.
+ */
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import type { FightStatus, FrameInfo } from "@contract";
+import { fightFrameUrl } from "../../api/client";
+import { cx } from "../../lib/cx";
+import { useNow } from "../../state/clock";
+import { STALE_FRAME_MS, frameAgeLabel } from "./fightView";
+import { ClockCountdown } from "./ClockCountdown";
+import styles from "./LiveCapture.module.css";
+
+export type LiveCaptureProps = {
+  raceId: string;
+  racerId: string;
+  frame: FrameInfo | null;
+  fightStatus: FightStatus;
+  /** Scheduled start, for the upcoming placeholder. */
+  startsAt: number | null;
+  /** Agent name, for the image alt text. */
+  agentName: string;
+  /** Pinned across the top of the capture (e.g. the live URL). */
+  overlay?: ReactNode;
+  className?: string;
+};
+
+export function LiveCapture(props: LiveCaptureProps) {
+  // A new agent or fight starts with an empty buffer.
+  return <CaptureSurface key={`${props.raceId}:${props.racerId}`} {...props} />;
+}
+
+type Shown = { src: string; seq: number; capturedAt: number };
+
+function CaptureSurface({ raceId, racerId, frame, fightStatus, startsAt, agentName, overlay, className }: LiveCaptureProps) {
+  const shown = useBufferedFrame(raceId, racerId, frame);
+  return (
+    <div className={cx(styles.capture, className)}>
+      {shown ? (
+        <img className={styles.image} src={shown.src} alt={`${agentName} browser capture`} draggable={false} />
+      ) : (
+        <Placeholder fightStatus={fightStatus} startsAt={startsAt} />
+      )}
+      {overlay && <div className={styles.overlay}>{overlay}</div>}
+      {shown && fightStatus === "live" && <FrameAge capturedAt={shown.capturedAt} />}
+    </div>
+  );
+}
+
+function Placeholder({ fightStatus, startsAt }: { fightStatus: FightStatus; startsAt: number | null }) {
+  if (fightStatus === "upcoming") {
+    return (
+      <div className={styles.placeholder}>
+        <span className="label label-sm">Starts in</span>
+        {startsAt === null ? (
+          <span className={styles.placeholderText}>Starting soon</span>
+        ) : (
+          <ClockCountdown to={startsAt} expiredLabel="Starting…" className={styles.placeholderFigure} />
+        )}
+      </div>
+    );
+  }
+  return (
+    <div className={styles.placeholder}>
+      <span className={styles.spinner} aria-hidden="true" />
+      <span className={styles.placeholderText}>{fightStatus === "live" ? "Waiting for first frame" : "No capture"}</span>
+    </div>
+  );
+}
+
+/** "LIVE · 2s ago" from the displayed frame's capturedAt. */
+function FrameAge({ capturedAt }: { capturedAt: number }) {
+  const now = useNow(1000);
+  const age = Math.max(0, now - capturedAt);
+  const stale = age > STALE_FRAME_MS;
+  return (
+    <span className={cx(styles.badge, stale && styles.badgeStale)} title={stale ? "The capture is behind" : "Latest capture"}>
+      <span className={styles.badgeDot} aria-hidden="true" />
+      <span className={styles.badgeLive}>Live</span>
+      <span className="num">· {frameAgeLabel(age)}</span>
+    </span>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Double-buffered loader
+// ---------------------------------------------------------------------------
+
+type Loader = { alive: boolean; busy: boolean; lastSeq: number; abort: AbortController | null };
+
+function useBufferedFrame(raceId: string, racerId: string, frame: FrameInfo | null): Shown | null {
+  const [shown, setShown] = useState<Shown | null>(null);
+  const wanted = useRef<FrameInfo | null>(null);
+  const loader = useRef<Loader>({ alive: true, busy: false, lastSeq: Number.NEGATIVE_INFINITY, abort: null });
+
+  useEffect(() => {
+    const state = loader.current;
+    state.alive = true;
+    return () => {
+      state.alive = false;
+      state.abort?.abort();
+      state.abort = null;
+      state.busy = false;
+    };
+  }, []);
+
+  const seq = frame?.seq ?? null;
+  const capturedAt = frame?.capturedAt ?? null;
+
+  useEffect(() => {
+    wanted.current = seq === null || capturedAt === null ? null : { seq, capturedAt, contentType: "" };
+    const state = loader.current;
+
+    const pump = () => {
+      const target = wanted.current;
+      if (!state.alive || state.busy || !target || target.seq <= state.lastSeq) return;
+      state.busy = true;
+      const abort = new AbortController();
+      state.abort = abort;
+      loadFrame(fightFrameUrl(raceId, racerId, target.seq), abort.signal)
+        .then((src) => {
+          if (!state.alive || abort.signal.aborted) {
+            URL.revokeObjectURL(src);
+            return;
+          }
+          state.lastSeq = target.seq;
+          setShown({ src, seq: target.seq, capturedAt: target.capturedAt });
+        })
+        .catch(() => {
+          // Missing or broken frame: skip it; the next seq bump retries.
+          if (!abort.signal.aborted) state.lastSeq = Math.max(state.lastSeq, target.seq);
+        })
+        .finally(() => {
+          if (state.abort !== abort) return; // superseded by a remount
+          state.busy = false;
+          state.abort = null;
+          pump();
+        });
+    };
+
+    pump();
+  }, [raceId, racerId, seq, capturedAt]);
+
+  // Release the previous object URL once the next one is on screen, and the last on unmount.
+  const src = shown?.src;
+  useEffect(() => {
+    return () => {
+      if (src) URL.revokeObjectURL(src);
+    };
+  }, [src]);
+
+  return shown;
+}
+
+/** Fetches a frame and decodes it off-screen. Resolves with an object URL. */
+async function loadFrame(url: string, signal: AbortSignal): Promise<string> {
+  const response = await fetch(url, { signal, cache: "no-store" });
+  if (!response.ok) throw new Error(`Frame request failed (${response.status})`);
+  const blob = await response.blob();
+  const src = URL.createObjectURL(blob);
+  try {
+    const img = new Image();
+    img.src = src;
+    await img.decode();
+  } catch {
+    // Some formats (e.g. certain SVGs) refuse decode() but still render.
+  }
+  if (signal.aborted) {
+    URL.revokeObjectURL(src);
+    throw new DOMException("Aborted", "AbortError");
+  }
+  return src;
+}

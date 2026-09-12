@@ -1,0 +1,198 @@
+.chart {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+  min-height: 0;
+  padding: var(--space-3);
+  background-color: var(--color-surface);
+  border: 1px solid var(--color-hairline);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+}
+
+.expanded {
+  flex: 1 1 auto;
+}
+
+.collapsed {
+  flex: none;
+  padding-block: var(--space-2);
+}
+
+.head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  flex: none;
+}
+
+.title {
+  margin: 0;
+}
+
+/* Legend: 2 × 2, line key + name + current price. */
+.legend {
+  flex: none;
+  display: grid;
+  /* Two columns in the rail; left-aligned columns (not stretched) when wide. */
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  max-width: 720px;
+  gap: var(--space-1) var(--space-4);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.legendItem {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1-5);
+  min-width: 0;
+  font-size: var(--fs-body-sm);
+}
+
+.key {
+  flex: none;
+  width: 12px;
+  height: 2px;
+  border-radius: 1px;
+  background-color: var(--agent-color);
+}
+
+.legendName {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--color-text-secondary);
+}
+
+/* Collapsed strip: one row of monogram + price. */
+.strip {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.stripItem {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1-5);
+  min-width: 0;
+}
+
+/* Plot: the SVG is absolutely positioned so it never feeds back into the measured size. */
+.plot {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 96px;
+  border-radius: var(--radius-sm);
+}
+
+.svg {
+  position: absolute;
+  inset: 0;
+  display: block;
+  overflow: visible;
+  cursor: crosshair;
+  touch-action: pan-y;
+}
+
+.gridLine {
+  stroke: var(--color-hairline);
+  stroke-width: 1;
+}
+
+.axisText {
+  fill: var(--color-text-muted);
+  font-size: var(--fs-label-sm);
+  font-weight: var(--fw-medium);
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
+}
+
+.line {
+  fill: none;
+  stroke-width: 2;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+
+.dot {
+  stroke: var(--color-surface);
+  stroke-width: 2;
+}
+
+.sabotageLine {
+  stroke: var(--color-sabotage);
+  stroke-width: 1.5;
+  stroke-dasharray: 4 3;
+}
+
+.sabotageText {
+  fill: var(--color-sabotage);
+  font-size: var(--fs-label-sm);
+  font-weight: var(--fw-semibold);
+  letter-spacing: var(--tracking-label);
+}
+
+.crosshair {
+  stroke: var(--color-divider);
+  stroke-width: 1;
+}
+
+.empty {
+  position: absolute;
+  inset: 16px 34px 18px 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  color: var(--color-text-muted);
+  font-size: var(--fs-body-sm);
+  pointer-events: none;
+}
+
+.tooltip {
+  position: absolute;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 124px;
+  padding: var(--space-1-5) var(--space-2);
+  border-radius: var(--radius-md);
+  background-color: var(--color-inset);
+  box-shadow: var(--shadow-pop);
+  pointer-events: none;
+}
+
+.tipRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1-5);
+  font-size: var(--fs-body-sm);
+  line-height: var(--lh-snug);
+  white-space: nowrap;
+}
+
+.tipValue {
+  min-width: 34px;
+  color: var(--color-text);
+  font-weight: var(--fw-semibold);
+}
+
+.tipName {
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--color-text-secondary);
+}

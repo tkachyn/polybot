@@ -1,0 +1,275 @@
+/* Shared by OrderForm and Receipt: they occupy the same panel. */
+
+.panel {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2-5);
+  min-width: 0;
+  padding: var(--space-3);
+  background-color: var(--color-inset);
+  border: 1px solid var(--color-divider);
+  border-radius: var(--radius-lg);
+}
+
+.head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2-5);
+  min-width: 0;
+}
+
+.outcome {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.agentName {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--fs-body-lg);
+  font-weight: var(--fw-semibold);
+  line-height: var(--lh-tight);
+  color: var(--color-text);
+}
+
+.sideLine {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1-5);
+}
+
+.close {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--color-text-muted);
+  align-self: flex-start;
+}
+
+.close:hover:not(:disabled) {
+  border-color: var(--color-divider);
+  color: var(--color-text);
+}
+
+.close:disabled {
+  opacity: 0.45;
+}
+
+/* Amount */
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.fieldHead {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.balance {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--space-1);
+}
+
+.balanceValue {
+  color: var(--color-text-secondary);
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.amountRow {
+  display: flex;
+  gap: var(--space-1);
+}
+
+.inputWrap {
+  flex: 1 1 auto;
+  display: flex;
+  align-items: center;
+  min-width: 64px;
+  height: 32px;
+  padding: 0 var(--space-2);
+  border: 1px solid var(--color-divider);
+  border-radius: var(--radius-md);
+  transition: border-color var(--duration-fast) var(--ease-standard);
+}
+
+.inputWrap:focus-within {
+  border-color: var(--color-edge);
+}
+
+.inputInvalid,
+.inputInvalid:focus-within {
+  border-color: var(--color-negative);
+}
+
+.currency {
+  margin-right: 2px;
+  color: var(--color-text-muted);
+  font-size: var(--fs-body-lg);
+  font-weight: var(--fw-semibold);
+}
+
+.input {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--color-text);
+  font-size: var(--fs-body-lg);
+  font-weight: var(--fw-semibold);
+}
+
+.input:focus,
+.input:focus-visible {
+  outline: none;
+}
+
+.input::placeholder {
+  color: var(--color-text-muted);
+}
+
+.chip {
+  flex: none;
+  height: 32px;
+  padding: 0 var(--space-2);
+  border: 1px solid var(--color-divider);
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-size: var(--fs-body-sm);
+  font-weight: var(--fw-semibold);
+  transition:
+    border-color var(--duration-fast) var(--ease-standard),
+    color var(--duration-fast) var(--ease-standard);
+}
+
+.chip:hover:not(:disabled) {
+  border-color: var(--color-edge);
+  color: var(--color-text);
+}
+
+.chipActive {
+  border-color: var(--color-edge);
+  background-color: var(--tint-edge);
+  color: var(--color-text);
+}
+
+.chip:disabled {
+  opacity: 0.45;
+}
+
+/* Figures */
+.summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-2) var(--space-3);
+  margin: 0;
+}
+
+.summary > div {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.summary dd {
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--fs-body-lg);
+  font-weight: var(--fw-semibold);
+  line-height: var(--lh-tight);
+  color: var(--color-text);
+}
+
+.span2 {
+  grid-column: span 2;
+}
+
+.notice {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-1-5);
+  margin: 0;
+  font-size: var(--fs-body-sm);
+  line-height: var(--lh-snug);
+  color: var(--color-text);
+}
+
+.noticeIcon {
+  flex: none;
+  margin-top: 1px;
+  color: var(--color-negative);
+}
+
+.notice a {
+  color: var(--color-edge);
+  font-weight: var(--fw-semibold);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+/* The confirm label is the exact order and may need two lines in 344px. */
+.cta.cta {
+  height: auto;
+  min-height: 40px;
+  padding-block: var(--space-2);
+  white-space: normal;
+  line-height: var(--lh-snug);
+  text-align: center;
+}
+
+/* Receipt */
+.check {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-pill);
+  background-color: var(--tint-positive);
+  color: var(--color-positive);
+}
+
+.receiptTitle {
+  margin: 0;
+  font-size: var(--fs-body-lg);
+  font-weight: var(--fw-semibold);
+  line-height: var(--lh-tight);
+  color: var(--color-text);
+}
+
+.receiptOutcome {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-2);
+}

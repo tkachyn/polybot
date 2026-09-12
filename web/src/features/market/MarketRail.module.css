@@ -1,0 +1,81 @@
+/*
+ * Full-height flex column that never scrolls. Floors: the chart keeps a
+ * readable plot when no order is open; the outcome table keeps its header
+ * and at least two rows (the rows scroll inside the card as a last resort);
+ * the order panel and footer never shrink, so Confirm is never pushed off.
+ */
+.rail {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* Expanded chart only; the collapsed legend strip takes its natural height. */
+.chartFloor {
+  min-height: 180px;
+}
+
+.table {
+  flex: none;
+}
+
+.tableShrink {
+  flex: 0 1 auto;
+  min-height: 116px;
+}
+
+.footer {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: 20px;
+  padding-inline: var(--space-1);
+  font-size: var(--fs-body-sm);
+  color: var(--color-text-secondary);
+}
+
+.status {
+  flex: 1 1 auto;
+  display: flex;
+  align-items: center;
+  gap: var(--space-1-5);
+  min-width: 0;
+}
+
+.statusText {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: var(--radius-pill);
+  background-color: var(--color-text-muted);
+}
+
+.dotOpen {
+  background-color: var(--color-positive);
+}
+
+.stat {
+  flex: none;
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--space-1);
+  white-space: nowrap;
+}
+
+.statValue {
+  color: var(--color-text);
+  font-weight: var(--fw-semibold);
+}

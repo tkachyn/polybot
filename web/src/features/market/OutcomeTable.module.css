@@ -1,0 +1,136 @@
+.card {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  background-color: var(--color-surface);
+  border: 1px solid var(--color-hairline);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+}
+
+.head,
+.row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 74px 74px;
+  align-items: center;
+  gap: var(--space-1-5);
+  padding-inline: var(--space-3);
+}
+
+.head {
+  flex: none;
+  min-height: 30px;
+  border-bottom: 1px solid var(--color-hairline);
+}
+
+.colHead {
+  text-align: center;
+}
+
+.blocked {
+  grid-column: 2 / 4;
+  text-align: right;
+  color: var(--color-text-secondary);
+}
+
+.rows {
+  flex: 0 1 auto;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  overflow-y: auto;
+}
+
+.row {
+  height: 40px;
+  border-bottom: 1px solid var(--color-hairline);
+  box-shadow: inset 2px 0 0 transparent;
+}
+
+.row:last-child {
+  border-bottom: 0;
+}
+
+.rowSelected {
+  background-color: var(--tint-hover);
+  box-shadow: inset 2px 0 0 var(--color-edge);
+}
+
+.identity {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.name {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--fs-body);
+  font-weight: var(--fw-medium);
+  color: var(--color-text);
+}
+
+.change {
+  flex: none;
+  font-size: var(--fs-body-sm);
+}
+
+.price {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-1);
+  height: 28px;
+  padding: 0 var(--space-1);
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  font-size: var(--fs-body-sm);
+  font-weight: var(--fw-semibold);
+  white-space: nowrap;
+  transition:
+    background-color var(--duration-fast) var(--ease-standard),
+    border-color var(--duration-fast) var(--ease-standard),
+    color var(--duration-fast) var(--ease-standard);
+}
+
+.yes {
+  background-color: var(--tint-positive);
+  border-color: var(--tint-positive-border);
+  color: var(--color-positive);
+}
+
+.yes:hover:not(:disabled) {
+  border-color: var(--color-positive);
+}
+
+.yes.selected {
+  background-color: var(--color-positive);
+  border-color: var(--color-positive);
+  color: var(--color-ground);
+}
+
+.no {
+  background-color: var(--tint-negative);
+  border-color: var(--tint-negative-border);
+  color: var(--color-negative);
+}
+
+.no:hover:not(:disabled) {
+  border-color: var(--color-negative);
+}
+
+.no.selected {
+  background-color: var(--color-negative);
+  border-color: var(--color-negative);
+  color: var(--color-ground);
+}
+
+.price:disabled {
+  opacity: 0.45;
+}

@@ -1,0 +1,55 @@
+.arena {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: var(--space-2);
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2-5);
+  min-width: 0;
+  min-height: 26px;
+}
+
+.leader {
+  color: var(--color-text-secondary);
+}
+
+.toggle {
+  margin-left: auto;
+}
+
+.toggleLabel {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.stage {
+  display: grid;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-rows: repeat(var(--rows, 2), minmax(0, 1fr));
+  gap: var(--space-2);
+  min-width: 0;
+  min-height: 0;
+}
+
+.lanes {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: repeat(var(--rows, 4), minmax(0, 1fr));
+  gap: var(--space-2);
+  min-width: 0;
+  min-height: 0;
+}

@@ -1,0 +1,113 @@
+.capture {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  border-radius: var(--radius-md);
+  background-color: var(--color-inset);
+}
+
+.image {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  object-fit: contain;
+  user-select: none;
+}
+
+.placeholder {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-1);
+  padding: var(--space-2);
+  text-align: center;
+}
+
+.placeholderText {
+  font-size: var(--fs-body-sm);
+  color: var(--color-text-muted);
+}
+
+.placeholderFigure {
+  font-size: var(--fs-price);
+  font-weight: var(--fw-semibold);
+  line-height: var(--lh-tight);
+  color: var(--color-text);
+}
+
+.spinner {
+  width: 12px;
+  height: 12px;
+  border: 1.5px solid var(--color-divider);
+  border-top-color: var(--color-text-muted);
+  border-radius: 50%;
+  animation: spin 900ms linear infinite;
+}
+
+.overlay {
+  position: absolute;
+  top: var(--space-1-5);
+  left: var(--space-1-5);
+  right: var(--space-1-5);
+  display: flex;
+  min-width: 0;
+  pointer-events: none;
+}
+
+.overlay > * {
+  pointer-events: auto;
+}
+
+.badge {
+  position: absolute;
+  right: var(--space-1-5);
+  bottom: var(--space-1-5);
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  height: 18px;
+  padding: 0 var(--space-1-5);
+  border: 1px solid var(--color-hairline);
+  border-radius: var(--radius-pill);
+  background-color: var(--color-surface);
+  color: var(--color-text-secondary);
+  font-size: var(--fs-label-sm);
+  line-height: 1;
+  white-space: nowrap;
+  opacity: 0.92;
+  pointer-events: none;
+}
+
+.badgeDot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background-color: var(--color-positive);
+}
+
+.badgeLive {
+  font-weight: var(--fw-semibold);
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  color: var(--color-positive);
+}
+
+.badgeStale .badgeDot {
+  background-color: var(--color-text-muted);
+}
+
+.badgeStale .badgeLive {
+  color: var(--color-text-muted);
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}

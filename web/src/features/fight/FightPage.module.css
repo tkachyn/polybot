@@ -1,0 +1,99 @@
+/*
+ * Fixed, non-scrolling screen. Header strips take their natural height; the
+ * body absorbs the rest and has a floor. Below 720px of height, or in the
+ * compact layout, the screen scrolls internally rather than clipping.
+ */
+.screen {
+  display: grid;
+  grid-template-rows: auto auto minmax(360px, 1fr);
+  gap: var(--space-2);
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) var(--rail-width);
+  gap: var(--space-3);
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.arena {
+  min-height: 0;
+}
+
+.rail {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.rail > * {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+/* --- Skeleton ---------------------------------------------------------------- */
+
+.skeletonBox {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+  min-height: 0;
+  padding: var(--space-3);
+  border: 1px solid var(--color-hairline);
+  border-radius: var(--radius-lg);
+  background-color: var(--color-surface);
+}
+
+.skeletonMaster {
+  height: 88px;
+}
+
+.skeletonSabotage {
+  height: 36px;
+  justify-content: center;
+  padding-block: 0;
+}
+
+.skeletonGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-rows: repeat(2, minmax(0, 1fr));
+  gap: var(--space-2);
+  min-height: 0;
+}
+
+/* --- Short viewports and compact layout -------------------------------------- */
+
+@media (max-height: 719px) {
+  .screen {
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+}
+
+@media (max-width: 759px) {
+  .screen {
+    grid-template-rows: auto auto auto;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+
+  .body {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(420px, 60vh) auto;
+    overflow: visible;
+  }
+
+  .rail {
+    overflow: visible;
+  }
+}
