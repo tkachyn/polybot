@@ -7,7 +7,7 @@ import type {
 } from "../src/application/contracts.js";
 import { RaceCoordinator } from "../src/application/race-coordinator.js";
 import { buildApi } from "../src/api/server.js";
-import type { ApiCreateRaceInput } from "../src/api/race-registry.js";
+import type { CoordinatorFactory } from "../src/api/race-registry.js";
 import { InMemoryRaceEventStore } from "../src/persistence/in-memory-event-store.js";
 
 const sessionManager: RacerSessionManager = {
@@ -25,14 +25,14 @@ const verifier: CourseVerifier = {
   async verifyFinish() { return true; },
 };
 
-function factory(input: ApiCreateRaceInput) {
-  return new RaceCoordinator(input, {
+const factory: CoordinatorFactory = (input, context) =>
+  new RaceCoordinator({ ...input, fight: context.fight }, {
     sessionManager,
     agentRunner: runner,
     courseVerifier: verifier,
     eventStore: new InMemoryRaceEventStore(),
+    ledger: context.ledger,
   });
-}
 
 test("creates, progresses, trades, and resolves a race through the API", async () => {
   const app = buildApi({ coordinatorFactory: factory, enableTicker: false });

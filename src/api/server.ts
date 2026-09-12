@@ -1,11 +1,55 @@
-import Fastify, { type FastifyInstance } from "fastify";
+import { existsSync, statSync } from "node:fs";
+import fastifyStatic from "@fastify/static";
+import Fastify, { type FastifyError, type FastifyInstance, type FastifyRequest } from "fastify";
+import { DomainError, isDomainError } from "../domain/errors.js";
+import type { ApiErrorCode, ServerMode } from "./dto.js";
 import type { ApiCreateRaceInput, CoordinatorFactory } from "./race-registry.js";
 import { RaceRegistry } from "./race-registry.js";
+import {
+  DEFAULT_STREAM_THROTTLES,
+  registerSpectatorRoutes,
+  type StreamThrottles,
+} from "./spectator-routes.js";
+import { SseHub, SSE_PING_MS } from "./sse.js";
 
-type ServerOptions = {
+declare module "fastify" {
+  interface FastifyInstance {
+    registry: RaceRegistry;
+  }
+}
+
+export type ApiServerOptions = {
   coordinatorFactory: CoordinatorFactory;
   enableTicker?: boolean;
   tickIntervalMs?: number;
+  mode?: ServerMode;
+  /** Reveal sabotage text before fights open. Default true. */
+  showSabotageUpfront?: boolean;
+  /** Credits granted to new users. Default 1000. */
+  startingBalance?: number;
+  /** First fight number. Default 1. */
+  fightNumberStart?: number;
+  /** Built SPA directory. Served with an SPA fallback when it exists. */
+  webDist?: string;
+  /**
+   * Awaited once on ready, before the ticker starts (e.g. to seed history).
+   * A returned function is called when the server closes.
+   */
+  onRegistryReady?: (registry: RaceRegistry) => Promise<(() => void) | void>;
+  /** Clock for API responses. Default Date.now. */
+  now?: () => number;
+  streamThrottles?: Partial<StreamThrottles>;
+  ssePingMs?: number;
+};
+
+const ERROR_STATUS: Record<ApiErrorCode, number> = {
+  invalid: 400,
+  not_found: 404,
+  conflict: 409,
+  market_closed: 400,
+  price_moved: 400,
+  insufficient_balance: 400,
+  insufficient_position: 400,
 };
 
 function requireString(value: unknown, name: string): string {
@@ -22,25 +66,100 @@ function requirePositiveInteger(value: unknown, name: string): number {
   return Number(value);
 }
 
-export function buildApi(options: ServerOptions): FastifyInstance {
-  const app = Fastify({ logger: false });
-  const registry = new RaceRegistry(options.coordinatorFactory);
-  let ticker: ReturnType<typeof setInterval> | undefined;
+function pathOf(request: FastifyRequest): string {
+  return request.url.split("?")[0] ?? "/";
+}
 
-  app.setErrorHandler((error, _request, reply) => {
-    const message = error instanceof Error ? error.message : String(error);
-    const status = /not found/.test(message)
-      ? 404
-      : /already exists/.test(message)
-        ? 409
-        : 400;
-    void reply.status(status).send({ error: message });
+function isApiPath(path: string): boolean {
+  return path === "/api" || path.startsWith("/api/");
+}
+
+function isRacesPath(path: string): boolean {
+  return path === "/races" || path.startsWith("/races/");
+}
+
+function isDirectory(path: string | undefined): path is string {
+  try {
+    return path !== undefined && existsSync(path) && statSync(path).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+export function buildApi(options: ApiServerOptions): FastifyInstance {
+  const app = Fastify({ logger: false });
+  const registry = new RaceRegistry(options.coordinatorFactory, {
+    fightNumberStart: options.fightNumberStart,
+    startingBalance: options.startingBalance,
   });
+  const hub = new SseHub(options.ssePingMs ?? SSE_PING_MS);
+  const now = options.now ?? (() => Date.now());
+  const webDist = isDirectory(options.webDist) ? options.webDist : undefined;
+  let ticker: ReturnType<typeof setInterval> | undefined;
+  let stopRegistryHook: (() => void) | undefined;
+
+  app.decorate("registry", registry);
+
+  app.setErrorHandler((error: FastifyError, request, reply) => {
+    const message = error instanceof Error ? error.message : String(error);
+    if (isDomainError(error)) {
+      return reply.status(ERROR_STATUS[error.code] ?? 400).send({ error: message, code: error.code });
+    }
+    const statusCode = typeof error.statusCode === "number" ? error.statusCode : undefined;
+    if (statusCode !== undefined && statusCode >= 400 && statusCode < 500) {
+      // Body parsing, content-type and schema validation failures.
+      const code: ApiErrorCode = statusCode === 404 ? "not_found" : "invalid";
+      return reply.status(statusCode).send({ error: message, code });
+    }
+    // Legacy message mapping for plain errors (the /races operator routes).
+    if (/not found/i.test(message)) {
+      return reply.status(404).send({ error: message, code: "not_found" });
+    }
+    if (/already exists/i.test(message)) {
+      return reply.status(409).send({ error: message, code: "conflict" });
+    }
+    if (isApiPath(pathOf(request))) {
+      return reply.status(500).send({ error: "internal server error", code: "invalid" });
+    }
+    return reply.status(400).send({ error: message, code: "invalid" });
+  });
+
+  if (webDist) {
+    void app.register(fastifyStatic, { root: webDist, prefix: "/", wildcard: true });
+  }
+
+  app.setNotFoundHandler((request, reply) => {
+    const path = pathOf(request);
+    const acceptsHtml = String(request.headers.accept ?? "").includes("text/html");
+    if (
+      webDist && (request.method === "GET" || request.method === "HEAD") &&
+      !isApiPath(path) && !isRacesPath(path) && acceptsHtml
+    ) {
+      return reply.header("Cache-Control", "no-cache").sendFile("index.html");
+    }
+    return reply
+      .status(404)
+      .send({ error: `Route ${request.method} ${path} not found`, code: "not_found" });
+  });
+
+  registerSpectatorRoutes(app, {
+    registry,
+    hub,
+    now,
+    mode: options.mode ?? "live",
+    showSabotageUpfront: options.showSabotageUpfront ?? true,
+    throttles: { ...DEFAULT_STREAM_THROTTLES, ...options.streamThrottles },
+  });
+
+  // ------------------------------------------------------ operator routes
 
   app.post<{ Body: Partial<ApiCreateRaceInput> & { now?: number } }>(
     "/races",
     async (request, reply) => {
       const body = request.body ?? {};
+      if (typeof body !== "object" || Array.isArray(body)) {
+        throw new DomainError("invalid", "request body must be a JSON object");
+      }
       const input: ApiCreateRaceInput = {
         raceId: requireString(body.raceId, "raceId"),
         courseId: requireString(body.courseId, "courseId"),
@@ -51,8 +170,15 @@ export function buildApi(options: ServerOptions): FastifyInstance {
         obstaclesEnabled: body.obstaclesEnabled ?? false,
         targetDurationMs: body.targetDurationMs,
         absoluteDurationMs: body.absoluteDurationMs,
+        title: body.title,
+        taskDetail: body.taskDetail,
+        successCondition: body.successCondition,
+        checkpointLabels: body.checkpointLabels,
+        sabotage: body.sabotage,
+        agents: body.agents,
+        startsAt: body.startsAt,
       };
-      const snapshot = await registry.create(input, body.now ?? Date.now());
+      const snapshot = await registry.create(input, body.now ?? now());
       return reply.status(201).send(snapshot);
     },
   );
@@ -74,7 +200,7 @@ export function buildApi(options: ServerOptions): FastifyInstance {
     const racerId = requireString(request.body?.racerId, "racerId");
     const checkpoint = requirePositiveInteger(request.body?.checkpoint, "checkpoint");
     const race = registry.get(request.params.raceId);
-    await race.recordCheckpoint(racerId, checkpoint, request.body?.now ?? Date.now());
+    await race.recordCheckpoint(racerId, checkpoint, request.body?.now ?? now());
     return race.snapshot();
   });
 
@@ -84,7 +210,7 @@ export function buildApi(options: ServerOptions): FastifyInstance {
   }>("/races/:raceId/finish", async (request) => {
     const racerId = requireString(request.body?.racerId, "racerId");
     const race = registry.get(request.params.raceId);
-    await race.recordFinish(racerId, request.body?.now ?? Date.now());
+    await race.recordFinish(racerId, request.body?.now ?? now());
     return race.snapshot();
   });
 
@@ -132,16 +258,38 @@ export function buildApi(options: ServerOptions): FastifyInstance {
     };
   });
 
+  // ------------------------------------------------------------ lifecycle
+
   app.addHook("onReady", async () => {
+    if (options.onRegistryReady) {
+      const stop = await options.onRegistryReady(registry);
+      if (typeof stop === "function") stopRegistryHook = stop;
+    }
     if (options.enableTicker === false) return;
     ticker = setInterval(() => {
-      void registry.tickAll().catch((error) => app.log.error(error));
+      void registry.tickAll(now()).catch((error) => app.log.error(error));
     }, options.tickIntervalMs ?? 1_000);
     ticker.unref();
   });
 
+  // End SSE streams before the HTTP server closes, or close() would wait
+  // for those long-lived connections forever.
+  app.addHook("preClose", async () => {
+    if (ticker) clearInterval(ticker);
+    ticker = undefined;
+    hub.closeAll();
+  });
+
   app.addHook("onClose", async () => {
     if (ticker) clearInterval(ticker);
+    hub.closeAll();
+    const stop = stopRegistryHook;
+    stopRegistryHook = undefined;
+    try {
+      stop?.();
+    } catch (error) {
+      app.log.error(error);
+    }
     await registry.shutdown();
   });
 
