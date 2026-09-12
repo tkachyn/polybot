@@ -13,6 +13,7 @@ import { useId } from "react";
 import type { FightAgentSummary, FightSummary, SabotageSummary } from "@contract";
 import {
   AgentMonogram,
+  Button,
   ButtonLink,
   ChangeCents,
   ElapsedClock,
@@ -48,7 +49,7 @@ export function RemainingClock({ to, className }: { to: number; className?: stri
 }
 
 /** Left column clock: elapsed (live), start countdown (upcoming), final duration (resolved). */
-function CardClock({ fight }: { fight: FightSummary }) {
+export function CardClock({ fight }: { fight: FightSummary }) {
   if (fight.status === "live") {
     return (
       <span className={styles.clock}>
@@ -81,7 +82,7 @@ function CardClock({ fight }: { fight: FightSummary }) {
 // Centre
 // ---------------------------------------------------------------------------
 
-function SabotageLine({ sabotage }: { sabotage: SabotageSummary | null }) {
+export function SabotageLine({ sabotage }: { sabotage: SabotageSummary | null }) {
   if (!sabotage) {
     return <p className={cx(styles.sabotage, styles.sabotageNone)}>No sabotage armed</p>;
   }
@@ -197,7 +198,7 @@ function AgentStrip({ fight }: { fight: FightSummary }) {
 // Right column
 // ---------------------------------------------------------------------------
 
-function Resolution({ fight }: { fight: FightSummary }) {
+export function Resolution({ fight }: { fight: FightSummary }) {
   if (fight.status === "live") {
     const estimate = fight.estimatedResolutionAt;
     const cap = fight.closesAt;
@@ -266,9 +267,11 @@ function Resolution({ fight }: { fight: FightSummary }) {
 export type FightCardProps = {
   fight: FightSummary;
   className?: string;
+  /** A hardcoded demo card (./placeholders): looks real, but View does nothing. */
+  preview?: boolean;
 };
 
-export function FightCard({ fight, className }: FightCardProps) {
+export function FightCard({ fight, className, preview = false }: FightCardProps) {
   const titleId = useId();
   const number = formatFightNumber(fight.number);
   return (
@@ -293,16 +296,30 @@ export function FightCard({ fight, className }: FightCardProps) {
         <AgentStrip fight={fight} />
 
         <div className={styles.right}>
-          <ButtonLink
-            to={`/fights/${encodeURIComponent(fight.raceId)}`}
-            variant="action"
-            size="sm"
-            block
-            className={styles.view}
-            aria-label={`View fight ${number}`}
-          >
-            View
-          </ButtonLink>
+          {preview ? (
+            <Button
+              variant="action"
+              size="sm"
+              block
+              className={cx(styles.view, styles.viewPreview)}
+              aria-disabled="true"
+              title="Preview only: this demo runs the featured fight"
+              aria-label={`Fight ${number} is a preview`}
+            >
+              View
+            </Button>
+          ) : (
+            <ButtonLink
+              to={`/fights/${encodeURIComponent(fight.raceId)}`}
+              variant="action"
+              size="sm"
+              block
+              className={styles.view}
+              aria-label={`View fight ${number}`}
+            >
+              View
+            </ButtonLink>
+          )}
           <Resolution fight={fight} />
         </div>
       </div>
@@ -314,12 +331,12 @@ export function FightCard({ fight, className }: FightCardProps) {
 // List and loading state
 // ---------------------------------------------------------------------------
 
-export function FightCardList({ fights, label }: { fights: readonly FightSummary[]; label: string }) {
+export function FightCardList({ fights, label, preview = false }: { fights: readonly FightSummary[]; label: string; preview?: boolean }) {
   return (
     <ol className={styles.list} aria-label={label}>
       {fights.map((fight) => (
         <li key={fight.raceId}>
-          <FightCard fight={fight} />
+          <FightCard fight={fight} preview={preview} />
         </li>
       ))}
     </ol>

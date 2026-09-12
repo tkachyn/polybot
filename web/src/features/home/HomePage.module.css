@@ -29,3 +29,8 @@
   justify-content: center;
   gap: var(--space-2);
 }
+
+/* Room between the featured hero and the filterable list beneath it. */
+.featuredSection {
+  margin-bottom: var(--space-6);
+}

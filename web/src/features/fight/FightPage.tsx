@@ -3,12 +3,14 @@
  * up: header strips on top, arena + 344px market rail beneath, every region
  * floored and clipped. Owns the bet slip and passes it to the rail and arena.
  */
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import type { FightDetail, PricePoint } from "@contract";
 import type { StreamStatus } from "../../api/stream";
 import { ErrorBanner, Skeleton, SkeletonText } from "../../components";
 import { cx } from "../../lib/cx";
 import { MarketRail } from "../market/MarketRail";
+import { SLIP_PARAM, slipFromParam } from "../market/slipParam";
 import type { Slip } from "../market/types";
 import { Arena } from "./Arena";
 import { rosterByRacer, rosterKey } from "./fightView";
@@ -22,7 +24,20 @@ export type FightPageProps = {
 };
 
 export function FightPage({ fight, priceHistory, streamStatus }: FightPageProps) {
-  const [slip, setSlip] = useState<Slip | null>(null);
+  const [params, setParams] = useSearchParams();
+  // `?slip=racer-1:yes` (from the lobby's featured card) opens the order form once.
+  const [slip, setSlip] = useState<Slip | null>(() => slipFromParam(fight, params.get(SLIP_PARAM)));
+  useEffect(() => {
+    if (!params.has(SLIP_PARAM)) return;
+    setParams(
+      (prev) => {
+        const next = new URLSearchParams(prev);
+        next.delete(SLIP_PARAM);
+        return next;
+      },
+      { replace: true },
+    );
+  }, [params, setParams]);
   // Keyed on the roster identity: `fight` is a new object on every stream update.
   const key = rosterKey(fight.agents);
   const roster = useMemo(() => rosterByRacer(fight.agents), [key]);

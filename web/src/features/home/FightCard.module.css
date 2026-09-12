@@ -324,3 +324,8 @@
     gap: var(--space-2);
   }
 }
+
+/* Hardcoded demo cards: styled like View, but not a link. */
+.viewPreview {
+  cursor: default;
+}
