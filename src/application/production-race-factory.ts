@@ -1,8 +1,9 @@
 import { resolve } from "node:path";
+import { AnthropicMasterPolicyModel } from "../agents/anthropic-models.js";
 import {
-  AnthropicCompetitorDecisionModel,
-  AnthropicMasterPolicyModel,
-} from "../agents/anthropic-models.js";
+  createRosterModels,
+  resolveCompetitorRoster,
+} from "../agents/competitor-roster.js";
 import {
   MasterObstacleProvider,
   type RaceObservationSource,
@@ -17,7 +18,17 @@ import type { DisruptionCommand } from "../domain/types.js";
 import { CdpObstacleProvider } from "../infra/cdp-obstacle-provider.js";
 import { SteelSessionManager } from "../infra/steel-session-manager.js";
 import { JsonlRaceEventStore } from "../persistence/jsonl-event-store.js";
+import type { CreditLedger } from "../wallet/credit-ledger.js";
+import type { FightMetadata } from "./fight-metadata.js";
 import { RaceCoordinator } from "./race-coordinator.js";
+
+/** What the registry supplies alongside the operator's input. */
+export type ProductionRaceContext = {
+  /** The shared wallet every market settles into. */
+  ledger: CreditLedger;
+  /** Fight metadata; `agents` is overridden by the resolved live roster. */
+  fight: Partial<FightMetadata>;
+};
 
 function requiredEnv(name: string): string {
   const value = process.env[name];
@@ -27,15 +38,21 @@ function requiredEnv(name: string): string {
 
 export function createProductionRaceCoordinator(
   input: ApiCreateRaceInput,
+  context: ProductionRaceContext,
 ): RaceCoordinator {
+  // Resolve models first so misconfiguration fails before any session exists.
+  const roster = resolveCompetitorRoster(context.fight.agents);
+  const models = createRosterModels(roster);
+
   const sessionManager = new SteelSessionManager();
-  const competitorModel = new AnthropicCompetitorDecisionModel({
-    model: requiredEnv("COMPETITOR_LLM_MODEL"),
-  });
   const agentRunner = new PlaywrightCompetitorRunner({
-    task: input.task,
+    task: context.fight.task ?? input.task,
     startUrl: input.startUrl,
-    model: competitorModel,
+    modelFor: (racerId) => {
+      const model = models.get(racerId);
+      if (!model) throw new Error(`No competitor model is configured for ${racerId}`);
+      return model;
+    },
   });
   const courseVerifier = new DeterministicCourseVerifier(
     new HttpCourseStateGateway(
@@ -94,12 +111,16 @@ export function createProductionRaceCoordinator(
       )
     : undefined;
 
-  coordinator = new RaceCoordinator(input, {
-    sessionManager,
-    agentRunner,
-    courseVerifier,
-    eventStore,
-    obstacleProvider,
-  });
+  coordinator = new RaceCoordinator(
+    { ...input, fight: { ...context.fight, agents: roster } },
+    {
+      sessionManager,
+      agentRunner,
+      courseVerifier,
+      eventStore,
+      obstacleProvider,
+      ledger: context.ledger,
+    },
+  );
   return coordinator;
 }

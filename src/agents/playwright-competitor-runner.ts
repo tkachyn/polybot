@@ -3,6 +3,7 @@ import type {
   CompetitorAgentRunner,
   CompetitorContext,
 } from "../application/contracts.js";
+import { describeDecision } from "./competitor-decision.js";
 
 export type BrowserObservation = {
   url: string;
@@ -38,19 +39,39 @@ export interface CompetitorDecisionModel {
 export type PlaywrightCompetitorRunnerOptions = {
   task: string;
   startUrl: string;
-  model: CompetitorDecisionModel;
+  /** One model for every racer. Provide this or `modelFor`. */
+  model?: CompetitorDecisionModel;
+  /** Per-racer model. Wins over `model`. */
+  modelFor?: (racerId: string) => CompetitorDecisionModel;
   maxActions?: number;
+  /** Periodic capture interval while running. Default 1500 ms. */
+  frameIntervalMs?: number;
+  /** JPEG quality, 0-100. Default 55. */
+  frameQuality?: number;
+};
+
+export const DEFAULT_FRAME_INTERVAL_MS = 1_500;
+export const DEFAULT_FRAME_QUALITY = 55;
+
+type FrameCapture = {
+  timer?: ReturnType<typeof setInterval>;
+  inFlight: boolean;
+  stopped: boolean;
 };
 
 export class PlaywrightCompetitorRunner implements CompetitorAgentRunner {
   private readonly prepared = new Set<string>();
   private readonly controllers = new Map<string, AbortController>();
+  private readonly captures = new Map<string, FrameCapture>();
   private readonly maxActions: number;
 
   constructor(private readonly options: PlaywrightCompetitorRunnerOptions) {
     this.maxActions = options.maxActions ?? 60;
     if (!options.task) throw new Error("Competitor task is required");
     if (!options.startUrl) throw new Error("Competitor start URL is required");
+    if (!options.model && !options.modelFor) {
+      throw new Error("Competitor model or modelFor is required");
+    }
   }
 
   async prepare(
@@ -70,40 +91,128 @@ export class PlaywrightCompetitorRunner implements CompetitorAgentRunner {
       throw new Error(`${context.racerId} must be prepared before running`);
     }
     const page = this.pageFor(context);
+    const model = this.modelFor(context.racerId);
     const controller = new AbortController();
     this.controllers.set(context.racerId, controller);
+    const capture = this.startFrames(page, context);
     const history: Array<{ decision: AgentDecision; error?: string }> = [];
 
     try {
       for (let action = 0; action < this.maxActions; action += 1) {
         if (controller.signal.aborted) return;
         const observation = await this.observe(page);
-        const decision = await this.options.model.decide({
+        const decision = await model.decide({
           task: this.options.task,
           racerId: context.racerId,
           observation,
           history: history.slice(-10),
         });
+        if (controller.signal.aborted) return;
+        const step = action + 1;
 
         try {
           const finished = await this.execute(page, context, decision);
           history.push({ decision });
+          this.report(context, page, decision, step);
           if (finished) return;
         } catch (error) {
-          history.push({
-            decision,
-            error: error instanceof Error ? error.message : String(error),
-          });
+          const message = error instanceof Error ? error.message : String(error);
+          history.push({ decision, error: message });
+          this.report(context, page, decision, step, message);
         }
+        await this.captureFrame(page, context, capture);
       }
       throw new Error(`${context.racerId} exceeded ${this.maxActions} actions`);
     } finally {
+      this.stopFrames(context.racerId);
       this.controllers.delete(context.racerId);
     }
   }
 
   async stop(racerId: string): Promise<void> {
+    this.stopFrames(racerId);
     this.controllers.get(racerId)?.abort();
+  }
+
+  private modelFor(racerId: string): CompetitorDecisionModel {
+    const model = this.options.modelFor?.(racerId) ?? this.options.model;
+    if (!model) throw new Error(`No competitor model is configured for ${racerId}`);
+    return model;
+  }
+
+  private report(
+    context: CompetitorContext,
+    page: Page,
+    decision: AgentDecision,
+    step: number,
+    error?: string,
+  ): void {
+    if (!context.reportAction) return;
+    let url: string | undefined;
+    try {
+      url = page.url();
+    } catch {
+      url = undefined;
+    }
+    try {
+      context.reportAction({
+        kind: error === undefined ? "action" : "error",
+        text: describeDecision(decision),
+        url,
+        step,
+        maxSteps: this.maxActions,
+        signature: JSON.stringify(decision),
+        ...(error === undefined ? {} : { error }),
+      });
+    } catch {
+      // Telemetry must never break the competitor loop.
+    }
+  }
+
+  private startFrames(page: Page, context: CompetitorContext): FrameCapture {
+    this.stopFrames(context.racerId);
+    const capture: FrameCapture = { inFlight: false, stopped: false };
+    this.captures.set(context.racerId, capture);
+    if (context.reportFrame) {
+      const timer = setInterval(() => {
+        void this.captureFrame(page, context, capture);
+      }, this.options.frameIntervalMs ?? DEFAULT_FRAME_INTERVAL_MS);
+      timer.unref?.();
+      capture.timer = timer;
+    }
+    return capture;
+  }
+
+  private stopFrames(racerId: string): void {
+    const capture = this.captures.get(racerId);
+    if (!capture) return;
+    capture.stopped = true;
+    if (capture.timer) clearInterval(capture.timer);
+    this.captures.delete(racerId);
+  }
+
+  /** One viewport JPEG. Skipped while another capture is in flight. */
+  private async captureFrame(
+    page: Page,
+    context: CompetitorContext,
+    capture: FrameCapture,
+  ): Promise<void> {
+    if (!context.reportFrame || capture.inFlight || capture.stopped) return;
+    capture.inFlight = true;
+    try {
+      const body = await page.screenshot({
+        type: "jpeg",
+        quality: this.options.frameQuality ?? DEFAULT_FRAME_QUALITY,
+        fullPage: false,
+      });
+      if (!capture.stopped) {
+        context.reportFrame({ contentType: "image/jpeg", body, capturedAt: Date.now() });
+      }
+    } catch {
+      // A failed capture only costs one frame.
+    } finally {
+      capture.inFlight = false;
+    }
   }
 
   private async observe(page: Page): Promise<BrowserObservation> {
