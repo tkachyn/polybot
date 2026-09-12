@@ -261,7 +261,9 @@ export class PlaywrightCompetitorRunner implements CompetitorAgentRunner {
   private async observe(page: Page): Promise<BrowserObservation> {
     const bodyText = await page.locator("body").innerText().catch(() => "");
     const controls = await page
-      .locator("a, button, input, select, textarea, [role]")
+      // Hidden inputs carry form plumbing (run ids, counts), not controls a
+      // user could act on, so they stay out of the model's view.
+      .locator('a, button, input:not([type="hidden"]), select, textarea, [role]')
       .evaluateAll((elements) =>
         elements.slice(0, 100).map((element) => {
           const html = element as HTMLElement;
