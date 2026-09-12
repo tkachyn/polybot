@@ -1,12 +1,22 @@
 import type { FastifyInstance } from "fastify";
 import { DomainError } from "../domain/errors.js";
+import {
+  MATRIX_DEFAULT_DAYS,
+  MATRIX_MAX_DAYS,
+  buildRobustnessMatrix,
+  selectFinalEvaluations,
+  toExportRows,
+  type MatrixMode,
+} from "../evaluation/matrix.js";
 import type {
   AccountResponse,
   EnsureUserRequest,
+  FightEvaluationResponse,
   FightStatus,
   OrderRequest,
   OrderResponse,
   PortfolioResponse,
+  RobustnessMatrixResponse,
   ServerMode,
   WalletTransferRequest,
   WalletTransferResponse,
@@ -53,6 +63,30 @@ export type SpectatorContext = {
 };
 
 const FIGHT_STATUSES: readonly FightStatus[] = ["upcoming", "live", "resolved"];
+const EVALUATION_MODES: readonly MatrixMode[] = ["live", "simulated", "all"];
+const DAY_MS = 86_400_000;
+export const EVALUATION_EXPORT_FILENAME = "sabotage-markets-evaluations.jsonl";
+
+type EvaluationQuery = { days?: string; mode?: string };
+
+/** `days`: an integer from 1 to 365, default 30. */
+function parseDays(value: unknown): number {
+  if (value === undefined || value === "") return MATRIX_DEFAULT_DAYS;
+  const days = typeof value === "string" && /^\d+$/.test(value) ? Number(value) : Number.NaN;
+  if (!Number.isSafeInteger(days) || days < 1 || days > MATRIX_MAX_DAYS) {
+    throw new DomainError("invalid", `days must be an integer from 1 to ${MATRIX_MAX_DAYS}`);
+  }
+  return days;
+}
+
+/** `mode`: live, simulated or all; default the server's mode. */
+function parseEvaluationMode(value: unknown, fallback: ServerMode): MatrixMode {
+  if (value === undefined || value === "") return fallback;
+  if (typeof value === "string" && (EVALUATION_MODES as readonly string[]).includes(value)) {
+    return value as MatrixMode;
+  }
+  throw new DomainError("invalid", "mode must be live, simulated or all");
+}
 
 function parseStatus(value: unknown): FightStatus | undefined {
   if (value === undefined || value === "" || value === "all") return undefined;
@@ -285,4 +319,77 @@ export function registerSpectatorRoutes(app: FastifyInstance, context: Spectator
   // ------------------------------------------------------------- leaderboard
 
   app.get("/api/leaderboard", async () => presentLeaderboard(leaderboardRecords(), now()));
+
+  // -------------------------------------------------------------- evaluation
+
+  const evaluations = registry.evaluations;
+
+  /** Final evaluations in the query's window and mode, newest fights first. */
+  const windowed = async (query: EvaluationQuery, at: number) => {
+    const days = parseDays(query.days);
+    const mode = parseEvaluationMode(query.mode, context.mode);
+    const since = at - days * DAY_MS;
+    const stored = await evaluations.list({ since, mode: mode === "all" ? undefined : mode });
+    return { days, mode, since, stored };
+  };
+
+  // A fight still in the registry answers itself (provisional while live);
+  // a pruned one answers from the store.
+  app.get<{ Params: { raceId: string } }>(
+    "/api/fights/:raceId/evaluation",
+    async (request): Promise<FightEvaluationResponse> => {
+      const at = now();
+      const raceId = request.params.raceId;
+      const race = registry.find(raceId);
+      const evaluation = race ? race.evaluation(at) : await evaluations.get(raceId);
+      if (!evaluation) throw new DomainError("not_found", `Race ${raceId} was not found`);
+      return { serverTime: at, evaluation };
+    },
+  );
+
+  app.get<{ Params: { raceId: string; racerId: string; key: string } }>(
+    "/api/fights/:raceId/agents/:racerId/evidence/:key",
+    async (request, reply) => {
+      const race = registry.get(request.params.raceId);
+      const frame = race.evidenceFrame(request.params.racerId, request.params.key);
+      if (!frame) throw new DomainError("not_found", "no such evidence frame");
+      return reply
+        .header("Content-Type", frame.contentType)
+        .header("Cache-Control", "private, max-age=3600")
+        .send(frame.body);
+    },
+  );
+
+  app.get<{ Params: { raceId: string; racerId: string } }>(
+    "/api/fights/:raceId/agents/:racerId/replay.m3u8",
+    async (request, reply) => {
+      const race = registry.get(request.params.raceId);
+      const playlist = await race.replayPlaylist(request.params.racerId);
+      if (playlist === null) throw new DomainError("not_found", "no replay for this agent");
+      return reply
+        .header("Content-Type", "application/vnd.apple.mpegurl")
+        .header("Cache-Control", "no-store")
+        .send(playlist);
+    },
+  );
+
+  app.get<{ Querystring: EvaluationQuery }>(
+    "/api/evaluations/matrix",
+    async (request): Promise<RobustnessMatrixResponse> => {
+      const at = now();
+      const { days, mode, since, stored } = await windowed(request.query, at);
+      return buildRobustnessMatrix(stored, { windowDays: days, since, mode, now: at });
+    },
+  );
+
+  app.get<{ Querystring: EvaluationQuery }>("/api/evaluations/export.jsonl", async (request, reply) => {
+    const { mode, since, stored } = await windowed(request.query, now());
+    const rows = toExportRows(selectFinalEvaluations(stored, { since, mode }));
+    const body = rows.map((row) => `${JSON.stringify(row)}\n`).join("");
+    return reply
+      .header("Content-Type", "application/x-ndjson")
+      .header("Content-Disposition", `attachment; filename="${EVALUATION_EXPORT_FILENAME}"`)
+      .header("Cache-Control", "no-store")
+      .send(body);
+  });
 }

@@ -316,6 +316,8 @@ export function presentFightDetail(
     checkpoints,
     sabotage: sabotageDetail(view),
     agents: view.racers.map((racer, index) => agentDetail(view, racer, index)),
+    // Null before the start; clients refetch the evaluation when updatedAt moves.
+    evaluation: coordinator.evaluationPointer,
   };
 }
 

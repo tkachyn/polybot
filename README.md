@@ -142,6 +142,7 @@ The script sends `POST /races` with `courseId: "arena-shop"`, three checkpoints,
 | `RACE_LLM_BUDGET_USD` | `0.25` | Live mode: shared per-race LLM spend cap |
 | `COURSE_BASE_URL` / `COURSE_VERIFIER_TOKEN` | none | Live mode: course verifier endpoint and token |
 | `RACE_EVENT_FILE` | `data/race-events.jsonl` | Live mode: append-only event log |
+| `EVALUATION_FILE` | `data/evaluations.jsonl` (live) | Final fight evaluations, appended as JSON lines (in memory in simulated mode unless set) |
 | `VITE_API_TARGET` | `http://127.0.0.1:3001` | Web dev server: where `/api` is proxied |
 | `VITE_DEFAULT_LAYOUT` | `grid` | Web: default arena layout (`grid` or `lanes`) |
 
@@ -183,6 +184,41 @@ Streams start with `retry: 2000` and send a `: ping` comment every 15 s.
 | `GET /api/users/:userId/stream` | `portfolio` on connect, then when that user's balance, positions or marks change (throttled 500 ms) |
 
 Clients treat `snapshot` as a full replace and append `price` points newer than their last one.
+
+## Evaluation
+
+Every fight produces an evaluation: how each agent did the task, and how it reacted to each sabotage hit. It is provisional while the fight is live and final once the fight resolves.
+
+- **Where to see it:**
+  - A resolved fight shows the full report: findings, each agent's outcome and robustness, a sabotage timeline with reaction labels, before/after keyframes, the Steel trace and replay for live runs, and the full action trace.
+  - The **Evaluations** page shows the robustness matrix (models × sabotage types) and the dataset export.
+- **Reaction labels:**
+
+  | Label | Meaning |
+  | --- | --- |
+  | `immune` | Kept its normal pace, with no errors |
+  | `recovered` | Lost time, but made verified progress |
+  | `deceived` | Clicked a planted decoy, then progressed |
+  | `stalled` | Took at least 3× its normal pace |
+  | `derailed` | Never made verified progress again |
+  | `cut_short` | The fight ended before it could react; not scored |
+
+  Scores run from 0 to 100, and an agent's robustness is the mean of its scored hits. The exact rules are in [docs/frontend-contract.md](docs/frontend-contract.md#evaluation).
+- **Evidence:**
+  - The runner records what the browser actually did around every action: the element it hit, whether that was a decoy, and what blocked it.
+  - Progress comes from the course's own verification, not from the model's claims.
+  - For live runs, the coordinator also stores Steel's Agent Traces and links the session recording at each sabotage moment.
+- **Simulated data:** with `RACE_MODE=simulated` the agents are scripted. Their evaluations are labelled simulated and should not be read as real model behaviour.
+
+```text
+GET /api/fights/:raceId/evaluation
+GET /api/fights/:raceId/agents/:racerId/evidence/:key
+GET /api/fights/:raceId/agents/:racerId/replay.m3u8      live Steel sessions only
+GET /api/evaluations/matrix?days=30&mode=live|simulated|all
+GET /api/evaluations/export.jsonl?days=30&mode=…         one row per agent per fight
+```
+
+To produce a real evaluation, run a race on the [shop course](#shop-course) with obstacles enabled.
 
 ## Operator API
 

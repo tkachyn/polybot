@@ -7,6 +7,7 @@ import type {
 } from "../application/race-coordinator.js";
 import { normalizeFightMetadata, type SabotageBrief } from "../application/fight-metadata.js";
 import { DomainError } from "../domain/errors.js";
+import { InMemoryEvaluationStore, type EvaluationStore } from "../evaluation/index.js";
 import { InMemoryCreditLedger, type CreditLedger } from "../wallet/credit-ledger.js";
 import type { AgentIdentity } from "./dto.js";
 import { fightStatusOf, leaderboardRecord, type LeaderboardRecord } from "./presenters.js";
@@ -34,11 +35,13 @@ export type ApiCreateRaceInput = CreateRaceInput & {
 /**
  * Builds one coordinator. It MUST construct the coordinator with
  * `input.fight = context.fight` and `deps.ledger = context.ledger`, so fight
- * numbering and the shared wallet work.
+ * numbering and the shared wallet work, and SHOULD pass
+ * `deps.evaluationStore = context.evaluationStore`, so the fight's final
+ * evaluation outlives it (evaluation route after a prune, matrix, export).
  */
 export type CoordinatorFactory = (
   input: ApiCreateRaceInput,
-  context: { ledger: CreditLedger; fight: FightMetadata },
+  context: { ledger: CreditLedger; fight: FightMetadata; evaluationStore: EvaluationStore },
 ) => RaceCoordinator | Promise<RaceCoordinator>;
 
 /**
@@ -52,6 +55,8 @@ export type CoordinatorChangeListener = (raceId: string, change: CoordinatorChan
 export type RaceRegistryOptions = {
   fightNumberStart?: number;
   startingBalance?: number;
+  /** Where coordinators keep final evaluations. Default: in memory. */
+  evaluationStore?: EvaluationStore;
 };
 
 /** Enough of a pruned fight to enrich history and the leaderboard. */
@@ -133,6 +138,8 @@ export function buildFightMetadata(
 export class RaceRegistry {
   readonly ledger: CreditLedger;
   readonly users: UserDirectory;
+  /** Final evaluations; they outlive pruned fights. */
+  readonly evaluations: EvaluationStore;
 
   private readonly races = new Map<string, RaceCoordinator>();
   private readonly unsubscribers = new Map<string, () => void>();
@@ -153,6 +160,7 @@ export class RaceRegistry {
     this.users = new UserDirectory(this.ledger, {
       startingBalance: options.startingBalance ?? 1_000,
     });
+    this.evaluations = options.evaluationStore ?? new InMemoryEvaluationStore();
   }
 
   /**
@@ -167,7 +175,11 @@ export class RaceRegistry {
     }
     const number = this.nextFightNumber;
     const fight = buildFightMetadata(input, number, now);
-    const coordinator = await this.factory(input, { ledger: this.ledger, fight: structuredClone(fight) });
+    const coordinator = await this.factory(input, {
+      ledger: this.ledger,
+      fight: structuredClone(fight),
+      evaluationStore: this.evaluations,
+    });
     if (coordinator.raceId !== input.raceId) {
       throw new Error(`factory returned race ${coordinator.raceId} for ${input.raceId}`);
     }
@@ -199,6 +211,11 @@ export class RaceRegistry {
     const race = this.races.get(raceId);
     if (!race) throw new DomainError("not_found", `Race ${raceId} was not found`);
     return race;
+  }
+
+  /** The fight, or undefined when it is unknown or was pruned. */
+  find(raceId: string): RaceCoordinator | undefined {
+    return this.races.get(raceId);
   }
 
   list(): RaceCoordinator[] {
@@ -258,7 +275,10 @@ export class RaceRegistry {
     };
   }
 
-  /** Keeps the newest `maxResolved` resolved fights and archives the rest. */
+  /**
+   * Keeps the newest `maxResolved` resolved fights and archives the rest.
+   * Their final evaluations stay in `evaluations`.
+   */
   prune(maxResolved: number): void {
     const keep = Math.max(0, Math.floor(maxResolved));
     const resolved = this.list()
