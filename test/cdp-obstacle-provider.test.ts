@@ -69,6 +69,8 @@ test("every hazard script parses and carries the contract's roles and labels", (
     "blocking-1",
   );
   assert.match(blocking, /const externalSite = false/);
+  assert.match(blocking, /data-arena-role.*dismiss-overlay/);
+  assert.match(blocking, /close\.textContent = "Close"/);
   assert.match(blocking, /We’re having trouble loading this page/);
   assert.match(blocking, /Please try again in a moment/);
   assert.doesNotMatch(blocking, /Use an in-page DOM recovery action|Inspect the DOM/i);

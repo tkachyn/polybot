@@ -51,7 +51,7 @@ export class AnthropicMasterPolicyModel implements MasterPolicyModel {
       model: this.options.model,
       max_tokens: 500,
       system:
-        "You are the race director for a browser-agent arena. Select one bounded DOM obstacle targeting the stable primary-action role. Keep the race fair; prefer a modal with no Close control, a decoy, a disabled/renamed control, or a moved action that makes the competitor inspect and actively repair the DOM. Never emit JavaScript.",
+        "You are the race director for a browser-agent arena. Select one bounded DOM obstacle targeting the stable primary-action role. Keep the race fair; prefer a closable modal, a decoy, a disabled/renamed control, or a moved action that makes the competitor inspect and actively recover. Never emit JavaScript.",
       messages: [{
         role: "user",
         content: JSON.stringify(input),

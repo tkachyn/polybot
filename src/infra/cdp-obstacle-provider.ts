@@ -266,29 +266,28 @@ export function buildDisruptionScript(
           instruction.style.opacity = "0.72";
           overlay.appendChild(panel);
           panel.appendChild(instruction);
-          if (externalSite) {
-            const close = document.createElement("button");
-            close.type = "button";
-            close.textContent = "Close";
-            close.setAttribute("aria-label", "Close");
-            close.setAttribute("data-arena-recovery", "true");
-            Object.assign(close.style, {
-              minWidth: "96px",
-              padding: "10px 18px",
-              border: "1px solid rgba(255, 255, 255, 0.55)",
-              borderRadius: "8px",
-              background: "white",
-              color: "#141414",
-              font: "600 14px sans-serif",
-              cursor: "pointer",
-            });
-            close.addEventListener("click", (event) => {
-              event.preventDefault();
-              event.stopPropagation();
-              revert();
-            });
-            panel.appendChild(close);
-          }
+          const close = document.createElement("button");
+          close.type = "button";
+          close.textContent = "Close";
+          close.setAttribute("aria-label", "Close");
+          close.setAttribute("data-arena-role", "dismiss-overlay");
+          close.setAttribute("data-arena-recovery", "true");
+          Object.assign(close.style, {
+            minWidth: "96px",
+            padding: "10px 18px",
+            border: "1px solid rgba(255, 255, 255, 0.55)",
+            borderRadius: "8px",
+            background: "white",
+            color: "#141414",
+            font: "600 14px sans-serif",
+            cursor: "pointer",
+          });
+          close.addEventListener("click", (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            revert();
+          });
+          panel.appendChild(close);
           (document.body || document.documentElement).appendChild(overlay);
           undo.push(() => overlay.remove());
         } else if (hazardType === "move_primary_action") {
