@@ -2,11 +2,13 @@
  * Order receipt: replaces the order form in the same panel after a fill.
  */
 import type { AgentIdentity, OrderReceipt } from "@contract";
-import { AgentMonogram, Button, ButtonLink, IconClose, IconResolved, Tag } from "../../components";
+import { AgentMonogram, Button, ButtonLink, IconClose, IconResolved, SignedMoney, Tag } from "../../components";
 import type { AgentVisual } from "../../lib/agents";
 import { formatCents, formatLogTime, formatMoney, formatShares } from "../../lib/format";
 import { SIDE_LABEL } from "../../lib/labels";
+import { round6 } from "../../lib/order";
 import { useEscape } from "./market";
+import { returnFocusToSlipOpener } from "./slipFocus";
 import styles from "./OrderPanel.module.css";
 
 /** A filled order plus what's needed to render it after the slip moves on. */
@@ -26,7 +28,11 @@ export type ReceiptProps = {
 
 export function Receipt({ filled, onNewOrder }: ReceiptProps) {
   const { receipt, agent, visual } = filled;
-  useEscape(onNewOrder);
+  const close = () => {
+    returnFocusToSlipOpener();
+    onNewOrder();
+  };
+  useEscape(close);
 
   return (
     <section className={styles.panel} aria-label="Order receipt">
@@ -40,7 +46,7 @@ export function Receipt({ filled, onNewOrder }: ReceiptProps) {
           </p>
           <span className="label label-sm num">Executed {formatLogTime(receipt.executedAt)}</span>
         </div>
-        <button type="button" className={styles.close} onClick={onNewOrder} aria-label="Close receipt" title="Close (Esc)">
+        <button type="button" className={styles.close} onClick={close} aria-label="Close receipt" title="Close (Esc)">
           <IconClose size={14} />
         </button>
       </div>
@@ -71,8 +77,10 @@ export function Receipt({ filled, onNewOrder }: ReceiptProps) {
           <dd className="num">{formatMoney(receipt.payoutIfWin)}</dd>
         </div>
         <div>
-          <dt className="label label-sm">Executed</dt>
-          <dd className="num">{formatLogTime(receipt.executedAt)}</dd>
+          <dt className="label label-sm">Profit</dt>
+          <dd>
+            <SignedMoney value={round6(receipt.payoutIfWin - receipt.total)} size="md" />
+          </dd>
         </div>
       </dl>
 
@@ -80,7 +88,7 @@ export function Receipt({ filled, onNewOrder }: ReceiptProps) {
         <ButtonLink to="/portfolio" variant="ghost" size="lg" block>
           Portfolio
         </ButtonLink>
-        <Button variant="ghost" size="lg" block onClick={onNewOrder}>
+        <Button variant="ghost" size="lg" block onClick={close}>
           New order
         </Button>
       </div>
