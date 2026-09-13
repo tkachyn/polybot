@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { PricePoint } from "@contract";
-import { MIN_SPAN_MS, buildChartWindow, isMarkerInWindow, linearScale, lowerBound, nearestIndex, seriesPath, timeTicks } from "./chart";
+import { MIN_SPAN_MS, buildChartWindow, isMarkerInWindow, linearScale, lowerBound, nearestIndex, seriesPath, timeTicks, tradeMarkerChartPrice } from "./chart";
 
 const p = (t: number, a: number, b = 1 - a): PricePoint => ({ t, prices: { a, b } });
 
@@ -10,6 +10,11 @@ describe("chart event markers", () => {
     expect(isMarkerInWindow(2_000, 1_000, 2_000)).toBe(true);
     expect(isMarkerInWindow(999, 1_000, 2_000)).toBe(false);
     expect(isMarkerInWindow(Number.NaN, 1_000, 2_000)).toBe(false);
+  });
+
+  it("plots both trade sides on the racer's YES-probability line", () => {
+    expect(tradeMarkerChartPrice("yes", 0.35)).toBe(0.35);
+    expect(tradeMarkerChartPrice("no", 0.35)).toBe(0.65);
   });
 });
 

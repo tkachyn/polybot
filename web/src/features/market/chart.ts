@@ -2,7 +2,7 @@
  * Pure helpers for the win-probability chart: range windows, time ticks and
  * nearest-point lookup. No React, no DOM; unit-tested in chart.test.ts.
  */
-import type { PricePoint } from "@contract";
+import type { PricePoint, Side } from "@contract";
 
 export type ChartRange = "5m" | "1h" | "all";
 
@@ -25,6 +25,11 @@ export const MIN_SPAN_MS = 30_000;
 /** True when a timestamp can be rendered inside the chart's current window. */
 export function isMarkerInWindow(at: number, start: number, end: number): boolean {
   return Number.isFinite(at) && at >= start && at <= end;
+}
+
+/** Maps an executed side price onto the chart's YES-probability line. */
+export function tradeMarkerChartPrice(side: Side, price: number): number {
+  return side === "yes" ? price : 1 - price;
 }
 
 export type ChartWindow = {

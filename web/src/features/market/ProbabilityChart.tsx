@@ -15,7 +15,7 @@ import { cx } from "../../lib/cx";
 import { formatCents, formatCompactMoney, formatLogTime, formatTimeOfDay } from "../../lib/format";
 import { useNow } from "../../state/clock";
 import type { ChartSabotageMarker, ChartTradeMarker } from "./types";
-import { Y_TICKS, buildChartWindow, isMarkerInWindow, linearScale, nearestIndex, seriesPath, timeTicks, type ChartRange } from "./chart";
+import { Y_TICKS, buildChartWindow, isMarkerInWindow, linearScale, nearestIndex, seriesPath, timeTicks, tradeMarkerChartPrice, type ChartRange } from "./chart";
 import styles from "./ProbabilityChart.module.css";
 
 /** Structurally satisfied by FightAgentSummary / FightAgentDetail. */
@@ -448,23 +448,22 @@ function Plot({
 
           {visibleTradeMarkers.map((marker) => {
             const markerX = x(marker.at);
-            const markerY = y(marker.price);
-            const agentIndex = agents.findIndex((agent) => agent.racerId === marker.racerId);
-            const color = agentIndex >= 0 ? (visuals[agentIndex] ?? agentVisual(agents[agentIndex]!.agent)).color : "var(--color-edge)";
+            const markerY = y(tradeMarkerChartPrice(marker.side, marker.price));
+            const markerClass = marker.action === "buy" ? styles.tradeMarkerBuy : styles.tradeMarkerSell;
             return (
-              <line
+              <g
                 key={marker.id}
-                className={cx(styles.tradeMarker, marker.action === "sell" && styles.tradeMarkerSell)}
-                x1={Math.max(left, markerX - 6)}
-                x2={Math.min(right, markerX + 6)}
-                y1={markerY}
-                y2={markerY}
-                stroke={color}
+                className={cx(styles.tradeMarker, markerClass)}
+                transform={`translate(${markerX} ${markerY})`}
               >
+                <circle className={styles.tradeMarkerCircle} r={8} />
+                <text className={styles.tradeMarkerLetter} textAnchor="middle" dominantBaseline="central">
+                  {marker.action === "buy" ? "B" : "S"}
+                </text>
                 <title>
                   {marker.action === "buy" ? "Bought" : "Sold"} {marker.quantity} {marker.side.toUpperCase()} shares
                 </title>
-              </line>
+              </g>
             );
           })}
 

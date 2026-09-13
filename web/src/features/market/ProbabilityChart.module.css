@@ -159,12 +159,29 @@
 }
 
 .tradeMarker {
-  stroke-width: 3;
-  stroke-linecap: round;
+  color: var(--color-edge);
+}
+
+.tradeMarkerBuy {
+  color: var(--color-negative);
 }
 
 .tradeMarkerSell {
-  stroke-dasharray: 2 2;
+  color: var(--color-positive);
+}
+
+.tradeMarkerCircle {
+  fill: var(--color-surface);
+  stroke: currentColor;
+  stroke-width: 2;
+}
+
+.tradeMarkerLetter {
+  fill: currentColor;
+  font-size: 9px;
+  font-weight: var(--fw-semibold);
+  font-family: var(--font-sans);
+  pointer-events: none;
 }
 
 .crosshair {

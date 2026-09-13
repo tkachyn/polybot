@@ -1,46 +1,43 @@
-# The arena API: engine, market, crowd, SSE and the Steel sessions.
+# fly.toml app configuration file generated for polybot-api-blue-fern-6552 on 2026-09-13T00:02:31-04:00
 #
-# One machine, always on. This is not a cost decision — the market, the ledger
-# and the SSE hub are in-process state, so a second machine would fork the
-# market and hand two viewers different prices. Keep min and max at 1.
+# See https://fly.io/docs/reference/configuration/ for information about how to use this file.
+#
 
-app = "polybot-api"
-primary_region = "iad"
+app = 'polybot-api-blue-fern-6552'
+primary_region = 'iad'
 
 [build]
-
 [env]
-  HOST = "0.0.0.0"          # Fly routes to the machine's own address, not loopback
-  PORT = "3001"
-  RACE_MODE = "live"
-  RACE_EVENT_FILE = "/data/race-events.jsonl"
-  WEB_DIST = "/nonexistent"  # the SPA lives on Vercel; don't serve it from here
+  HOST = '0.0.0.0'
+  PORT = '3001'
+  RACE_EVENT_FILE = '/data/race-events.jsonl'
+  RACE_MODE = 'live'
+  WEB_DIST = '/nonexistent'
+
+[[mounts]]
+  source = 'polybot_data'
+  destination = '/data'
 
 [http_service]
   internal_port = 3001
   force_https = true
+  auto_stop_machines = 'off'
   auto_start_machines = true
-  auto_stop_machines = false   # the 1s ticker and the crowd must keep running
   min_machines_running = 1
-  processes = ["app"]
+  processes = ['app']
 
   [http_service.concurrency]
-    type = "connections"
-    # SSE holds a connection per viewer; leave generous headroom.
-    soft_limit = 200
+    type = 'connections'
     hard_limit = 400
+    soft_limit = 200
 
-[[http_service.checks]]
-  interval = "30s"
-  timeout = "5s"
-  grace_period = "20s"
-  method = "GET"
-  path = "/api/meta"
-
-[mounts]
-  source = "polybot_data"
-  destination = "/data"
+  [[http_service.checks]]
+    interval = '30s'
+    timeout = '5s'
+    grace_period = '20s'
+    method = 'GET'
+    path = '/api/meta'
 
 [[vm]]
-  size = "shared-cpu-1x"
-  memory = "1gb"
+  size = 'shared-cpu-1x'
+  memory = '1gb'

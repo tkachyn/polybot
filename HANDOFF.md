@@ -4,7 +4,7 @@ Written for the next agent picking this repo up. `CLAUDE.md` describes the
 architecture and conventions; this file is the state of play — what changed
 recently, what is verified, what is known-broken, and what to do next.
 
-Everything below was checked against the tree at `02078d9` unless it says
+Everything below was checked against the tree at `d39b3f9` unless it says
 otherwise.
 
 ---
@@ -45,10 +45,9 @@ evaluation store keeps its own, but past fights vanish from the UI on restart.
 This bit us mid-session: nine real fights disappeared. Fixing it means replay
 on boot, and it is independent of where the log is stored.
 
-**DeepSeek has never produced a valid action.** Across every live fight,
-`deepseek/deepseek-v4.1-flash` fails with `did not call take_browser_action` —
-it will not hold a forced tool call. It is a wasted roster slot in
-`COMPETITOR_LLM_MODELS`. The other three models all clear checkpoints.
+**Gemini 3.7 Flash failed in the latest live configuration.** The current
+roster uses `anthropic/claude-sonnet-4.6` for racer 4 instead. Validate the
+model with a cheap smoke fight before relying on it for a demo.
 
 **The OpenRouter account is rate limited to 20 requests/minute per model.**
 This kills racers mid-fight with `429 new-account-rpm`, and it is the real
@@ -107,8 +106,8 @@ has not been done.** Do it last; it touches working code.
 ## Running it
 
 ```bash
-npm run check          # backend tests + build (328 tests)
-npm --prefix web test  # frontend tests (142)
+npm run check          # backend tests + build
+npm --prefix web test  # frontend tests
 npm run dev:all        # live API on :3001 + course on :4000
 npm run demo           # simulated mode, no keys, no Steel
 ```
@@ -143,11 +142,10 @@ shutdown path, and a hard kill strands paid sessions until Steel reaps them.
 2. **Replay the event log into the lobby on boot**, or decide deliberately that
    a fresh lobby per restart is fine. Either is defensible; discovering it at a
    demo is not.
-3. **Replace DeepSeek** in `COMPETITOR_LLM_MODELS` with a model that holds a
-   forced tool call.
-4. **Make the runner survive a bad decision.** Claude Haiku has died on `click
-   requires targetRole` — one malformed action ends that racer's fight. A
-   re-prompt would probably keep it alive.
+3. **Validate Claude Sonnet 4.6** in `COMPETITOR_LLM_MODELS` with a cheap
+   smoke fight before demo day.
+4. **Keep the runner retry behavior covered.** Malformed provider decisions
+   are retried without consuming a browser action.
 5. **Remove the QR and demo-mode paths**, per the decision above.
 
 ---
