@@ -17,7 +17,11 @@ import { buildDisruptionScript, DECOY_ID_PREFIX } from "../src/infra/cdp-obstacl
 
 let browser: Browser | undefined;
 try {
-  browser = await chromium.launch({ timeout: 30_000 });
+  const executablePath = process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH;
+  browser = await chromium.launch({
+    timeout: 30_000,
+    ...(executablePath ? { executablePath } : {}),
+  });
 } catch {
   browser = undefined;
 }
@@ -221,12 +225,9 @@ browserTest("blocking_modal intercepts clicks until bounded DOM recovery (intens
     assert.match(blocked.message, /intercepts pointer events/);
     assert.ok(blocked.elapsed < 2_000, `failed after ${blocked.elapsed} ms`);
 
-    assert.equal(await page.locator('[data-arena-role="dismiss-overlay"]').count(), 0);
-    assert.equal(await page.evaluate(() => {
-      const recover = (window as unknown as { __arenaRecoverDisruptions?: () => number })
-        .__arenaRecoverDisruptions;
-      return recover?.() ?? 0;
-    }), 1);
+    const close = page.locator('[data-arena-role="dismiss-overlay"]');
+    assert.equal(await close.count(), 1);
+    await close.click({ timeout: 1_000 });
     assert.equal(await page.locator('[role="dialog"]').count(), 0);
     await page.locator(SELECTOR).first().click({ timeout: 1_000 });
     assert.equal(await clicks(page), 1);
@@ -238,18 +239,16 @@ browserTest("blocking_modal intercepts clicks until bounded DOM recovery (intens
   }
 });
 
-browserTest("blocking_modal remains until manual DOM recovery at intensity 3", async () => {
+browserTest("blocking_modal remains until its visible Close recovery at intensity 3", async () => {
   const page = await openCourse();
   try {
     const originalBody = await bodyHtml(page);
     await applyHazard(page, hazard("blocking_modal", 3, 1_200), "d-modal-3");
-    assert.equal(await page.locator('[data-arena-role="dismiss-overlay"]').count(), 0);
+    const close = page.locator('[data-arena-role="dismiss-overlay"]');
+    assert.equal(await close.count(), 1);
     assert.match((await clickFailure(page, SELECTOR, 200)).message, /intercepts pointer events/);
 
-    await page.evaluate(() => {
-      (window as unknown as { __arenaRecoverDisruptions: () => number })
-        .__arenaRecoverDisruptions();
-    });
+    await close.click({ timeout: 1_000 });
     await page.locator(SELECTOR).first().click({ timeout: 1_000 });
     assert.equal(await clicks(page), 1);
     await waitForRevert(page, originalBody);

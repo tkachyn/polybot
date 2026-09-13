@@ -746,7 +746,7 @@ export class OpenRouterMasterPolicyModel
     input: Parameters<NonNullable<MasterPolicyModel["selectObstacle"]>>[0],
   ): Promise<DisruptionCommand> {
     const value = await this.call(
-      "You are the race director for a browser-agent arena. Select one bounded DOM obstacle targeting the stable primary-action role. Keep the race fair; prefer a modal with no Close control, a decoy, a disabled/renamed control, or a moved action that makes the competitor inspect and actively repair the DOM. Never emit JavaScript.",
+      "You are the race director for a browser-agent arena. Select one bounded DOM obstacle targeting the stable primary-action role. Keep the race fair; prefer a closable modal, a decoy, a disabled/renamed control, or a moved action that makes the competitor inspect and actively recover. Never emit JavaScript.",
       input,
       obstacleTool(input.allowedHazards),
     ) as DisruptionCommand;
@@ -759,7 +759,7 @@ export class OpenRouterMasterPolicyModel
   ): Promise<{ tier: SabotageTier; policy: DisruptionCommand }> {
     const tool = sabotageTool(input.allowedHazards, input.allowedTiers);
     const value = await this.call(
-      "You are the race director for a browser-agent arena. Select exactly one race-wide sabotage tier and one bounded DOM obstacle targeting the stable primary-action role. Prefer obstacles that require active reasoning: a blocking modal has no Close control and requires bounded DOM recovery; a decoy requires comparing labels/attributes; a disabled or renamed control requires DOM inspection; moving the action requires finding the disclosure. The plan is immutable and will apply independently when each racer reaches the first verified target-opening milestone. Never emit JavaScript.",
+      "You are the race director for a browser-agent arena. Select exactly one race-wide sabotage tier and one bounded DOM obstacle targeting the stable primary-action role. Prefer obstacles that require active reasoning: a blocking modal requires finding its Close control; a decoy requires comparing labels/attributes; a disabled or renamed control requires DOM inspection; moving the action requires finding the disclosure. The plan is immutable and will apply independently when each racer reaches the first verified target-opening milestone. Never emit JavaScript.",
       input,
       tool,
     ) as { tier: SabotageTier; hazardType: DisruptionCommand["hazardType"]; targetRole: string; durationMs: number; intensity: number };

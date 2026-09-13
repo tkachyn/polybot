@@ -30,7 +30,7 @@
   min-width: 0;
 }
 
-/* Title, and "See all" pushed to the end. */
+/* Title, an optional Preview tag, and "See all" pushed to the end. */
 .sectionHead {
   display: flex;
   align-items: center;

@@ -10,13 +10,15 @@
  *
  * The featured card is one fight, large and fully live (Kalshi-style
  * outcomes, Yes / No and a probability chart), picked and kept by ./featured
- * so it never changes mid-race.
+ * so it never changes mid-race. Preview cards (./placeholders) stand in,
+ * marked as such, while the backend has no upcoming fights.
  */
 import { useCallback, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useNavigationType, useSearchParams } from "react-router-dom";
 import { Button, ButtonLink, EmptyState, ErrorBanner, Page } from "../../components";
 import { cx } from "../../lib/cx";
 import { formatNumber } from "../../lib/format";
+import { serverNow } from "../../state/clock";
 import { useFights } from "../../state/fights";
 import { SEARCH_PARAM, useSetSearchQuery } from "../../state/search";
 import { FeaturedFightCard, FeaturedFightEmpty, FeaturedFightSkeleton } from "./FeaturedFightCard";
@@ -26,6 +28,7 @@ import { FILTER_PARAM, parseFightFilter, type FightFilter } from "./filter";
 import { buildLobby, buildRail, type LobbySection } from "./lobby";
 import { LobbyRail } from "./LobbyRail";
 import { LobbyToolbar } from "./LobbyToolbar";
+import { buildPlaceholderFights, previewsAllowed } from "./placeholders";
 import styles from "./HomePage.module.css";
 
 export function HomePage() {
@@ -80,8 +83,20 @@ export function HomePage() {
   // One fight, kept while it runs: never swapped for a newer one mid-race.
   const featured = useFeaturedFight(fights);
 
-  const lobby = useMemo(() => buildLobby({ fights, featured, filter, query }), [fights, featured, filter, query]);
-  const rail = useMemo(() => buildRail({ fights, loaded }), [fights, loaded]);
+  const [anchor] = useState(() => serverNow());
+  // Previews stand in only on a loaded, healthy lobby (never behind a skeleton
+  // or beside an error), numbered clear of every real fight.
+  const allowPreviews = previewsAllowed({ loaded, error });
+  const previews = useMemo(
+    () => (allowPreviews ? buildPlaceholderFights(anchor, fights.map((f) => f.number)) : []),
+    [allowPreviews, anchor, fights],
+  );
+
+  const lobby = useMemo(
+    () => buildLobby({ fights, featured, filter, query, previews }),
+    [fights, featured, filter, query, previews],
+  );
+  const rail = useMemo(() => buildRail({ fights, loaded, previews }), [fights, loaded, previews]);
 
   // The lobby has no fight at all: the featured slot says so.
   const noFights = !lobby.hero && filter === "all" && !query;
@@ -170,7 +185,7 @@ function LobbySectionView({ section, title, seeAllTo }: { section: LobbySection;
           </ButtonLink>
         )}
       </div>
-      <FightCardList fights={section.fights} label={`${title} fights`} />
+      <FightCardList fights={section.fights} label={`${title} fights`} preview={section.preview} />
     </section>
   );
 }
