@@ -234,9 +234,9 @@ const result = await cdp.send("Runtime.evaluate", {
 });
 ```
 
-Every mutation should have a disruption ID and an explicit cleanup path. Use a namespace such as `data-arena-disruption-id` so a retry cannot create duplicate overlays or decoys. The cleanup path is activated by a visible recovery control or the competitor's bounded same-page DOM recovery action; `durationMs` is metadata and must not schedule automatic cleanup.
+Every mutation should have a disruption ID and an explicit cleanup path. Use a namespace such as `data-arena-disruption-id` so a retry cannot create duplicate overlays or decoys. The cleanup path is activated by the competitor's bounded same-page DOM recovery action; a blocking modal intentionally has no visible Close control. `durationMs` is metadata and must not schedule automatic cleanup.
 
-Injected DOM changes normally disappear on navigation, which counts as clearing a page-bound hazard when the runner verifies that no active disruption remains. Same-page hazards remain active until their cleanup path runs.
+Injected DOM changes normally disappear on navigation, which counts as clearing a page-bound hazard when the runner verifies that no active disruption remains. Same-page hazards remain active until their cleanup path runs. The default enabled plan is armed at checkpoint 1 and is applied independently when each racer reaches that verified checkpoint.
 
 ## Per-agent checkpoint flow
 

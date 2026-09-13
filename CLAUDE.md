@@ -68,7 +68,9 @@ Racer self-reports are never trusted. `recordCheckpoint`/`recordFinish` call the
 `CourseVerifier` first and throw if the course's own state disagrees, and the verifier also
 checks that raceId, racerId, courseId, seed, and Steel session id all match the run. The
 engine separately enforces idempotency: a repeated `racerId:checkpoint` claim is a no-op,
-checkpoints must advance by exactly one, and sabotage fires at most once per racer.
+checkpoints must advance by exactly one, duplicate observations are idempotent, and sabotage
+fires at most once per racer. Transient course-state transport failures are retried by the
+deterministic verifier; hard authorization or run-proof failures are not hidden.
 
 ### Sabotage
 
@@ -77,14 +79,17 @@ checkpoint — the older per-checkpoint policy path survives only as a fallback.
 model picks a tier (`basic`/`intermediate`/`difficult`) and a `DisruptionCommand`; selection
 is bounded by a 2.5 s timeout and any failure falls back to a seed-derived deterministic
 tier, so a live race never blocks on the model. The plan fires per racer at that racer's
-first verified checkpoint, gated on `verifyTargetOpening`.
+first verified checkpoint (checkpoint 1 for the default enabled plan), gated on
+`verifyTargetOpening`.
 
 Disruptions are compiled to a JS string by `buildDisruptionScript` and injected over CDP
 into one racer's page. `validateDisruptionCommand` runs on every path — on construction, on
-model output, and again at apply time — and tier limits cap `durationMs`/`intensity`.
+model output, and again at apply time — and tier limits cap `durationMs`/`intensity`. A
+blocking modal has no visible Close control; recovery requires an active bounded DOM action.
+Hazards do not self-clear from `durationMs`.
 Injected scripts target elements only by `[data-arena-role="…"]`, the same attribute the
 competitor runner uses for clicks, and each carries a `data-arena-disruption-id` marker plus
-a self-cleanup timer. CDP commands for one racer are serialized through a
+a registry-backed recovery helper. CDP commands for one racer are serialized through a
 `SessionCommandQueue`; different racers stay parallel.
 
 ### Competitor agents
@@ -92,7 +97,11 @@ a self-cleanup timer. CDP commands for one racer are serialized through a
 `PlaywrightCompetitorRunner` runs a bounded observe→decide→act loop (`COMPETITOR_MAX_ACTIONS`,
 default 20). The model returns one `AgentDecision` at a time via a forced tool call; parsing
 goes through `parseAgentDecision`. Actions are deliberately narrow: clicks and typing resolve
-only through `data-arena-role`, navigation is same-origin-only, waits cap at 2 s. All four
+only through `data-arena-role`, navigation is same-origin-only, and waits are rejected while
+a disruption is active. OpenRouter tool JSON gets one bounded repair retry, then malformed
+competitor output becomes a safe `inspect` turn. The shared default sliding-window limit is
+20 calls per 60 seconds for `openai/gpt-5.6-luna`; models without a configured entry remain
+unlimited. The runner reports a visible pause note and resumes when capacity opens. All four
 racers share one `OpenRouterUsageBudget` (`RACE_LLM_BUDGET_USD`) that is a soft stop —
 in-flight calls can overshoot it, so keep a hard limit on the OpenRouter key too.
 `src/agents/anthropic-models.ts` is a retained direct-provider alternative to the OpenRouter

@@ -98,9 +98,9 @@ Demo-day checklist:
 
 ```text
 racer-1: openai/gpt-5.6-luna
-racer-2: anthropic/claude-haiku-4.5
+racer-2: anthropic/claude-sonnet-4.6
 racer-3: google/gemma-3-27b-it
-racer-4: deepseek/deepseek-v4.1-flash
+racer-4: deepseek/deepseek-v4-pro-0813
 ```
 
 `RACE_LLM_BUDGET_USD` is a shared software stop for all model calls in one race; `GET /races/:raceId` reports it as `llmUsage` and the per-racer models as `competitors`. Keep a separate hard credit limit on the OpenRouter API key because a few concurrent in-flight calls can finish after the software limit is reached.
