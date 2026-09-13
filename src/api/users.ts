@@ -62,6 +62,16 @@ export class UserDirectory {
     }
     const name = normalizeDisplayName(displayName);
 
+    if (name !== undefined && !options.automated) {
+      const duplicate = [...this.users.values()].find(
+        (candidate) => candidate.userId !== userId && !candidate.automated &&
+          candidate.displayName.localeCompare(name, undefined, { sensitivity: "accent" }) === 0,
+      );
+      if (duplicate) {
+        throw new DomainError("conflict", "That judge name is already in use");
+      }
+    }
+
     const existing = userId === undefined ? undefined : this.users.get(userId);
     if (existing) {
       if (name !== undefined && name !== existing.displayName) {

@@ -109,6 +109,10 @@ test("demo mode locks equal bankrolls and ranks judges in one fight", async () =
     const created = await app.inject({ method: "POST", url: "/api/users", payload: { userId, displayName } });
     assert.equal(created.json().account.balance, 100);
   }
+  const duplicateName = await app.inject({
+    method: "POST", url: "/api/users", payload: { userId: "judge-03", displayName: "ada" },
+  });
+  assert.deepEqual([duplicateName.statusCode, duplicateName.json().code], [409, "conflict"]);
   app.registry.users.ensure({ userId: "market-bot", displayName: "Bot" }, Date.now(), { automated: true });
 
   const locked = await app.inject({
