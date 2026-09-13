@@ -92,7 +92,9 @@
 
 /* --- Matrix ------------------------------------------------------------------------- */
 
+/* Positioned, so the cells' .sr-only text stays inside the scroller instead of widening the page. */
 .matrixWrap {
+  position: relative;
   width: 100%;
   overflow-x: auto;
   transition: opacity var(--duration-base) var(--ease-standard);

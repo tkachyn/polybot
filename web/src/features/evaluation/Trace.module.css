@@ -55,7 +55,9 @@
 
 /* --- Tables ------------------------------------------------------------------ */
 
+/* Positioned, so absolute descendants stay inside the scroller instead of widening the page. */
 .scroll {
+  position: relative;
   overflow: auto;
   max-height: 320px;
   border: 1px solid var(--color-hairline);

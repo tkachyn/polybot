@@ -1,4 +1,6 @@
+/* Positioned, so absolute descendants (.sr-only headers) scroll with the table instead of widening the page. */
 .wrap {
+  position: relative;
   width: 100%;
   overflow-x: auto;
 }
