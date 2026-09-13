@@ -19,7 +19,7 @@ import {
   DeterministicCourseVerifier,
   HttpCourseStateGateway,
 } from "../course/deterministic-course-verifier.js";
-import { JudgeOnlySiteVerifier } from "./judge-only-site-verifier.js";
+import { AmazonCheckoutVerifier } from "./amazon-checkout-verifier.js";
 import { isAmazonCheckoutRun } from "./site-modes.js";
 import type { DisruptionCommand, SabotageTier } from "../domain/types.js";
 import { CdpObstacleProvider } from "../infra/cdp-obstacle-provider.js";
@@ -276,7 +276,7 @@ export function createProductionRaceCoordinator(
     },
   });
   const courseVerifier = externalSite
-    ? new JudgeOnlySiteVerifier()
+    ? new AmazonCheckoutVerifier()
     : new DeterministicCourseVerifier(
         new HttpCourseStateGateway(
           requiredEnv("COURSE_BASE_URL"),
@@ -324,7 +324,7 @@ export function createProductionRaceCoordinator(
       intensity: 3,
     },
   };
-  const cdpExecutor = new CdpObstacleProvider(sessionManager);
+  const cdpExecutor = new CdpObstacleProvider(sessionManager, {}, { externalSite });
   const masterModel = masterModelId
     ? new OpenRouterMasterPolicyModel({
         model: masterModelId,

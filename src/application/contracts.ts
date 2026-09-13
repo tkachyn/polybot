@@ -179,6 +179,12 @@ export type CompetitorContext = {
   reviewProgress?(observation: WorkerStateObservation): Promise<boolean>;
   /** Ends the racer's current persistent sabotage recovery state. */
   reportRecovery?(): Promise<void>;
+  /**
+   * External-site terminal action. Unlike a normal finish report, this
+   * atomically claims the final checkpoint and finish when the configured
+   * terminal control was clicked.
+   */
+  reportTerminalAction?(): Promise<boolean>;
   /** Verifier-backed completion check after a browser action. */
   checkFinish?(): Promise<boolean>;
   /**

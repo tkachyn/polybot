@@ -92,9 +92,11 @@ describe("ArenaStage focus persistence", () => {
       buttonRef: () => undefined,
     }));
 
-    expect((html.match(/<iframe /g) ?? []).length).toBe(5);
+    // The viewer iframe is created once per racer in the browser and moved
+    // between the base pane and focus view; SSR renders its persistent host.
+    expect((html.match(/<iframe /g) ?? []).length).toBe(0);
     for (const racerId of ["racer-1", "racer-2", "racer-3", "racer-4"]) {
-      expect(html).toContain(`https://viewer.test/${racerId}`);
+      expect(html).toContain(`data-viewer-url="https://viewer.test/${racerId}"`);
     }
     expect(html).toContain("stageContentHidden");
     expect(html).toContain("focusOverlay");

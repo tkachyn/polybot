@@ -83,6 +83,7 @@ import {
   type RacerTelemetry,
   type StoredFrame,
 } from "./race-telemetry.js";
+import { AMAZON_CHECKOUT_COURSE_ID } from "./site-modes.js";
 
 export {
   DEFAULT_AGENT_ROSTER,
@@ -444,6 +445,9 @@ export class RaceCoordinator {
           reportFinish: (source) =>
             this.recordFinish(session.racerId, Date.now(), source),
           reportRecovery: () => this.recordRecovery(session.racerId),
+          reportTerminalAction: this.engine.race.courseId === AMAZON_CHECKOUT_COURSE_ID
+            ? () => this.recordTerminalAction(session.racerId)
+            : undefined,
           syncProgress: () => this.syncProgress(session.racerId),
           checkFinish: () => this.checkFinish(session.racerId),
           // Only a run the course does not cover has its pages reviewed.
@@ -576,6 +580,30 @@ export class RaceCoordinator {
   }
 
   /**
+   * Amazon navigates immediately after the checkout control is clicked.
+   * Claim the final checkpoint and finish from that action before the
+   * destination sign-in page can replace the evidence.
+   */
+  private async recordTerminalAction(racerId: string, now = Date.now()): Promise<boolean> {
+    return this.enqueueLifecycle(async () => {
+      const racer = this.engine.racers.get(racerId);
+      const finalCheckpoint = this.engine.race.checkpointCount;
+      if (!racer || racer.checkpoint !== finalCheckpoint - 1) return false;
+      // A checkout click can be the recovery action itself when Amazon lets
+      // the native control remain reachable beneath an active disruption.
+      // The click is the terminal proof, so do not reject it on recovery
+      // state before claiming the final checkpoint.
+      if (racer.status === "recovering") {
+        this.engine.markRecovered(racerId, now, "manual");
+      }
+      if (!await this.recordCheckpointInternal(racerId, finalCheckpoint, now, true)) {
+        return false;
+      }
+      return this.recordFinishInternal(racerId, now, true);
+    });
+  }
+
+  /**
    * Attempts verifier-backed completion after an arbitrary browser action.
    * Returning false is normal while the task is still in progress.
    */
@@ -697,6 +725,15 @@ export class RaceCoordinator {
     const now = observation.at;
     let progressed = false;
     const nextCheckpoint = racer.checkpoint + 1;
+    // Amazon's checkout control navigates to sign-in immediately. Its click
+    // is the terminal proof; do not let a page review finish on the cart page
+    // merely because the checkout button is visible.
+    if (
+      this.engine.race.courseId === AMAZON_CHECKOUT_COURSE_ID &&
+      nextCheckpoint === this.engine.race.checkpointCount
+    ) {
+      return { finished: false, progressed: false };
+    }
     if (nextCheckpoint <= this.engine.race.checkpointCount) {
       const verified = await judge.judgeCheckpoint({
         task: this.fightMeta.task,

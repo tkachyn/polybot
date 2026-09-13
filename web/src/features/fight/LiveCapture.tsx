@@ -46,6 +46,14 @@ export function LiveCapture(props: LiveCaptureProps) {
 
 type Shown = { src: string; seq: number; capturedAt: number };
 
+type PersistentViewer = {
+  iframe: HTMLIFrameElement;
+  hosts: Set<HTMLElement>;
+};
+
+/** One Steel iframe per racer, moved between compact and focused views. */
+const persistentViewers = new Map<string, PersistentViewer>();
+
 function CaptureSurface({ raceId, racerId, frame, browserView, fightStatus, startsAt, agentName, final = false, overlay, className }: LiveCaptureProps) {
   const shown = useBufferedFrame(raceId, racerId, frame);
   const viewerUrl = browserView?.status === "live" ? browserView.viewerUrl ?? null : null;
@@ -55,13 +63,10 @@ function CaptureSurface({ raceId, racerId, frame, browserView, fightStatus, star
   return (
     <div className={cx(styles.capture, className)}>
       {showViewer ? (
-        <iframe
-          className={styles.viewer}
-          src={viewerUrl}
+        <PersistentViewer
+          viewerKey={`${raceId}:${racerId}`}
+          viewerUrl={viewerUrl}
           title={`${agentName} live browser view`}
-          aria-label={`${agentName} live browser view`}
-          allow="autoplay; fullscreen"
-          tabIndex={-1}
           onError={() => setViewerFailed(true)}
         />
       ) : shown ? (
@@ -72,6 +77,70 @@ function CaptureSurface({ raceId, racerId, frame, browserView, fightStatus, star
       {overlay && <div className={styles.overlay}>{overlay}</div>}
       {!showViewer && shown && fightStatus === "live" && (final ? <FinalFrame capturedAt={shown.capturedAt} /> : <FrameAge capturedAt={shown.capturedAt} />)}
     </div>
+  );
+}
+
+function PersistentViewer({
+  viewerKey,
+  viewerUrl,
+  title,
+  onError,
+}: {
+  viewerKey: string;
+  viewerUrl: string;
+  title: string;
+  onError: () => void;
+}) {
+  const hostRef = useRef<HTMLDivElement>(null);
+  const onErrorRef = useRef(onError);
+  onErrorRef.current = onError;
+
+  useEffect(() => {
+    const host = hostRef.current;
+    if (!host) return;
+
+    let viewer = persistentViewers.get(viewerKey);
+    if (!viewer) {
+      const iframe = document.createElement("iframe");
+      iframe.className = styles.viewer ?? "viewer";
+      iframe.title = title;
+      iframe.setAttribute("aria-label", title);
+      iframe.allow = "autoplay; fullscreen";
+      iframe.tabIndex = -1;
+      viewer = { iframe, hosts: new Set() };
+      persistentViewers.set(viewerKey, viewer);
+    }
+
+    const iframe = viewer.iframe;
+    iframe.title = title;
+    iframe.setAttribute("aria-label", title);
+    if (iframe.src !== viewerUrl) iframe.src = viewerUrl;
+    const handleError = () => onErrorRef.current();
+    iframe.addEventListener("error", handleError);
+    viewer.hosts.add(host);
+    host.appendChild(iframe);
+
+    return () => {
+      iframe.removeEventListener("error", handleError);
+      viewer?.hosts.delete(host);
+      if (iframe.parentElement === host) {
+        const fallback = [...(viewer?.hosts ?? [])].at(-1);
+        fallback?.appendChild(iframe);
+      }
+      if (viewer && viewer.hosts.size === 0) {
+        iframe.remove();
+        persistentViewers.delete(viewerKey);
+      }
+    };
+  }, [title, viewerKey, viewerUrl]);
+
+  return (
+    <div
+      ref={hostRef}
+      className={styles.viewerHost}
+      data-viewer-url={viewerUrl}
+      aria-hidden="true"
+    />
   );
 }
 

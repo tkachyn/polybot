@@ -3,8 +3,8 @@ import { randomBytes } from "node:crypto";
 import { AMAZON_CHECKOUT_COURSE_ID } from "../src/application/site-modes.js";
 
 // Creates a live fight whose four racers attempt the same Amazon checkout
-// journey. The runner stops before order submission and never enters payment
-// details; Amazon may still require an account sign-in or present a CAPTCHA.
+// journey. Two bounded sabotages fire at the first two milestones. The runner
+// stops on the checkout click, before Amazon's sign-in page and any order.
 
 const AMAZON_SEARCHES = [
   "USB C charging cable",
@@ -37,12 +37,11 @@ const body = {
   task: `On Amazon.com, find an in-stock "${query}" item, choose one listing under $50, add exactly one to the cart, and proceed to checkout. Stop on the checkout or order-review page before placing the order. Do not sign in, enter personal or payment information, or submit an order.`,
   title: `Amazon checkout: ${query}`,
   taskDetail: "Four browser agents compete to reach checkout for the same randomly selected product category.",
-  successCondition: "The agent reaches Amazon checkout or order review without signing in, entering payment details, or placing an order.",
-  checkpointLabels: ["Product selected", "Item added to cart", "Checkout reached"],
+  successCondition: "The agent clicks Amazon's checkout control without signing in, entering payment details, or placing an order.",
+  checkpointLabels: ["Product selected", "Item added to cart", "Checkout clicked"],
   startUrl: startUrl.toString(),
-  // External pages do not expose arena DOM hooks, so sabotage is disabled for
-  // this judge-only run.
-  obstaclesEnabled: false,
+  obstaclesEnabled: true,
+  sabotageSchedule: { maxSteps: 2, includeFinalCheckpoint: false },
 };
 
 let response: Response;

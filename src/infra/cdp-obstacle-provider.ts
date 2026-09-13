@@ -80,11 +80,13 @@ export const DECOY_ID_PREFIX = "arena-decoy-";
 export function buildDisruptionScript(
   command: DisruptionCommand,
   disruptionId: string,
+  options: { externalSite?: boolean } = {},
 ): string {
   validateDisruptionCommand(command);
   const role = JSON.stringify(command.targetRole);
   const id = JSON.stringify(disruptionId);
   const hazard = JSON.stringify(command.hazardType);
+  const externalSite = options.externalSite === true;
   const duration = command.durationMs;
   const intensity = command.intensity;
 
@@ -93,6 +95,7 @@ export function buildDisruptionScript(
       const role = ${role};
       const disruptionId = ${id};
       const hazardType = ${hazard};
+      const externalSite = ${externalSite};
       const durationMs = ${duration};
       const intensity = ${intensity};
       const decoyLabels = ${JSON.stringify([...DECOY_LABELS, ...DECOY_FALLBACK_LABELS])};
@@ -123,12 +126,6 @@ export function buildDisruptionScript(
 
       if (registry[disruptionId] || document.querySelector(marker)) {
         return { applied: false, reason: "already_applied" };
-      }
-
-      // Never aim at a decoy planted by an earlier hazard.
-      const target = document.querySelector(selector + ':not([data-arena-decoy="true"])');
-      if (!target && hazardType !== "blocking_modal") {
-        return { applied: false, reason: "target_not_found" };
       }
 
       const undo = [];
@@ -165,6 +162,36 @@ export function buildDisruptionScript(
         const right = normalize(b).toLowerCase();
         return left.length > 0 && right.length > 0 && (left.includes(right) || right.includes(left));
       };
+      const externalTarget = () => {
+        const candidates = Array.from(document.querySelectorAll(
+          'button, input[type="submit"], input[type="button"], a, [role="button"]',
+        )).filter((element) => {
+          const box = element.getBoundingClientRect();
+          return box.width > 0 && box.height > 0 &&
+            window.getComputedStyle(element).visibility !== "hidden" &&
+            !element.matches('[data-arena-decoy="true"]');
+        });
+        const preferred = [
+          /proceed\s+to\s+checkout/i,
+          /go\s+to\s+checkout/i,
+          /\bcheckout\b/i,
+          /add\s+to\s+(?:cart|basket)/i,
+        ];
+        for (const pattern of preferred) {
+          const match = candidates.find((element) => pattern.test(labelOf(element)));
+          if (match) return match;
+        }
+        return candidates.find((element) =>
+          !/\b(?:buy\s*now|place\s+(?:your|the)\s+order|purchase)\b/i.test(labelOf(element)),
+        ) ?? null;
+      };
+      // Never aim at a decoy planted by an earlier hazard.
+      const target = externalSite
+        ? externalTarget()
+        : document.querySelector(selector + ':not([data-arena-decoy="true"])');
+      if (!target && hazardType !== "blocking_modal") {
+        return { applied: false, reason: "target_not_found" };
+      }
       // Replaces the visible label; the original child nodes come back on revert.
       const setLabel = (element, label, reversible) => {
         if (element.tagName === "INPUT") {
@@ -321,15 +348,18 @@ export class CdpObstacleProvider implements ObstacleProvider {
   private readonly queues = new Map<string, SessionCommandQueue>();
   private readonly policies: Map<number, DisruptionCommand>;
   private readonly applied = new Set<string>();
+  private readonly externalSite: boolean;
 
   constructor(
     private readonly sessions: SteelSessionManager,
     policies: Record<number, DisruptionCommand> = {},
+    options: { externalSite?: boolean } = {},
   ) {
     this.policies = new Map(Object.entries(policies).map(([key, value]) => [
       Number(key),
       validateAndReturn(value),
     ]));
+    this.externalSite = options.externalSite === true;
   }
 
   async armRace(input: {
@@ -381,7 +411,9 @@ export class CdpObstacleProvider implements ObstacleProvider {
       const cdp: CDPSession = await session.page.context().newCDPSession(session.page);
       try {
         const response = await cdp.send("Runtime.evaluate", {
-          expression: buildDisruptionScript(policy, disruptionId),
+          expression: buildDisruptionScript(policy, disruptionId, {
+            externalSite: this.externalSite,
+          }),
           returnByValue: true,
           awaitPromise: true,
         });

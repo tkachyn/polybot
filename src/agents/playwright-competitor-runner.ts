@@ -791,10 +791,14 @@ export class PlaywrightCompetitorRunner implements CompetitorAgentRunner {
         if (this.externalSite && isExternalUnsafeClick(decision, read?.target.text)) {
           throw new Error("External-site safety blocked an order or sign-in control");
         }
+        const terminalCheckoutClick = this.externalSite &&
+          isExternalCheckoutAction(decision, read?.target.text);
         const cursor = await this.moveCursorToTarget(page, context.racerId, target, "click");
         if (cursor) evidence.cursor = cursor;
         await target.click({ timeout: this.actionTimeoutMs });
-        return false;
+        return terminalCheckoutClick
+          ? await context.reportTerminalAction?.() === true
+          : false;
       }
       case "type": {
         if (decision.text.length > 2_000) throw new Error("Text input is too long");
@@ -1290,6 +1294,15 @@ function isExternalUnsafeClick(
 ): boolean {
   const target = [decision.targetRole, decision.label ?? "", targetText ?? ""].join(" ");
   return EXTERNAL_ORDER_ACTION_PATTERN.test(target) || EXTERNAL_AUTH_ACTION_PATTERN.test(target);
+}
+
+function isExternalCheckoutAction(
+  decision: Extract<AgentDecision, { type: "click" }>,
+  targetText: string | null | undefined,
+): boolean {
+  return /\b(?:proceed\s+to\s+)?checkout\b/i.test(
+    [decision.targetRole, decision.label ?? "", targetText ?? ""].join(" "),
+  );
 }
 
 function isExternalPaymentField(
