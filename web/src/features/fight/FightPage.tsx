@@ -11,6 +11,7 @@ import type { FightDetail, PricePoint } from "@contract";
 import type { StreamStatus } from "../../api/stream";
 import { Button, ErrorBanner, Skeleton, SkeletonText } from "../../components";
 import { cx } from "../../lib/cx";
+import { serverNow } from "../../state/clock";
 import { useSession } from "../../state/session";
 import { MarketRail } from "../market/MarketRail";
 import { SLIP_PARAM, slipFromParam } from "../market/slipParam";
@@ -20,7 +21,8 @@ import { FightInvite } from "../demo/FightInvite";
 import { isRaceOver, rosterByRacer, rosterKey } from "./fightView";
 import { FinishStrip, MasterStrip, SabotageStrip } from "./FightHeader";
 import { FightIntro } from "./FightIntro";
-import { hasSeenFightIntro, markFightIntroSeen, shouldOpenFightIntro } from "./fightIntroState";
+import { hasSeenFightIntro, introOpensIn, markFightIntroSeen } from "./fightIntroState";
+import { FIGHT_INTRO_MARGIN_MS } from "./introVideo";
 import styles from "./FightPage.module.css";
 
 export type FightPageProps = {
@@ -34,22 +36,24 @@ export function FightPage({ fight, priceHistory, streamStatus }: FightPageProps)
   const { meta } = useSession();
   const [params, setParams] = useSearchParams();
   const [introAvailable, setIntroAvailable] = useState(true);
-  const [introOpen, setIntroOpen] = useState(() =>
-    shouldOpenFightIntro(fight.status, hasSeenFightIntro(fight.raceId)),
-  );
+  // "lead-in": timed to end as the fight starts (the agents wait for it); "replay": from the top, on request.
+  const [intro, setIntro] = useState<"lead-in" | "replay" | null>(null);
+  const { status, startsAt } = fight;
   useEffect(() => {
-    if (introAvailable && shouldOpenFightIntro(fight.status, hasSeenFightIntro(fight.raceId))) {
-      setIntroOpen(true);
-    }
-  }, [fight.raceId, fight.status, introAvailable]);
+    if (!introAvailable || hasSeenFightIntro(fight.raceId)) return undefined;
+    const opensIn = introOpensIn({ status, startsAt }, serverNow());
+    if (opensIn === null) return undefined;
+    const timer = setTimeout(() => setIntro((open) => open ?? "lead-in"), opensIn);
+    return () => clearTimeout(timer);
+  }, [fight.raceId, status, startsAt, introAvailable]);
   const closeIntro = () => {
     markFightIntroSeen(fight.raceId);
-    setIntroOpen(false);
+    setIntro(null);
   };
   const introUnavailable = () => {
     markFightIntroSeen(fight.raceId);
     setIntroAvailable(false);
-    setIntroOpen(false);
+    setIntro(null);
   };
   // `?slip=racer-1:yes` (from the lobby's featured card) opens the order form once.
   const [slip, setSlip] = useState<Slip | null>(() => slipFromParam(fight, params.get(SLIP_PARAM)));
@@ -76,7 +80,7 @@ export function FightPage({ fight, priceHistory, streamStatus }: FightPageProps)
         action={
           <span className={styles.headerActions}>
             {introAvailable && (
-              <Button variant="subtle" size="sm" onClick={() => setIntroOpen(true)}>
+              <Button variant="subtle" size="sm" onClick={() => setIntro("replay")}>
                 Replay intro
               </Button>
             )}
@@ -91,9 +95,10 @@ export function FightPage({ fight, priceHistory, streamStatus }: FightPageProps)
           <MarketRail fight={fight} priceHistory={priceHistory} slip={activeSlip} onSlipChange={setSlip} />
         </aside>
       </div>
-      {introOpen && (
+      {intro && (
         <FightIntro
           fightNumber={fight.number}
+          endsAt={intro === "lead-in" && startsAt !== null ? startsAt - FIGHT_INTRO_MARGIN_MS : null}
           onClose={closeIntro}
           onUnavailable={introUnavailable}
         />

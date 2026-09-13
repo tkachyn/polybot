@@ -74,6 +74,14 @@ export type RaceRegistryOptions = {
   datasetStore?: DatasetStore;
   /** Where released browser replays are kept. Default: in memory. */
   replayStore?: ReplayStore;
+  /**
+   * Holds a fight created to start now: its racers are prepared first, then
+   * it starts this long after they are ready, so the fight intro plays
+   * before any agent runs. Default 0: prepare and start at once.
+   */
+  startHoldMs?: number;
+  /** The time once a held fight is prepared. Default: Date.now. */
+  clock?: () => number;
 };
 
 /** Enough of a pruned fight to enrich history and the leaderboard. */
@@ -185,6 +193,8 @@ export class RaceRegistry {
   private readonly archive = new Map<string, ArchivedFight>();
   private nextFightNumber: number;
   private pruneInFlight?: Promise<void>;
+  private readonly startHoldMs: number;
+  private readonly clock: () => number;
 
   constructor(
     private readonly factory: CoordinatorFactory,
@@ -193,6 +203,8 @@ export class RaceRegistry {
     const start = options.fightNumberStart ?? 1;
     if (!Number.isInteger(start) || start < 1) invalid("fightNumberStart must be a positive integer");
     this.nextFightNumber = start;
+    this.startHoldMs = Math.max(0, options.startHoldMs ?? 0);
+    this.clock = options.clock ?? (() => Date.now());
     this.ledger = new InMemoryCreditLedger();
     this.users = new UserDirectory(this.ledger, {
       startingBalance: options.startingBalance ?? 1_000,
@@ -204,8 +216,9 @@ export class RaceRegistry {
 
   /**
    * Creates a fight. A future `startsAt` registers and arms it without
-   * starting (upcoming); otherwise it is armed and started. A failed start
-   * removes the fight and rethrows.
+   * starting (upcoming). Otherwise it is prepared and started: at once, or
+   * with `startHoldMs`, prepared now and started (by tickAll) that long after
+   * its racers are ready. A failed start removes the fight and rethrows.
    */
   async create(input: ApiCreateRaceInput, now = Date.now()): Promise<RaceSnapshot> {
     const raceId = input?.raceId;
@@ -236,6 +249,14 @@ export class RaceRegistry {
       if (typeof startsAt === "number" && startsAt > now) {
         this.scheduled.set(raceId, startsAt);
         await coordinator.arm(now);
+        return coordinator.snapshot();
+      }
+      if (this.startHoldMs > 0) {
+        // Opening the browsers can take a minute: the hold runs from when they are ready.
+        await coordinator.prepare(now);
+        const heldUntil = this.clock() + this.startHoldMs;
+        this.scheduled.set(raceId, heldUntil);
+        coordinator.scheduleStart(heldUntil);
         return coordinator.snapshot();
       }
       return await coordinator.prepareAndStart(now);

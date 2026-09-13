@@ -105,6 +105,27 @@ test("tickAll starts a scheduled fight exactly once", async () => {
   assert.equal(prepareCalls.length, 4);
 });
 
+test("a held start prepares the racers first and starts them when the hold ends", async () => {
+  const { factory, prepareCalls } = createFactory();
+  const registry = new RaceRegistry(factory, { startHoldMs: 9_500, clock: () => 3_000 });
+  const snapshot = await registry.create(raceInput("race-h"), 1_000);
+  const race = registry.get("race-h");
+  // Browsers and agents are ready, nothing runs, and the start is published.
+  assert.equal(snapshot.race.status, "starting");
+  assert.equal(prepareCalls.length, 4);
+  assert.equal(race.fight.startsAt, 12_500);
+  assert.equal(registry.scheduledStart("race-h"), 12_500);
+
+  await registry.tickAll(12_000);
+  assert.equal(race.engine.race.status, "starting");
+
+  await registry.tickAll(12_500);
+  assert.equal(race.engine.race.status, "running");
+  assert.equal(race.engine.race.startedAt, 12_500);
+  assert.equal(prepareCalls.length, 4);
+  assert.equal(registry.scheduledStart("race-h"), null);
+});
+
 test("a failed scheduled start leaves the fight voided and refunded", async () => {
   const { factory } = createFactory({ failRaceIds: new Set(["race-f"]) });
   const registry = new RaceRegistry(factory, { startingBalance: 100 });

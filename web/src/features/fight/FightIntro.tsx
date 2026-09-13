@@ -1,18 +1,22 @@
 import { useEffect, useRef, useState } from "react";
-import { Button } from "../../components";
+import { serverNow } from "../../state/clock";
+import { introStartOffset } from "./fightIntroState";
+import { fightIntroSrc } from "./introVideo";
 import styles from "./FightIntro.module.css";
-
-export const FIGHT_INTRO_SRC = "/fight-intro.mp4";
 
 type FightIntroProps = {
   fightNumber: number;
+  /** When the intro should end (server time), just before its fight starts: it seeks to end then. Null plays it from the top (a replay). */
+  endsAt: number | null;
   onClose: () => void;
   onUnavailable: () => void;
 };
 
-export function FightIntro({ fightNumber, onClose, onUnavailable }: FightIntroProps) {
+export function FightIntro({ fightNumber, endsAt, onClose, onUnavailable }: FightIntroProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
-  const [needsGesture, setNeedsGesture] = useState(false);
+  const [muted, setMuted] = useState(false);
+  // Fixed when the intro opens: a new source mid-play would restart it.
+  const [src] = useState(fightIntroSrc);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -22,16 +26,27 @@ export function FightIntro({ fightNumber, onClose, onUnavailable }: FightIntroPr
     return () => globalThis.removeEventListener("keydown", onKeyDown);
   }, [onClose]);
 
-  const attemptPlayback = async () => {
+  // Plays on time whatever the browser allows: with sound when it may, else
+  // muted with a Sound on button, never waiting on a tap.
+  const start = async () => {
     const video = videoRef.current;
     if (!video) return;
+    if (endsAt !== null) video.currentTime = introStartOffset(endsAt, serverNow(), video.duration);
     try {
       video.muted = false;
       await video.play();
-      setNeedsGesture(false);
     } catch {
-      setNeedsGesture(true);
+      video.muted = true;
+      setMuted(true);
+      await video.play().catch(onClose);
     }
+  };
+
+  const unmute = () => {
+    const video = videoRef.current;
+    if (!video) return;
+    video.muted = false;
+    setMuted(false);
   };
 
   return (
@@ -39,11 +54,10 @@ export function FightIntro({ fightNumber, onClose, onUnavailable }: FightIntroPr
       <video
         ref={videoRef}
         className={styles.video}
-        src={FIGHT_INTRO_SRC}
-        autoPlay
+        src={src}
         playsInline
         preload="auto"
-        onCanPlay={() => void attemptPlayback()}
+        onLoadedMetadata={() => void start()}
         onEnded={onClose}
         onError={onUnavailable}
       />
@@ -51,14 +65,10 @@ export function FightIntro({ fightNumber, onClose, onUnavailable }: FightIntroPr
         <span className={styles.kicker}>Fight intro</span>
         <span className={styles.fightNumber}>Fight #{String(fightNumber).padStart(4, "0")}</span>
       </div>
-      {needsGesture && (
-        <div className={styles.playGate}>
-          <p className={styles.ready}>Fighters ready?</p>
-          <Button variant="action" size="lg" onClick={() => void attemptPlayback()}>
-            Play fight intro
-          </Button>
-          <p className={styles.soundNote}>Tap to play with sound</p>
-        </div>
+      {muted && (
+        <button type="button" className={styles.sound} onClick={unmute}>
+          Sound on
+        </button>
       )}
       <button type="button" className={styles.skip} onClick={onClose}>
         Skip intro

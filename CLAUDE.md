@@ -50,8 +50,12 @@ as a parameter so tests inject their own.
 
 `prepareAndStart` creates all four Steel sessions, prepares all four agents, arms the
 sabotage plan, passes the readiness barrier, then calls `RaceEngine.start` so all racers
-begin at the same timestamp. Agent loops then run detached; a rejected loop marks that racer
-`failed` rather than failing the race. An API-level ticker calls `tick` every second.
+begin at the same timestamp. `prepare` runs everything before the start on its own (once):
+with `startHoldMs` (`FIGHT_INTRO_HOLD_MS`, 10 s in live mode, 0 simulated) the registry
+prepares a fight created to start now, publishes `startsAt` as ready + hold, and `tickAll`
+starts it then, so the web app's intro video plays before any agent runs. Agent loops then
+run detached; a rejected loop marks that racer `failed` rather than failing the race. An
+API-level ticker calls `tick` every second.
 
 Timing is enforced in `RaceEngine.tick`, which is called from `reachCheckpoint`,
 `finishRacer`, and the ticker: at `targetDurationMs` (180 s) the race moves to

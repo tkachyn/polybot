@@ -10,6 +10,7 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { BrowserRouter } from "react-router-dom";
 import { App } from "./App";
+import { preloadFightIntro } from "./features/fight/introVideo";
 import { FightsProvider } from "./state/fights";
 import { SessionProvider } from "./state/session";
 
@@ -27,3 +28,8 @@ createRoot(container).render(
     </BrowserRouter>
   </StrictMode>,
 );
+
+// The fight intro downloads in the background once the page itself has
+// loaded, so it plays with no wait whenever a fight is about to start.
+if (document.readyState === "complete") void preloadFightIntro();
+else window.addEventListener("load", () => void preloadFightIntro(), { once: true });
