@@ -7,7 +7,7 @@
  *            title (2 lines) · SABOTAGE + summary
  *   body     outcomes (left): monogram, name, progress, % chance, Yes / No
  *            chart (right): win probability over time, sabotage marker
- *   footer   volume · traders · leader checkpoint · resolution · View fight
+ *   footer   volume · traders · sabotages · resolution · View fight
  *
  * Yes / No open the fight screen with that bet slip preselected. Once the
  * market settles, the chance and Yes / No give way to each agent's result
@@ -24,7 +24,13 @@ import { RUN_STATUS_LABEL } from "../../lib/labels";
 import { useFightStream } from "../fight/useFightStream";
 import { ProbabilityChart } from "../market/ProbabilityChart";
 import { SLIP_PARAM, formatSlipParam } from "../market/slipParam";
-import { CardClock, Resolution, SabotageLine } from "./FightCard";
+import {
+  CardClock,
+  DISPLAYED_SABOTAGE_COUNT,
+  Resolution,
+  SabotageLine,
+  sabotageProgress,
+} from "./FightCard";
 import styles from "./FeaturedFightCard.module.css";
 
 /** Chance as a whole percent. Lives in lib/format; re-exported for this screen. */
@@ -262,10 +268,10 @@ export function FeaturedFightCard({ fight }: { fight: FightSummary }) {
             <span className={cx("num", styles.metaFigure)}>{formatNumber(shown.traders)}</span>
             {shown.traders === 1 ? " trader" : " traders"}
           </span>
-          <span className={styles.metaItem} title="Highest checkpoint cleared by any agent">
-            Leader{" "}
+          <span className={styles.metaItem} title="Sabotages triggered in this fight">
+            Sabotages{" "}
             <span className={cx("num", styles.metaFigure)}>
-              {formatNumber(shown.leaderCheckpoint)}/{formatNumber(shown.checkpointCount)}
+              {formatNumber(sabotageProgress(shown.sabotage))}/{formatNumber(DISPLAYED_SABOTAGE_COUNT)}
             </span>
           </span>
           <Resolution fight={shown} />
