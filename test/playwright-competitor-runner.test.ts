@@ -1328,3 +1328,22 @@ test("an inspect after the page changed, or after another action, starts a new c
   assert.equal(reports.length, 7);
   assert.ok(reports.every((report) => report.modelError === undefined));
 });
+
+test("a failed decision's pause note names the problem, never the raw provider error", async () => {
+  let calls = 0;
+  const model: CompetitorDecisionModel = {
+    async decide() {
+      calls += 1;
+      if (calls === 1) {
+        throw new Error("429 Rate limit exceeded: new-account-rpm/openai/gpt-5.6-luna-20260709. Rate limit reached");
+      }
+      return { type: "finish" };
+    },
+  };
+  const { reports } = await runWith(new FakePage(), [], {}, { model });
+
+  const note = reports.find((report) => report.kind === "note" && report.text.startsWith("Model provider pause ("));
+  assert.ok(note, "the failed decision is reported as a pause note");
+  assert.match(note.text, /Retrying after the model provider rate-limited it\./);
+  assert.doesNotMatch(note.text, /new-account-rpm|429/);
+});
