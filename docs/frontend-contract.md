@@ -93,7 +93,7 @@ Transfer amounts must be finite, greater than 0 and at most 100,000 per request.
 
 ## Server-sent events
 
-All streams send `retry: 2000` first and a `: ping` comment every 15 s. Each `data:` line is the JSON payload named in the `*StreamEvents` types.
+All streams send `retry: 2000` first, then a `ping` event (`{ "intervalMs": 5000 }`) on connect and every 5 s. Pings are named events, not SSE comments, because EventSource never shows comments to the page: the web client treats a connection that misses two pings as dead, reconnects it and polls REST meanwhile (`web/src/api/stream.ts`). Each `data:` line is the JSON payload named in the `*StreamEvents` types.
 
 | Stream | Events |
 | --- | --- |
