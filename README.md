@@ -77,6 +77,16 @@ printed in advance. Venue Wi-Fi must allow outbound HTTPS and Server-Sent
 Events. Test the final URL from one iPhone and one Android device on the actual
 network before judges arrive.
 
+Demo-day checklist:
+
+1. Run `npm run build:all` and the full test suite before leaving the development network.
+2. Start `npm run demo`, then confirm `npm run demo:check` returns `"ok":true`.
+3. Start `npm run demo:tunnel` and open its HTTPS URL on the presentation laptop.
+4. Open a fight and use **Invite judges** from that public page. The dialog must show the HTTPS QR, not the localhost warning.
+5. Scan once from iOS and once from Android over the same network the judges will use.
+6. Place one test bet from each phone and confirm both names appear in **Judge standings**.
+7. Restart both phones' browsers, confirm their balances remain, then leave the server and tunnel running.
+
 ## Modes
 
 - **`RACE_MODE=live`** (default) uses Steel sessions, Playwright over CDP, the course verifier and OpenRouter models. The operator creates fights with `POST /races`. Copy `.env.example` to `.env` and populate `OPENROUTER_API_KEY` plus either `STEEL_API_KEYS` or `STEEL_API_KEY`; the server loads `.env` automatically.
