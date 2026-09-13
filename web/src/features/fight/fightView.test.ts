@@ -11,6 +11,7 @@ import {
   frameAgeLabel,
   gridRows,
   isAgentActive,
+  isAgentUnderSabotage,
   isRaceOver,
   leaderView,
   marketStateView,
@@ -47,6 +48,12 @@ describe("agentStatusView", () => {
     expect(isAgentActive("finished")).toBe(false);
     expect(isAgentActive("timed_out")).toBe(false);
     expect(isAgentActive("ready")).toBe(false);
+  });
+
+  it("identifies only agents currently under sabotage", () => {
+    expect(isAgentUnderSabotage("recovering")).toBe(true);
+    expect(isAgentUnderSabotage("running")).toBe(false);
+    expect(isAgentUnderSabotage("finished")).toBe(false);
   });
 });
 

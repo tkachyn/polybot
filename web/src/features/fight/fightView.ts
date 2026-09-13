@@ -54,6 +54,11 @@ export function isAgentActive(phase: RacerPhase): boolean {
   return phase === "running" || phase === "recovering";
 }
 
+/** The racer is currently handling a sabotage hit. */
+export function isAgentUnderSabotage(phase: RacerPhase): boolean {
+  return phase === "recovering";
+}
+
 // ---------------------------------------------------------------------------
 // Leader
 // ---------------------------------------------------------------------------
