@@ -73,7 +73,11 @@ export type AgentActionReport = {
   /** Stable key for loop detection. Defaults to `text`. */
   signature?: string;
   error?: string;
-  /** The same failure as the model was shown in its history: no call log, nothing hidden. */
+  /**
+   * What the model's history says about this step: its failure as the model
+   * was shown it (no call log, nothing hidden), or the runner's feedback on a
+   * step that worked, such as a repeated inspect of an unchanged page.
+   */
   modelError?: string;
   at?: number;
   /** What the browser reported about this step, independent of the model's claim. */

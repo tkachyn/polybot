@@ -144,7 +144,10 @@ export type StepRecord = {
   decisionIssue: DecisionIssue | null;
   /** Full error text, for diagnostics: may include Playwright's call log. */
   error: string | null;
-  /** The same failure as the model was shown in its history: use this for prompts. */
+  /**
+   * What the model's history holds for this step, for prompts: the failure as
+   * it was shown, or the runner's feedback on a step that worked.
+   */
   modelError: string | null;
   signature: string | null;
   evidence: {

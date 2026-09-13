@@ -349,6 +349,31 @@ test("sft history uses the model-facing error the runner recorded, verbatim", ()
   assert.equal(history[0].error, shown);
 });
 
+test("sft history carries the runner's feedback on a step that worked, verbatim", () => {
+  const record = goldenRecord();
+  const feedback = "Inspect shows the same page you already have. Act on one of the listed controls.";
+  record.agents[0].steps = [
+    stepRecord(1, T + 1_000, { observedAt: T + 500, observation: PRODUCT, action: { type: "inspect" } }),
+    stepRecord(2, T + 2_000, { observedAt: T + 1_500, observation: PRODUCT, action: { type: "inspect" } }),
+    stepRecord(3, T + 3_000, {
+      observedAt: T + 2_500, observation: PRODUCT, action: { type: "inspect" }, modelError: feedback,
+    }),
+    stepRecord(4, T + 4_000, { observedAt: T + 3_500, observation: PRODUCT, action: click("Add to cart") }),
+  ];
+  record.events = [];
+  const rows = build([record]);
+  // The feedback step is an ordinary action that wasted a turn.
+  const nudged = step(rows, "racer-1", 3);
+  assert.deepEqual([nudged.result.ok, nudged.result.error, nudged.labels.quality], [true, null, "wasted"]);
+  const example = rows.sft.find((candidate) => candidate.metadata.stepId === `${RACE_ID}:racer-1:4`);
+  assert.ok(example);
+  assert.deepEqual(JSON.parse(example.messages[1].content as string).history, [
+    { decision: { type: "inspect" } },
+    { decision: { type: "inspect" } },
+    { decision: { type: "inspect" }, error: feedback },
+  ]);
+});
+
 test("preferences: self-correction and cross-agent pairs at the trap", () => {
   const rows = build();
   assert.deepEqual(rows.preferences.map((pair) => pair.id), [

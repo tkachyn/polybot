@@ -1268,3 +1268,63 @@ test("paced provider retries pause visibly and never count as decision failures"
     /after 3 provider\/protocol retries/,
   );
 });
+
+const REPEATED_INSPECT = "Inspect shows the same page you already have. Act on one of the listed controls.";
+
+test("tells the model in its history when it keeps inspecting an unchanged page", async () => {
+  const { reports, model } = await runWith(new FakePage(), [
+    { type: "inspect" },
+    { type: "inspect", reasoning: "Look again." },
+    { type: "inspect" },
+    { type: "inspect" },
+    { type: "finish" },
+  ]);
+
+  // From the third inspect of the same page, its history entry says so.
+  assert.deepEqual(model.inputs[4].history, [
+    { decision: { type: "inspect" } },
+    { decision: { type: "inspect" } },
+    { decision: { type: "inspect" }, error: REPEATED_INSPECT },
+    { decision: { type: "inspect" }, error: REPEATED_INSPECT },
+  ]);
+  // Those steps are still actions, with the model's own decisions; the
+  // feedback is recorded as what the model was told.
+  assert.deepEqual(reports.map((report) => [report.kind, report.error, report.modelError]), [
+    ["action", undefined, undefined],
+    ["action", undefined, undefined],
+    ["action", undefined, REPEATED_INSPECT],
+    ["action", undefined, REPEATED_INSPECT],
+    ["action", undefined, undefined],
+  ]);
+  assert.deepEqual(reports.map((report) => report.action?.type), [
+    "inspect", "inspect", "inspect", "inspect", "finish",
+  ]);
+});
+
+test("an inspect after the page changed, or after another action, starts a new count", async () => {
+  const page = new FakePage();
+  const decisions: AgentDecision[] = [
+    { type: "inspect" },
+    { type: "inspect" },
+    // The page changes while the model decides this step, so the next inspect sees a new page.
+    { type: "inspect" },
+    { type: "click", targetRole: "primary-action" },
+    { type: "inspect" },
+    { type: "inspect" },
+    { type: "finish" },
+  ];
+  let calls = 0;
+  const model: CompetitorDecisionModel = {
+    async decide() {
+      calls += 1;
+      if (calls === 2) page.bodyText = "A new banner appeared";
+      const decision = decisions.shift();
+      if (!decision) throw new Error("No decision configured");
+      return decision;
+    },
+  };
+  const { reports } = await runWith(page, [], {}, { model });
+
+  assert.equal(reports.length, 7);
+  assert.ok(reports.every((report) => report.modelError === undefined));
+});

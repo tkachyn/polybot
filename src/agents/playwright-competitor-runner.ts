@@ -135,6 +135,10 @@ const CURSOR_SETTLE_MS = 100;
 const EVALUATE_TIMEOUT_MS = 1_000;
 const MAX_CONSECUTIVE_DECISION_FAILURES = 3;
 const MAX_TOTAL_DECISION_FAILURES = 6;
+/** After this many inspects in a row of an unchanged page, the model's history says so. */
+const INSPECT_REPEAT_LIMIT = 3;
+const REPEATED_INSPECT_FEEDBACK =
+  "Inspect shows the same page you already have. Act on one of the listed controls.";
 const UNSAFE_EVALUATE_PATTERNS: ReadonlyArray<RegExp> = [
   /\bfetch\s*\(/i,
   /\bXMLHttpRequest\b/i,
@@ -241,7 +245,10 @@ type StepOutcome = {
   url?: string;
   /** Full error text, for telemetry only. */
   error?: string;
-  /** The same failure as the model may see it: no call log, nothing hidden. */
+  /**
+   * What the model's history says about the step: its failure without the call
+   * log or anything hidden, or the runner's feedback on a step that worked.
+   */
   modelError?: string;
   /** Text typed into a password field (or one named like it): never reported. */
   secret?: string;
@@ -322,6 +329,9 @@ export class PlaywrightCompetitorRunner implements CompetitorAgentRunner {
     let totalDecisionFailures = 0;
     let consecutiveDecisionFailures = 0;
     let initialStateReported = false;
+    // Inspect decisions in a row on an unchanged observation, and that observation.
+    let inspectStreak = 0;
+    let inspectedPage = "";
 
     try {
       for (let action = 0; action < this.maxActions; action += 1) {
@@ -395,15 +405,27 @@ export class PlaywrightCompetitorRunner implements CompetitorAgentRunner {
         }
         if (controller.signal.aborted) return;
 
-        const outcome = await this.attempt(page, context, decision);
+        const seen = JSON.stringify(observed.observation);
+        if (decision.type !== "inspect") {
+          inspectStreak = 0;
+        } else if (inspectStreak > 0 && seen === inspectedPage) {
+          inspectStreak += 1;
+        } else {
+          inspectStreak = 1;
+          inspectedPage = seen;
+        }
+
+        const attempted = await this.attempt(page, context, decision);
+        // Inspect only re-reads a page the model already has. After a few in a
+        // row its history says so, while the step stays an ordinary action.
+        const outcome = attempted.error === undefined && inspectStreak >= INSPECT_REPEAT_LIMIT
+          ? { ...attempted, modelError: REPEATED_INSPECT_FEEDBACK }
+          : attempted;
         if (outcome.secret !== undefined) secrets.add(outcome.secret);
         // The model's own history never carries its reasoning.
         const remembered = withoutReasoning(decision);
-        history.push(
-          outcome.error === undefined
-            ? { decision: remembered }
-            : { decision: remembered, error: outcome.modelError ?? outcome.error },
-        );
+        const told = outcome.modelError ?? outcome.error;
+        history.push(told === undefined ? { decision: remembered } : { decision: remembered, error: told });
         this.report(context, decision, step, outcome, {
           observed, observedAt, promptedAt, decidedAt, rateLimitWaitMs, decisionIssue,
         }, secrets);
@@ -500,6 +522,7 @@ export class PlaywrightCompetitorRunner implements CompetitorAgentRunner {
       );
       const reasoning = normalizeReasoning(decision.reasoning);
       const evidence = secrets.scrubEvidence(outcome.evidence);
+      const told = outcome.modelError ?? outcome.error;
       context.reportAction({
         kind: outcome.error === undefined ? "action" : "error",
         text: secrets.scrub(describeDecision(shown)),
@@ -507,13 +530,9 @@ export class PlaywrightCompetitorRunner implements CompetitorAgentRunner {
         step,
         maxSteps: Number.isFinite(this.maxActions) ? this.maxActions : 0,
         signature: secrets.scrub(JSON.stringify(shown)),
-        ...(outcome.error === undefined
-          ? {}
-          : {
-            error: secrets.scrubError(outcome.error, outcome.secret),
-            // What the model's history holds for this step (secrets redacted).
-            modelError: secrets.scrubError(outcome.modelError ?? outcome.error, outcome.secret),
-          }),
+        ...(outcome.error === undefined ? {} : { error: secrets.scrubError(outcome.error, outcome.secret) }),
+        // What the model's history holds for this step (secrets redacted).
+        ...(told === undefined ? {} : { modelError: secrets.scrubError(told, outcome.secret) }),
         ...(Object.keys(evidence).length === 0 ? {} : { evidence }),
         observation: secrets.scrubObservation(
           stepObservation(seen.observed.observation, seen.observed.masked),
