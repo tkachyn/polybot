@@ -1,7 +1,8 @@
 /**
- * Resolved fight (handoff 2.4): settled header, the agent evaluation report,
- * then the market: per-agent settlement table with the winning row tinted,
- * sabotage recap, the viewer's payout card and the price history.
+ * Resolved fight (handoff 2.4): settled header, then the market (per-agent
+ * settlement table with the winning row tinted, sabotage recap and the
+ * viewer's payout card) above the agent evaluation report, then the price
+ * history. What a bettor came back for comes first.
  *
  * Rendered by FightRoute inside a scrolling <Page> when fight.status is
  * "resolved". Renders no Page of its own.
@@ -68,14 +69,14 @@ export function SettledFight({ fight, priceHistory, evaluation }: SettledFightPr
         Resolved fights
       </ButtonLink>
       <SettledHeader fight={fight} />
+      <AgentSettlementTable fight={fight} />
+      <SabotageRecap fight={fight} />
+      <PayoutCard fight={fight} />
       <EvaluationReport
         raceId={fight.raceId}
         pointer={evaluation === undefined ? fight.evaluation : evaluation}
         resolved={fight.status === "resolved"}
       />
-      <AgentSettlementTable fight={fight} />
-      <SabotageRecap fight={fight} />
-      <PayoutCard fight={fight} />
       {priceHistory.length > 0 && (
         <section className={styles.chart} aria-label="Win probability history">
           <ProbabilityChart
