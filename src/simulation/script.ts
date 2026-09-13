@@ -10,7 +10,7 @@
  * race events, exactly as for a live fight.
  */
 import type { BlockedBy, DatasetAction, HazardType, StepObservation } from "../api/dto.js";
-import { REDACTED_TEXT } from "../agents/competitor-decision.js";
+import { REDACTED_TEXT, parseDecision, withoutReasoning } from "../agents/competitor-decision.js";
 import type { ActionEvidence, AgentActionReport } from "../application/contracts.js";
 import { effectLabelFor, type SimPage, type SimTemplate } from "./catalogue.js";
 import { STEP_DELAY_MAX_MS, STEP_DELAY_MIN_MS, type RacerPlan } from "./plan.js";
@@ -67,7 +67,6 @@ export type ScriptStep = {
   kind: "action" | "error";
   text: string;
   error?: string;
-  signature?: string;
   /** The scripted agent's one-sentence reason for the step. */
   reasoning?: string;
   /** The step actively cleared the persistent hazard. */
@@ -185,7 +184,7 @@ export function actionReport(
     url: page.url,
     step,
     maxSteps,
-    signature: entry.signature ?? entry.text,
+    signature: simSignature(action),
     observation: simObservation(entry, page, context.brand, action),
     action,
     observedAt: context.observedAt,
@@ -200,6 +199,22 @@ export function actionReport(
   if (entry.evidence) report.evidence = structuredClone(entry.evidence);
   if (entry.recovered) report.evidence = { ...report.evidence, clearedSabotage: true };
   return report;
+}
+
+/**
+ * The loop signature a live runner reports for a step: the JSON of its tool
+ * call as parsed, without reasoning (and without the dataset-only
+ * `textLength`). Steps that make the same tool call share it, whatever their
+ * text, so repeats count as loops and as wasted steps exactly as for a model.
+ */
+export function simSignature(action: DatasetAction): string {
+  try {
+    return JSON.stringify(withoutReasoning(parseDecision(action)));
+  } catch {
+    // A scripted step can stand for a call no model could make (typing without text).
+    const { textLength: _textLength, ...call } = action;
+    return JSON.stringify(call);
+  }
 }
 
 const TYPE_VERBS: ReadonlySet<string> = new Set(["type", "fill", "clear"]);
@@ -556,7 +571,6 @@ export class SimRacerScript {
   private toStep(move: Move, disruption: ScriptStep["disruption"]): ScriptStep {
     const step: ScriptStep = { kind: move.kind, text: move.text, disruption };
     if (move.error) step.error = move.error;
-    if (move.signature) step.signature = move.signature;
     if (move.reasoning) step.reasoning = move.reasoning;
     if (move.evidence) step.evidence = move.evidence;
     if (move.resolves) step.recovered = true;
@@ -626,19 +640,17 @@ export class SimRacerScript {
     return {
       kind: "action",
       text: `click "${page.target}" (no visible change)`,
-      signature: `loop:${page.targetRole}`,
       reasoning: `The page did not seem to change, so I click "${page.target}" again.`,
       evidence: { target: primaryTarget(page.target) },
       disruption: null,
     };
   }
 
-  /** A stubborn agent re-orienting after the hazard reverted. */
+  /** A stubborn agent re-orienting once it got past the hazard. */
   private stallStep(page: SimPage): ScriptStep {
     const recheck: Move = {
       kind: "action",
       text: `re-check "${page.heading}" after the disruption`,
-      signature: "stall:recheck",
       reasoning: `I am not sure the page is back to normal, so I check "${page.heading}" again.`,
     };
     const moves: Move[] = [
@@ -810,7 +822,6 @@ export class SimRacerScript {
         const wait: Move = {
           kind: "action",
           text: `wait for "${target}" to become enabled`,
-          signature: `wait:${target}`,
           reasoning: `"${target}" is greyed out, so I wait for it to become enabled.`,
           evidence: { target: primaryTarget(target) },
         };

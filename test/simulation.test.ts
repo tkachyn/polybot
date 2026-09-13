@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { parseDecision, withoutReasoning } from "../src/agents/competitor-decision.js";
 import type { AgentActionReport, CapturedFrame, CompetitorContext } from "../src/application/contracts.js";
 import { RaceCoordinator } from "../src/application/race-coordinator.js";
 import { validateDisruptionCommand } from "../src/infra/cdp-obstacle-provider.js";
@@ -23,6 +24,7 @@ import { InertCompetitorRunner, SimulatedCompetitorRunner } from "../src/simulat
 import {
   STALL_PACE_FACTOR,
   SimRacerScript,
+  actionReport,
   chooseResponse,
   runScriptOffline,
   scriptHistoryRuns,
@@ -932,6 +934,43 @@ test("scripted steps map to tool calls and observations that match the page", ()
   );
   assert.deepEqual(simAction({ kind: "action", text: "reload the page", disruption: null }, cart), { type: "navigate", url: cart.url });
   assert.deepEqual(simAction({ kind: "action", text: "read the order subtotal: $84.99", disruption: null }, cart), { type: "inspect" });
+});
+
+test("simulated steps report the signature a live runner reports for the same tool call", () => {
+  const template = templateById("ssd-checkout");
+  const cart = template.stages[2];
+  const signatureOf = (entry: ScriptStep, page = cart): string | undefined =>
+    actionReport(entry, page, 3, 90, { brand: template.brand, observedAt: 1_000, decidedAt: 1_500 }).signature;
+  // What the live runner reports: the parsed tool call, without its reasoning, as JSON.
+  const live = (call: unknown): string => JSON.stringify(withoutReasoning(parseDecision(call)));
+  const step = (text: string, extra: Partial<ScriptStep> = {}): ScriptStep =>
+    ({ kind: "action", text, reasoning: "A reason.", disruption: null, ...extra });
+
+  const click = step(`click "${cart.target}"`);
+  const loop = step(`click "${cart.target}" (no visible change)`, {
+    evidence: { target: { role: "primary-action", text: cart.target, decoy: false } },
+  });
+  assert.equal(
+    signatureOf(click),
+    live({ type: "click", targetRole: "primary-action", label: cart.target, reasoning: "Why." }),
+  );
+  // Different words, the same tool call: the same signature, so a repeat is a loop.
+  assert.equal(signatureOf(loop), signatureOf(click));
+  assert.equal(signatureOf(step("verify quantity is 1")), signatureOf(step("read the order subtotal: $84.99")));
+  assert.equal(signatureOf(step("verify quantity is 1")), live({ type: "inspect" }));
+  assert.equal(signatureOf(step('wait for "Next" to become enabled')), live({ type: "wait", durationMs: 2_000 }));
+  assert.equal(
+    signatureOf(step("evaluate a bounded same-page DOM recovery helper")),
+    live({ type: "evaluate", script: "window.__arenaRecoverDisruptions?.()" }),
+  );
+  // Typed secrets stay redacted, and the dataset-only textLength is not part of the call.
+  const library = templateById("library-renewal");
+  assert.equal(
+    signatureOf(step("fill PIN: ****"), library.stages[0]),
+    live({ type: "type", targetRole: "textbox", text: "[redacted]", label: "PIN" }),
+  );
+  // A step no model could make (typing without text) still gets a stable signature.
+  assert.equal(signatureOf(step("fill the required fields")), JSON.stringify({ type: "type", targetRole: "textbox" }));
 });
 
 test("every scripted step gives a one-sentence reason", () => {
