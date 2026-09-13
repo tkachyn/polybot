@@ -142,6 +142,11 @@
   color: var(--agent-color);
 }
 
+.rowWon {
+  flex: none;
+  color: var(--color-text-muted);
+}
+
 .rowVoid {
   color: var(--color-text-muted);
 }

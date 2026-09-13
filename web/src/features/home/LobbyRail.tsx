@@ -15,11 +15,11 @@ import { AgentMonogram, IconChevronRight, Skeleton, Tag } from "../../components
 import { useLeaderboard } from "../leaderboard/useLeaderboard";
 import { agentStyle, rosterVisuals } from "../../lib/agents";
 import { cx } from "../../lib/cx";
-import { formatChance, formatCompactMoney, formatNumber, formatPercent, formatTimeOfDay } from "../../lib/format";
+import { formatCompactMoney, formatNumber, formatPercent, formatTimeOfDay } from "../../lib/format";
 import { PREVIEW_FIGHT_HINT, PREVIEW_STANDINGS_HINT, buildPlaceholderLeaderboard } from "./placeholders";
 import styles from "./LobbyRail.module.css";
 
-/** Rows shown in the rail; the full ranking lives on /leaderboard. */
+/** Standings rows shown. The standings have no page of their own, so the header doesn't link. */
 const RAIL_ROWS = 5;
 
 /**
@@ -58,8 +58,9 @@ function LeaderboardRailRow({ row }: { row: LeaderboardRow }) {
         <span className={styles.rowName} title={agent.name}>
           {agent.name}
         </span>
-        <span className={styles.rowSub}>
-          <span className="num">{formatNumber(row.wins)}</span> of <span className="num">{formatNumber(row.fights)}</span>
+        {/* Plain text flow: in a flex row each fragment took a gap as well as its space. */}
+        <span className={styles.rowSubLine}>
+          Won <span className="num">{formatNumber(row.wins)}</span> of <span className="num">{formatNumber(row.fights)}</span>
           {row.fights === 1 ? " fight" : " fights"}
         </span>
       </span>
@@ -124,15 +125,17 @@ function ResolvedRow({ fight, preview }: { fight: FightSummary; preview: boolean
               <span className={styles.rowWinner} style={agentStyle(visual)}>
                 {winner.agent.name}
               </span>
+              <span className={styles.rowWon}>won</span>
             </>
           ) : (
             <span className={styles.rowVoid}>Voided · positions refunded</span>
           )}
         </span>
       </span>
+      {/* The result is the winner on the left; the figure is what was traded. */}
       <span className={styles.rowFigures}>
-        <span className={cx("num", styles.rowFigure)}>{winner ? formatChance(winner.yes) : "—"}</span>
-        <span className={cx("num", styles.rowFigureSub)}>{formatCompactMoney(fight.volume)}</span>
+        <span className={cx("num", styles.rowFigure, styles.rowFigureSmall)}>{formatCompactMoney(fight.volume)}</span>
+        <span className={styles.rowFigureSub}>volume</span>
       </span>
     </>
   );
