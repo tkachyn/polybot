@@ -185,11 +185,6 @@ function LobbySectionView({ section, title, seeAllTo }: { section: LobbySection;
           </ButtonLink>
         )}
       </div>
-      {section.preview && (
-        <p className={styles.previewNote}>
-          Nothing is scheduled yet, so these sample fights show what’s coming. They can’t be opened or traded.
-        </p>
-      )}
       <FightCardList fights={section.fights} label={`${title} fights`} preview={section.preview} />
     </section>
   );
