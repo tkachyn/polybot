@@ -5,12 +5,12 @@
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 import type { FightAgentDetail, FightDetail } from "@contract";
 import type { StreamStatus } from "../../api/stream";
-import { ConnectionIndicator, IconGrid, IconLanes, SegmentedControl } from "../../components";
+import { AgentMonogram, ConnectionIndicator, IconGrid, IconLanes, SegmentedControl } from "../../components";
 import { cx } from "../../lib/cx";
 import type { Slip } from "../market/types";
 import { AgentLane } from "./AgentLane";
 import { AgentPane } from "./AgentPane";
-import { gridRows, isEditableTarget, sabotageMarkers, visualFor, type RosterVisuals } from "./fightView";
+import { gridRows, isEditableTarget, leaderView, sabotageMarkers, visualFor, type RosterVisuals } from "./fightView";
 import { FocusView } from "./FocusView";
 import { useArenaLayout, type ArenaLayout } from "./useArenaLayout";
 import styles from "./Arena.module.css";
@@ -52,6 +52,8 @@ export function Arena({ fight, roster, slip, streamStatus, className }: ArenaPro
 
   const focused = focus ? (fight.agents.find((a) => a.racerId === focus) ?? null) : null;
   const markers = sabotageMarkers(fight);
+  const leader = leaderView(fight);
+  const leaderAgent = leader.racerId === null ? undefined : fight.agents.find((a) => a.racerId === leader.racerId);
 
   const setButton = useCallback((racerId: string, el: HTMLButtonElement | null) => {
     if (el) buttons.current.set(racerId, el);
@@ -97,8 +99,18 @@ export function Arena({ fight, roster, slip, streamStatus, className }: ArenaPro
     <section className={cx(styles.arena, className)} aria-label="Arena">
       <div className={styles.toolbar}>
         <span className="label">Arena</span>
-        <span className={cx("label label-sm num", styles.leader)}>
-          Leader {fight.leaderCheckpoint}/{fight.checkpointCount}
+        <span className={styles.leader} title={leader.title}>
+          <span className="label label-sm">{fight.winnerRacerId !== null && leaderAgent ? "Winner" : "Leader"}</span>
+          {leaderAgent && (
+            <span className={styles.leaderName}>
+              <AgentMonogram agent={visualFor(roster, leaderAgent)} size="xs" />
+              <span className={styles.leaderText}>{leader.name}</span>
+              {leader.tied > 0 && <span className={cx("num", styles.leaderTied)}>+{leader.tied}</span>}
+            </span>
+          )}
+          <span className={cx("label label-sm num", styles.leaderFigure)}>
+            {leader.checkpoint}/{leader.checkpointCount}
+          </span>
         </span>
         {streamStatus !== "open" && <ConnectionIndicator status={streamStatus} />}
         <SegmentedControl<ArenaLayout>

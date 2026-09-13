@@ -19,8 +19,10 @@ export type AgentStatusView = { tone: AgentTone; label: string };
 /** Status band copy and tone. Terminal and pre-start phases override runStatus. */
 export function agentStatusView(agent: { runStatus: RunStatus; phase: RacerPhase }): AgentStatusView {
   switch (agent.phase) {
+    // Racers sit in "starting" for the whole pre-fight countdown; the header
+    // already says when the fight starts, so the band matches its "Upcoming".
     case "starting":
-      return { tone: "idle", label: "Starting" };
+      return { tone: "idle", label: "Upcoming" };
     case "ready":
       return { tone: "idle", label: "Ready" };
     case "finished":
@@ -45,6 +47,52 @@ export function formatEta(etaMs: number | null, phase: RacerPhase): string {
   if (etaMs === null || !Number.isFinite(etaMs)) return EMPTY;
   if (etaMs <= 0) return "Finishing";
   return `~${formatCountdown(etaMs)}`;
+}
+
+// ---------------------------------------------------------------------------
+// Leader
+// ---------------------------------------------------------------------------
+
+export type LeaderView = {
+  /** Null until some agent clears a checkpoint. */
+  racerId: string | null;
+  name: string | null;
+  /** Other agents on the same checkpoint. */
+  tied: number;
+  checkpoint: number;
+  checkpointCount: number;
+  /** Accessible description, e.g. "GPT-5.2 leads with 2 of 4 checkpoints". */
+  title: string;
+};
+
+type LeaderAgent = Pick<FightAgentDetail, "racerId" | "agent" | "checkpoint" | "checkpoints">;
+
+/** When `agent` cleared its current checkpoint; unknown sorts last. */
+function reachedAt(agent: LeaderAgent): number {
+  return agent.checkpoints.find((c) => c.index === agent.checkpoint)?.clearedAt ?? Number.POSITIVE_INFINITY;
+}
+
+/**
+ * Who leads: the verified winner once there is one, else the agent furthest
+ * along, and on a tie the one that reached that checkpoint first.
+ */
+export function leaderView(fight: Pick<FightDetail, "leaderCheckpoint" | "checkpointCount" | "winnerRacerId"> & { agents: readonly LeaderAgent[] }): LeaderView {
+  const { leaderCheckpoint: checkpoint, checkpointCount } = fight;
+  const figure = `${formatNumber(checkpoint)} of ${formatNumber(checkpointCount)}`;
+  const winner = fight.agents.find((a) => a.racerId === fight.winnerRacerId);
+  const front = checkpoint > 0 ? fight.agents.filter((a) => a.checkpoint === checkpoint) : [];
+  const lead = winner ?? [...front].sort((a, b) => reachedAt(a) - reachedAt(b))[0];
+  if (!lead) {
+    return { racerId: null, name: null, tied: 0, checkpoint, checkpointCount, title: `No agent has cleared a checkpoint yet (0 of ${formatNumber(checkpointCount)})` };
+  }
+  const tied = front.filter((a) => a.racerId !== lead.racerId).length;
+  const name = lead.agent.name;
+  const title = winner
+    ? `${name} won`
+    : tied > 0
+      ? `${name} leads with ${figure} checkpoints, reached first; ${tied} more on the same checkpoint`
+      : `${name} leads with ${figure} checkpoints`;
+  return { racerId: lead.racerId, name, tied, checkpoint, checkpointCount, title };
 }
 
 // ---------------------------------------------------------------------------

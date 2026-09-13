@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import type { AgentCheckpointState, FightAgentDetail } from "@contract";
 import {
   agentStatusView,
   checkpointDot,
@@ -7,6 +8,7 @@ import {
   formatStep,
   frameAgeLabel,
   gridRows,
+  leaderView,
   marketStateView,
   rosterByRacer,
   sabotageFiredLabel,
@@ -28,6 +30,58 @@ describe("agentStatusView", () => {
     expect(agentStatusView({ runStatus: "run", phase: "ready" }).tone).toBe("idle");
     expect(agentStatusView({ runStatus: "run", phase: "finished" }).label).toBe("Finished");
     expect(agentStatusView({ runStatus: "bad", phase: "timed_out" })).toEqual({ tone: "bad", label: "Timed out" });
+  });
+
+  it("reads Upcoming before the start, matching the header", () => {
+    expect(agentStatusView({ runStatus: "run", phase: "starting" })).toEqual({ tone: "idle", label: "Upcoming" });
+  });
+});
+
+function checkpoints(clearedAt: Array<number | null>): AgentCheckpointState[] {
+  return clearedAt.map((at, i) => ({
+    index: i + 1,
+    label: `Step ${i + 1}`,
+    state: at === null ? "pending" : "cleared",
+    isSabotage: false,
+    sabotageFired: false,
+    clearedAt: at,
+  }));
+}
+
+function racer(racerId: string, name: string, clearedAt: Array<number | null>, finishedAt: number | null = null) {
+  return {
+    racerId,
+    agent: { key: racerId, name, provider: "test", model: "test" },
+    checkpoint: clearedAt.filter((at) => at !== null).length,
+    checkpoints: checkpoints(clearedAt),
+    finishedAt,
+  } satisfies Pick<FightAgentDetail, "racerId" | "agent" | "checkpoint" | "checkpoints" | "finishedAt">;
+}
+
+describe("leaderView", () => {
+  it("names nobody before the first checkpoint", () => {
+    const view = leaderView({ leaderCheckpoint: 0, checkpointCount: 4, winnerRacerId: null, agents: [racer("r1", "GPT-5.2", [null, null, null, null])] });
+    expect(view).toMatchObject({ racerId: null, name: null, tied: 0, checkpoint: 0, checkpointCount: 4 });
+  });
+
+  it("names the agent furthest along", () => {
+    const agents = [racer("r1", "GPT-5.2", [10, null, null]), racer("r2", "Grok 4.1", [12, 20, null])];
+    expect(leaderView({ leaderCheckpoint: 2, checkpointCount: 3, winnerRacerId: null, agents })).toMatchObject({
+      racerId: "r2",
+      name: "Grok 4.1",
+      tied: 0,
+      title: "Grok 4.1 leads with 2 of 3 checkpoints",
+    });
+  });
+
+  it("breaks a tie by who got there first", () => {
+    const agents = [racer("r1", "GPT-5.2", [10, 30, null]), racer("r2", "Grok 4.1", [12, 20, null]), racer("r3", "Gemini 3 Pro", [9, null, null])];
+    expect(leaderView({ leaderCheckpoint: 2, checkpointCount: 3, winnerRacerId: null, agents })).toMatchObject({ racerId: "r2", tied: 1 });
+  });
+
+  it("prefers the verified winner", () => {
+    const agents = [racer("r1", "GPT-5.2", [10, 30, 40]), racer("r2", "Grok 4.1", [12, 20, 35])];
+    expect(leaderView({ leaderCheckpoint: 3, checkpointCount: 3, winnerRacerId: "r1", agents })).toMatchObject({ racerId: "r1", title: "GPT-5.2 won" });
   });
 });
 
