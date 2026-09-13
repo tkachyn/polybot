@@ -19,7 +19,7 @@ import {
 } from "./format";
 import { matchesSelection, parseEvaluationMode, parseEvaluationWindow } from "./params";
 import { EVALUATION_STATUS_TONE, OUTCOME_TONE, REACTION_TONE, TONE_COLOR_VAR } from "./tones";
-import { interleaveHits, steelTraceAround, traceReasoning, traceTotals } from "./trace";
+import { interleaveHits, isTraceStep, steelTraceAround, traceReasoning, traceTotals } from "./trace";
 
 // ---------------------------------------------------------------------------
 // Fixtures (tests only)
@@ -313,7 +313,20 @@ describe("trace helpers", () => {
 
   it("counts errors, decoy clicks, blocked steps and cleared sabotage", () => {
     const trace = [step(1, 1, { kind: "error", blockedBy: "modal" }), step(2, 2, { decoy: true }), step(3, 3, { clearedSabotage: true }), step(4, 4)];
-    expect(traceTotals(trace)).toEqual({ steps: 4, errors: 1, decoys: 1, blocked: 1, cleared: 1 });
+    expect(traceTotals(trace)).toEqual({ steps: 4, notes: 0, errors: 1, decoys: 1, blocked: 1, cleared: 1 });
+  });
+
+  it("counts steps the way the agent's step count does: notes are not steps", () => {
+    // The runner's step-0 page load and a rate-limit pause are logged, not taken: 3 steps, as in "Steps 3/90".
+    const trace = [
+      step(0, 0, { kind: "note", text: "open https://shop.arena.test/" }),
+      step(1, 1),
+      step(2, 2, { kind: "error" }),
+      step(2, 3, { kind: "note", text: "paused for the rate limit" }),
+      step(3, 4),
+    ];
+    expect(traceTotals(trace)).toMatchObject({ steps: 3, notes: 2, errors: 1 });
+    expect(trace.filter(isTraceStep).map((entry) => entry.step)).toEqual([1, 2, 3]);
   });
 
   it("reads the model's reasoning, trimmed, or null when it gave none", () => {

@@ -10,7 +10,7 @@ import { cx } from "../../lib/cx";
 import { EMPTY, formatNumber } from "../../lib/format";
 import { BLOCKED_BY_DESCRIPTION, BLOCKED_BY_LABEL, HAZARD_LABEL } from "../../lib/labels";
 import { formatFightTime, formatOffset } from "./format";
-import { STEEL_EXCERPT_RADIUS_MS, interleaveHits, steelTraceAround, traceReasoning, traceTotals } from "./trace";
+import { STEEL_EXCERPT_RADIUS_MS, interleaveHits, isTraceStep, steelTraceAround, traceReasoning, traceTotals } from "./trace";
 import styles from "./Trace.module.css";
 
 function plural(n: number, one: string, many: string): string {
@@ -134,7 +134,7 @@ export type FullTraceProps = {
 
 export function FullTrace({ agent, startedAt }: FullTraceProps) {
   const totals = useMemo(() => traceTotals(agent.trace), [agent.trace]);
-  if (totals.steps === 0) return <p className={styles.empty}>No steps recorded.</p>;
+  if (agent.trace.length === 0) return <p className={styles.empty}>No steps recorded.</p>;
   return (
     <Disclosure
       summary={
@@ -243,7 +243,8 @@ function FullTraceTable({ agent, startedAt }: FullTraceProps) {
                 key={`step-${row.entry.step}-${index}`}
                 className={cx(tableStyles.row, row.entry.kind === "error" && styles.errorRow, row.entry.clearedSabotage && styles.clearedRow)}
               >
-                <td className={tableStyles.num}>{formatNumber(row.entry.step)}</td>
+                {/* A note is not a step, so it takes no step number (see isTraceStep). */}
+                <td className={tableStyles.num}>{isTraceStep(row.entry) ? formatNumber(row.entry.step) : <span className={styles.none}>{EMPTY}</span>}</td>
                 <td className={cx(tableStyles.num, styles.time)}>{formatFightTime(row.entry.at, startedAt)}</td>
                 <td className={styles.actionCell} title={row.entry.url ?? undefined}>
                   <span className={cx(row.entry.kind === "error" && styles.errorText, row.entry.kind === "note" && styles.noteText)}>

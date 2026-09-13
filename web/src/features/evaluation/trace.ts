@@ -32,20 +32,31 @@ export function interleaveHits(trace: readonly TraceEntry[], reactions: readonly
   return rows;
 }
 
-export type TraceTotals = { steps: number; errors: number; decoys: number; blocked: number; cleared: number };
+/**
+ * Actions and errors are steps; notes (the opening page load, a pause for a
+ * rate limit) are logged in the trace but are not steps. The agent's own step
+ * count ("Steps 40/90") counts the same way.
+ */
+export function isTraceStep(entry: Pick<TraceEntry, "kind">): boolean {
+  return entry.kind !== "note";
+}
+
+export type TraceTotals = { steps: number; notes: number; errors: number; decoys: number; blocked: number; cleared: number };
 
 export function traceTotals(trace: readonly TraceEntry[]): TraceTotals {
+  let steps = 0;
   let errors = 0;
   let decoys = 0;
   let blocked = 0;
   let cleared = 0;
   for (const entry of trace) {
+    if (isTraceStep(entry)) steps += 1;
     if (entry.kind === "error") errors += 1;
     if (entry.decoy) decoys += 1;
     if (entry.blockedBy !== null) blocked += 1;
     if (entry.clearedSabotage) cleared += 1;
   }
-  return { steps: trace.length, errors, decoys, blocked, cleared };
+  return { steps, notes: trace.length - steps, errors, decoys, blocked, cleared };
 }
 
 /** The model's stated reason for a step, trimmed; null when it gave none. */
