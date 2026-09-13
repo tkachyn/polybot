@@ -5,7 +5,6 @@ import { EvaluationsPage } from "./features/evaluation/EvaluationsPage";
 import { JudgeStandingsPage } from "./features/demo/JudgeStandingsPage";
 import { FightRoute } from "./features/fight/FightRoute";
 import { HomePage } from "./features/home/HomePage";
-import { LeaderboardPage } from "./features/leaderboard/LeaderboardPage";
 import { PortfolioPage } from "./features/portfolio/PortfolioPage";
 import { ResolvedPage } from "./features/resolved/ResolvedPage";
 import { WalletPage } from "./features/wallet/WalletPage";
@@ -20,7 +19,6 @@ export function App() {
         <Route path="fights/:raceId/standings" element={<JudgeStandingsPage />} />
         <Route path="portfolio" element={<PortfolioPage />} />
         <Route path="wallet" element={<WalletPage />} />
-        <Route path="leaderboard" element={<LeaderboardPage />} />
         <Route path="evaluations" element={<EvaluationsPage />} />
         <Route path="*" element={<NotFoundPage />} />
       </Route>

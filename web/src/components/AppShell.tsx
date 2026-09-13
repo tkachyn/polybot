@@ -15,7 +15,7 @@ import { formatInitials } from "../lib/format";
 import { useSession } from "../state/session";
 import { Skeleton } from "./Feedback";
 import { Money } from "./Figures";
-import { IconFights, IconLeaderboard, IconPortfolio, IconResolved, IconWallet, LogoMark, type IconProps } from "./icons";
+import { IconFights, IconPortfolio, IconResolved, IconWallet, LogoMark, type IconProps } from "./icons";
 import { ErrorBoundary } from "../app/ErrorBoundary";
 import { Tag } from "./Tag";
 import { DemoJoinDialog } from "../features/demo/DemoJoinDialog";
@@ -59,7 +59,6 @@ function IconEvaluations({ size = 16, title, ...rest }: IconProps) {
 export const NAV_ITEMS: readonly NavItem[] = [
   { to: "/", label: "Fights", Icon: IconFights, match: (p) => p === "/" || p.startsWith("/fights/") },
   { to: "/portfolio", label: "Portfolio", Icon: IconPortfolio },
-  { to: "/leaderboard", label: "Leaderboard", Icon: IconLeaderboard },
   { to: "/evaluations", label: "Evaluations", Icon: IconEvaluations },
   { to: "/resolved", label: "Resolved", Icon: IconResolved },
   { to: "/wallet", label: "Wallet", Icon: IconWallet },

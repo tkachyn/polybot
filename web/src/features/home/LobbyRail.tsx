@@ -2,10 +2,10 @@
  * The lobby's right rail: standings first, then what has already settled.
  *
  *   Leaderboard  agent ranking over the leaderboard window, by win rate
- *   Resolved     one row per settled fight, with its winner
+ *   Past fights  one row per settled fight, with its winner
  *
- * Both are compact reads of screens that exist in full elsewhere, so each
- * card's header links to its own page.
+ * Past fights is a compact read of the Resolved screen, so its header links
+ * there. The standings have no page of their own; this is the whole of them.
  */
 import { Link } from "react-router-dom";
 import type { FightSummary, LeaderboardRow } from "@contract";
@@ -20,7 +20,15 @@ import styles from "./LobbyRail.module.css";
 /** Rows shown in the rail; the full ranking lives on /leaderboard. */
 const RAIL_ROWS = 5;
 
-function CardHead({ to, title }: { to: string; title: string }) {
+/** A card header. With `to`, the whole header leads to that screen. */
+function CardHead({ to, title }: { to?: string; title: string }) {
+  if (!to) {
+    return (
+      <div className={styles.head}>
+        <h2 className={styles.headTitle}>{title}</h2>
+      </div>
+    );
+  }
   return (
     <Link to={to} className={styles.head}>
       <h2 className={styles.headTitle}>{title}</h2>
@@ -61,7 +69,7 @@ function LeaderboardCard() {
 
   return (
     <section className={styles.card}>
-      <CardHead to="/leaderboard" title="Leaderboard" />
+      <CardHead title="Leaderboard" />
       {error && !data ? (
         <p className={styles.empty}>Standings are unavailable right now.</p>
       ) : rows === null ? (
@@ -132,15 +140,19 @@ function ResolvedRow({ fight, preview }: { fight: FightSummary; preview: boolean
   );
 }
 
+/** Settled fights shown in the rail; the rest live on /resolved. */
+const PAST_FIGHT_ROWS = 3;
+
 function ResolvedCard({ fights, preview }: { fights: readonly FightSummary[]; preview: boolean }) {
+  const shown = fights.slice(0, PAST_FIGHT_ROWS);
   return (
     <section className={styles.card}>
-      <CardHead to="/resolved" title="Resolved" />
-      {fights.length === 0 ? (
+      <CardHead to="/resolved" title="Past fights" />
+      {shown.length === 0 ? (
         <p className={styles.empty}>Settled fights appear here with their winner.</p>
       ) : (
         <ul className={styles.rows}>
-          {fights.map((fight) => (
+          {shown.map((fight) => (
             <ResolvedRow key={fight.raceId} fight={fight} preview={preview} />
           ))}
         </ul>
@@ -150,7 +162,7 @@ function ResolvedCard({ fights, preview }: { fights: readonly FightSummary[]; pr
 }
 
 export type LobbyRailProps = {
-  /** Settled fights, newest first. */
+  /** Settled fights, newest first. Only the first few are shown. */
   resolved: readonly FightSummary[];
   /** Hardcoded demo fights: resolved rows render, but do not link. */
   preview?: boolean;

@@ -47,7 +47,12 @@ export function HomePage() {
 
   const matching = useMemo(() => filterFights(previews, "all", query), [previews, query]);
   const upcoming = useMemo(() => matching.filter((f) => f.status === "upcoming"), [matching]);
-  const resolved = useMemo(() => matching.filter((f) => f.status === "resolved"), [matching]);
+
+  // Real settled fights fill the rail once the backend has any; the demo's
+  // previews stand in only while it has none.
+  const settled = useMemo(() => fights.filter((f) => f.status === "resolved"), [fights]);
+  const previewResolved = useMemo(() => matching.filter((f) => f.status === "resolved"), [matching]);
+  const resolved = settled.length > 0 ? settled : previewResolved;
 
   return (
     <Page title="Fights">
@@ -81,7 +86,7 @@ export function HomePage() {
           </section>
         </div>
 
-        <LobbyRail resolved={resolved} preview />
+        <LobbyRail resolved={resolved} preview={settled.length === 0} />
       </div>
     </Page>
   );
