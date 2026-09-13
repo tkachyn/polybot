@@ -43,7 +43,7 @@ Routes:
 | `/portfolio` | `features/portfolio/PortfolioPage` (`PortfolioPage`) |
 | `/wallet` | `features/wallet/WalletPage` (`WalletPage`), `?tab=deposit\|withdraw` |
 | `/leaderboard` | `features/leaderboard/LeaderboardPage` (`LeaderboardPage`) |
-| `/evaluations` | `features/evaluation/EvaluationsPage` (`EvaluationsPage`): robustness matrix, training dataset download (the zip, or one file at a time), recent reports; `?mode=live\|simulated\|all&days=7\|30\|90` |
+| `/evaluations` | `features/evaluation/EvaluationsPage` (`EvaluationsPage`): robustness matrix, training dataset download (the zip, or one file at a time), recent reports (the matrix's newest fights, same filters); `?mode=live\|simulated\|all&days=7\|30\|90` |
 | `*` | `app/NotFoundPage` |
 
 Feature folders own their files. Keep the exported component names and file

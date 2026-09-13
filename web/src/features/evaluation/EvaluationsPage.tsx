@@ -6,9 +6,9 @@
  * URL: `?mode=live|simulated|all&days=7|30|90` (see ./params). Without a
  * mode the page follows the server's mode.
  */
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { Link, useSearchParams } from "react-router-dom";
-import type { FightSummary } from "@contract";
+import type { EvaluationReportSummary } from "@contract";
 import { datasetExportUrl, datasetFileUrl, type DatasetQuery, type EvaluationMode } from "../../api/client";
 import {
   AgentMonogram,
@@ -29,9 +29,7 @@ import {
 import { cx } from "../../lib/cx";
 import { formatDate, formatFightNumber, formatNumber } from "../../lib/format";
 import { EVALUATION_MODE_LABEL, SIMULATED_AGENTS_COPY } from "../../lib/labels";
-import { useFights } from "../../state/fights";
 import { useSession } from "../../state/session";
-import { resolvedNewestFirst } from "../home/filter";
 import { DATASET_FILES, DATASET_ZIP_NAME, simulatedDatasetWarning } from "./dataset";
 import { IconDownload, IconEvaluations } from "./icons";
 import {
@@ -48,8 +46,6 @@ import { RobustnessMatrix } from "./RobustnessMatrix";
 import { useRobustnessMatrix } from "./useRobustnessMatrix";
 import styles from "./EvaluationsPage.module.css";
 
-/** Recent reports listed beside the dataset. */
-const RECENT_LIMIT = 8;
 /** Every fight carries exactly four agents, so each fight adds four episodes. */
 const AGENTS_PER_FIGHT = 4;
 
@@ -210,7 +206,7 @@ export function EvaluationsPage() {
 
         <div className={styles.columns}>
           <DatasetPanel days={days} mode={mode} shownMode={shownMode} evaluations={current ? current.evaluations : null} />
-          <RecentReports />
+          <RecentReports reports={current ? current.recent : null} failed={!current && error !== null} mode={shownMode} days={days} />
         </div>
       </div>
     </Page>
@@ -296,9 +292,23 @@ function DatasetPanel({ days, mode, shownMode, evaluations }: DatasetPanelProps)
 // Recent reports
 // ---------------------------------------------------------------------------
 
-function RecentReports() {
-  const { fights, loaded, error } = useFights();
-  const recent = useMemo(() => resolvedNewestFirst(fights).slice(0, RECENT_LIMIT), [fights]);
+type RecentReportsProps = {
+  /** The matrix's newest fights (same window and mode as its figures); null while unknown. */
+  reports: readonly EvaluationReportSummary[] | null;
+  /** The matrix request failed, so the reports are unknown. */
+  failed: boolean;
+  /** The page's mode; with both modes shown, each row names its own. */
+  mode: EvaluationMode | null;
+  days: number;
+};
+
+/**
+ * The reports behind the matrix: its newest fights, in its window and mode.
+ * They come from the stored evaluations, not the lobby, so a fight that has
+ * left the lobby is listed too, and its report still opens.
+ */
+function RecentReports({ reports, failed, mode, days }: RecentReportsProps) {
+  const modeText = mode && mode !== "all" ? `${EVALUATION_MODE_LABEL[mode].toLowerCase()} ` : "";
   return (
     <section className={styles.panel} aria-labelledby="evaluations-recent">
       <div className={styles.panelHeader}>
@@ -309,9 +319,9 @@ function RecentReports() {
           All resolved
         </ButtonLink>
       </div>
-      {!loaded ? (
-        error ? (
-          <p className={styles.panelNote}>Couldn’t load fights. Retrying…</p>
+      {reports === null ? (
+        failed ? (
+          <p className={styles.panelNote}>Couldn’t load recent reports.</p>
         ) : (
           <div className={styles.panelBody} aria-hidden="true">
             {[0, 1, 2].map((i) => (
@@ -319,12 +329,16 @@ function RecentReports() {
             ))}
           </div>
         )
-      ) : recent.length === 0 ? (
-        <EmptyState size="sm" title="No resolved fights yet" description="Each fight’s evaluation report is listed here once the fight resolves." />
+      ) : reports.length === 0 ? (
+        <EmptyState
+          size="sm"
+          title="No reports in this window"
+          description={`No ${modeText}fight has resolved in the last ${formatNumber(days)} days. Each fight’s evaluation report is listed here once the fight resolves.`}
+        />
       ) : (
         <ol className={styles.recent}>
-          {recent.map((fight) => (
-            <RecentRow key={fight.raceId} fight={fight} />
+          {reports.map((report) => (
+            <RecentRow key={report.raceId} report={report} showMode={mode === "all"} />
           ))}
         </ol>
       )}
@@ -332,30 +346,35 @@ function RecentReports() {
   );
 }
 
-function RecentRow({ fight }: { fight: FightSummary }) {
-  const winner = fight.voided ? null : (fight.agents.find((a) => a.racerId === fight.winnerRacerId) ?? null);
-  const number = formatFightNumber(fight.number);
+function RecentRow({ report, showMode }: { report: EvaluationReportSummary; showMode: boolean }) {
+  const number = formatFightNumber(report.number);
   return (
     <li>
-      <Link to={`/fights/${encodeURIComponent(fight.raceId)}`} className={styles.recentRow} aria-label={`Fight ${number} evaluation report: ${fight.title}`}>
+      <Link to={`/fights/${encodeURIComponent(report.raceId)}`} className={styles.recentRow} aria-label={`Fight ${number} evaluation report: ${report.title}`}>
         <span className={cx("num", styles.recentNumber)}>{number}</span>
         <span className={styles.recentMain}>
-          <span className={cx("clamp-1", styles.recentTitle)} title={fight.title}>
-            {fight.title}
+          <span className={cx("clamp-1", styles.recentTitle)} title={report.title}>
+            {report.title}
           </span>
           <span className={styles.recentMeta}>
-            {fight.voided ? (
+            {report.voided ? (
               <span>Void</span>
-            ) : winner ? (
+            ) : report.winner ? (
               <span className={styles.recentWinner}>
-                <AgentMonogram agent={winner.agent} size="xs" />
-                {winner.agent.name}
+                <AgentMonogram agent={report.winner} size="xs" />
+                {report.winner.name}
               </span>
             ) : (
-              <span>Settling</span>
+              <span>No winner</span>
             )}
             <span aria-hidden="true">·</span>
-            <RelativeTime at={fight.finishedAt} />
+            <RelativeTime at={report.finishedAt} />
+            {showMode && (
+              <>
+                <span aria-hidden="true">·</span>
+                <span>{EVALUATION_MODE_LABEL[report.mode]}</span>
+              </>
+            )}
           </span>
         </span>
         <span className={styles.recentGo}>
