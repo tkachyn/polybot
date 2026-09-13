@@ -1,7 +1,7 @@
 /*
- * Lobby: a main column (featured fight, then what is coming up) with the
- * resolved rail alongside. The rail drops under the main column once the two
- * no longer fit side by side.
+ * Lobby: a main column (filter row, featured fight, then a section of cards
+ * per status) with the rail alongside. The rail drops under the main column
+ * once the two no longer fit side by side.
  */
 
 .layout {
@@ -25,9 +25,28 @@
   min-width: 0;
 }
 
+/* Title, an optional Preview tag, and "See all" pushed to the end. */
 .sectionHead {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2-5);
+  min-width: 0;
+  min-height: 26px;
+}
+
+.sectionTitle {
   margin: 0;
   color: var(--color-text-secondary);
+}
+
+.sectionMore {
+  margin-left: auto;
+}
+
+.previewNote {
+  margin: 0;
+  font-size: var(--fs-body-sm);
+  color: var(--color-text-muted);
 }
 
 @media (max-width: 1099px) {

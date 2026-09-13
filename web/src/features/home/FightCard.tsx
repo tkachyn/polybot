@@ -276,6 +276,11 @@ export function FightCard({ fight, className, preview = false }: FightCardProps)
             Fight <span className="num">{number}</span>
           </span>
           <StatusPill status={fightPillStatus(fight)} size="sm" />
+          {fight.status === "live" && fight.marketStatus === "frozen" && (
+            <Tag tone="neutral" title="Trading is frozen for the rest of this fight">
+              Trading frozen
+            </Tag>
+          )}
           {preview && (
             <Tag tone="edge" title={PREVIEW_FIGHT_HINT}>
               Preview

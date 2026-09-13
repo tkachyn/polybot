@@ -16,6 +16,7 @@ import { useLeaderboard } from "../leaderboard/useLeaderboard";
 import { agentStyle, rosterVisuals } from "../../lib/agents";
 import { cx } from "../../lib/cx";
 import { formatCompactMoney, formatNumber, formatPercent, formatTimeOfDay } from "../../lib/format";
+import type { RailList } from "./lobby";
 import { PREVIEW_FIGHT_HINT, PREVIEW_STANDINGS_HINT, buildPlaceholderLeaderboard } from "./placeholders";
 import styles from "./LobbyRail.module.css";
 
@@ -197,15 +198,18 @@ function UpcomingRow({ fight, preview }: { fight: FightSummary; preview: boolean
   );
 }
 
-function UpcomingCard({ fights, preview }: { fights: readonly FightSummary[]; preview: boolean }) {
+function UpcomingCard({ list }: { list: RailList | null }) {
+  const preview = list?.preview ?? false;
   // Soonest first; a fight with no time yet sorts last.
-  const shown = [...fights]
+  const shown = [...(list?.fights ?? [])]
     .sort((a, b) => (a.startsAt ?? Infinity) - (b.startsAt ?? Infinity))
     .slice(0, UPCOMING_ROWS);
   return (
     <section className={styles.card}>
       <CardHead title="Upcoming" preview={preview ? PREVIEW_FIGHT_HINT : null} />
-      {shown.length === 0 ? (
+      {list === null ? (
+        <RailRowsSkeleton count={2} />
+      ) : shown.length === 0 ? (
         <p className={styles.empty}>Scheduled fights appear here before they open.</p>
       ) : (
         <ul className={styles.rows}>
@@ -218,12 +222,15 @@ function UpcomingCard({ fights, preview }: { fights: readonly FightSummary[]; pr
   );
 }
 
-function ResolvedCard({ fights, preview }: { fights: readonly FightSummary[]; preview: boolean }) {
-  const shown = fights.slice(0, PAST_FIGHT_ROWS);
+function ResolvedCard({ list }: { list: RailList | null }) {
+  const preview = list?.preview ?? false;
+  const shown = (list?.fights ?? []).slice(0, PAST_FIGHT_ROWS);
   return (
     <section className={styles.card}>
       <CardHead to="/resolved" title="Past fights" preview={preview ? PREVIEW_FIGHT_HINT : null} />
-      {shown.length === 0 ? (
+      {list === null ? (
+        <RailRowsSkeleton count={PAST_FIGHT_ROWS} />
+      ) : shown.length === 0 ? (
         <p className={styles.empty}>Settled fights appear here with their winner.</p>
       ) : (
         <ul className={styles.rows}>
@@ -236,23 +243,36 @@ function ResolvedCard({ fights, preview }: { fights: readonly FightSummary[]; pr
   );
 }
 
+/** Row placeholders while the lobby loads: never sample rows, which read as data. */
+function RailRowsSkeleton({ count }: { count: number }) {
+  return (
+    <ul className={styles.rows} aria-hidden="true">
+      {Array.from({ length: count }, (_, i) => (
+        <li key={i} className={cx(styles.row, styles.rowTop)}>
+          <span className={styles.rowText}>
+            <Skeleton width="92%" height={12} />
+            <Skeleton width="58%" height={10} />
+          </span>
+          <Skeleton width={36} height={14} />
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 export type LobbyRailProps = {
-  /** Scheduled fights. Only the soonest few are shown. */
-  upcoming: readonly FightSummary[];
-  /** Settled fights, newest first. Only the first few are shown. */
-  resolved: readonly FightSummary[];
-  /** Hardcoded demo fights: rows render, but do not link. */
-  preview?: boolean;
-  /** Demo upcoming fights, when the scheduled ones are placeholders. */
-  upcomingPreview?: boolean;
+  /** Scheduled fights, or null while the lobby loads. Only the soonest few are shown. */
+  upcoming: RailList | null;
+  /** Settled fights, newest first, or null while the lobby loads. Only the first few are shown. */
+  resolved: RailList | null;
 };
 
-export function LobbyRail({ upcoming, resolved, preview = false, upcomingPreview = preview }: LobbyRailProps) {
+export function LobbyRail({ upcoming, resolved }: LobbyRailProps) {
   return (
     <aside className={styles.rail} aria-label="Standings, upcoming and past fights">
       <LeaderboardCard />
-      <UpcomingCard fights={upcoming} preview={upcomingPreview} />
-      <ResolvedCard fights={resolved} preview={preview} />
+      <UpcomingCard list={upcoming} />
+      <ResolvedCard list={resolved} />
     </aside>
   );
 }
