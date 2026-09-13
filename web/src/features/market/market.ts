@@ -17,6 +17,12 @@ export function tradingBlockedReason(status: MarketStatusDTO): string | null {
   }
 }
 
+/** The tag beside the slip's price: only an open market's price is live. */
+export function slipPriceLabel(status: MarketStatusDTO): "Live" | "Frozen" | "Closed" {
+  if (status === "open") return "Live";
+  return status === "frozen" ? "Frozen" : "Closed";
+}
+
 /** Footer status line. Upcoming fights trade pre-fight. */
 export function marketStatusText(fight: Pick<FightDetail, "marketStatus" | "status">): { label: string; open: boolean } {
   switch (fight.marketStatus) {

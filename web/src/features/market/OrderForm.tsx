@@ -28,7 +28,7 @@ import {
   slipPricing,
 } from "../../lib/order";
 import { useSession } from "../../state/session";
-import { tradingBlockedReason, useEscape } from "./market";
+import { slipPriceLabel, tradingBlockedReason, useEscape } from "./market";
 import { rememberSlipOpener, returnFocusToSlipOpener } from "./slipFocus";
 import styles from "./OrderPanel.module.css";
 
@@ -203,7 +203,7 @@ export function OrderForm({ fight, agent, visual, side, amount, onAmountChange, 
           <span className={styles.sideLine}>
             <Tag tone={side === "yes" ? "positive" : "sabotage"}>Buy {SIDE_LABEL[side]}</Tag>
             <PriceCents value={livePrice} size="lg" flash />
-            <span className="label label-sm">{blocked ? (fight.marketStatus === "frozen" ? "Frozen" : "Closed") : "Live"}</span>
+            <span className="label label-sm">{slipPriceLabel(fight.marketStatus)}</span>
           </span>
         </div>
         <button type="button" className={styles.close} onClick={close} disabled={pending} aria-label="Close order form" title="Close (Esc)">
