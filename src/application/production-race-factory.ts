@@ -170,10 +170,10 @@ export function openRouterAgents(
 
 /**
  * The race's LLM budget when RACE_LLM_BUDGET_USD is unset. Shared out, it
- * leaves each racer $0.225: room for a Claude Haiku racer's 40 steps at
- * about $0.0026 each, redos included.
+ * leaves each racer $22.50, keeping demo races well clear of the software
+ * spending stop even when sabotage recovery adds several model calls.
  */
-export const DEFAULT_RACE_LLM_BUDGET_USD = 1;
+export const DEFAULT_RACE_LLM_BUDGET_USD = 100;
 /** The master's slice of the race budget; the racers split the rest equally. */
 export const MASTER_BUDGET_SHARE = 0.1;
 

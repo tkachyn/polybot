@@ -170,7 +170,7 @@ Clients treat `snapshot` as a full replace. They append `price` points whose `t`
 | `WEB_DIST` | `web/dist` | Served with SPA fallback when present |
 | `COMPETITOR_LLM_MODELS` | — | Live mode: exactly four comma-separated OpenRouter model ids, in racer order |
 | `OPENROUTER_API_KEY` | — | Live mode: key for every competitor and master model call |
-| `RACE_LLM_BUDGET_USD` | `1` | Live mode: per-race software spend cap, split into a 10% master share and equal racer shares |
+| `RACE_LLM_BUDGET_USD` | `100` | Live mode: per-race software spend cap, split into a 10% master share and equal racer shares |
 | `SIM_SEED` | `sabotage-markets` | Simulated mode RNG seed |
 
 ## Evaluation

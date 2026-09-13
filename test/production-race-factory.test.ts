@@ -119,8 +119,8 @@ test("caps each live racer at COMPETITOR_MAX_ACTIONS steps, 40 by default", () =
 test("shares the race budget out so one looping racer cannot stop the others", () => {
   const shares = raceBudgetShares(DEFAULT_RACE_LLM_BUDGET_USD, 4);
   assert.equal(shares.master, DEFAULT_RACE_LLM_BUDGET_USD * MASTER_BUDGET_SHARE);
-  // Room for a Claude Haiku racer's 40 steps (about $0.0026 each), redos included.
-  assert.equal(shares.racer, 0.225);
+  // High enough that demo recovery is governed by the action cap, not model spend.
+  assert.equal(shares.racer, 22.5);
   // The shares add up to the race's budget, and no more.
   assert.equal(shares.master + 4 * shares.racer, DEFAULT_RACE_LLM_BUDGET_USD);
   const small = raceBudgetShares(0.5, 4);

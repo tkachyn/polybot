@@ -142,7 +142,7 @@ releases four real sessions.
 
 A fight that wins takes ~80–150s and costs roughly $0.05–0.15 of OpenRouter
 with the recent roster, mostly Claude Haiku at about $0.0026 a step, against
-the `RACE_LLM_BUDGET_USD` soft cap ($1, shared out 10% to the master and
+the `RACE_LLM_BUDGET_USD` soft cap ($100, shared out 10% to the master and
 equally to the racers); README "Live mode models" has the per-model figures.
 At those rates the calls in `shop-mtzaxsks-cacac3` add up to about $0.24,
 matching its $0.25 budget running out at 242 s. Four Steel sessions per

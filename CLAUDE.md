@@ -136,7 +136,7 @@ step's `rateLimitWaitMs`; paced retries never count against its decision-failure
 a row, 6 per run). Auth errors, a spent budget and aborts get no paced retry (the first two
 end the racer through those limits), and the SDK's own silent retries are off for
 competitor calls. The racers and the master
-draw on one `OpenRouterUsageBudget` (`RACE_LLM_BUDGET_USD`, default $1) cut into shares
+draw on one `OpenRouterUsageBudget` (`RACE_LLM_BUDGET_USD`, default $100) cut into shares
 (`budget.share`, `raceBudgetShares`): 10% for the master and an equal part of the rest per
 racer, so a looping racer spends only its own share and stops alone. The race total
 (`llmUsage`) counts every share. Each share is a soft stop — in-flight calls can overshoot
