@@ -76,6 +76,13 @@ export function SettledFight({ fight, priceHistory, evaluation }: SettledFightPr
             agents={fight.agents}
             priceHistory={priceHistory}
             sabotageAt={fight.sabotage?.firedAt ?? null}
+            sabotageMarkers={fight.agents
+              .filter((agent) => agent.sabotageHitAt !== null)
+              .map((agent) => ({
+                racerId: agent.racerId,
+                at: agent.sabotageHitAt!,
+                label: `${agent.agent.name} hit`,
+              }))}
             endAt={fight.finishedAt ?? priceHistory[priceHistory.length - 1]?.t ?? null}
             title="Win probability"
           />

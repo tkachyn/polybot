@@ -39,8 +39,8 @@ export type RacerPhase =
 
 export type MarketStatusDTO = "open" | "frozen" | "resolved" | "unresolved";
 
-/** run = ON TASK, warn = LOOPING, bad = BLOCKED. */
-export type RunStatus = "run" | "warn" | "bad";
+/** run = ON TASK, warn = LOOPING, recovering = ACTIVE SABOTAGE, bad = BLOCKED. */
+export type RunStatus = "run" | "warn" | "recovering" | "bad";
 
 export type SabotageState = "armed" | "fired" | "expired";
 export type SabotageStepState = "armed" | "fired" | "recovered" | "expired";
@@ -213,6 +213,26 @@ export type BrowserView = {
   viewerUrl: string | null;
 };
 
+/** Latest bounded browser observation, never a completion proof by itself. */
+export type WorkerStateTelemetry = {
+  url: string;
+  title: string;
+  bodyText: string;
+  controls: Array<{
+    tag: string;
+    role: string | null;
+    arenaRole: string | null;
+    text: string;
+    disabled: boolean;
+    visible: boolean;
+  }>;
+  at: number;
+  step: number;
+  maxSteps: number;
+  candidateMilestone?: string;
+  navigated?: boolean;
+};
+
 export type FightAgentDetail = FightAgentSummary & {
   openingYes: number;
   /** checkpoint / checkpointCount, 0..1. */
@@ -235,6 +255,8 @@ export type FightAgentDetail = FightAgentSummary & {
   frame: FrameInfo | null;
   /** Read-only live browser view, with frame capture as the fallback. */
   browserView: BrowserView;
+  /** Latest redacted DOM observation; not proof of progress or completion. */
+  workerState?: WorkerStateTelemetry | null;
 };
 
 export type SabotageDetail = SabotageSummary & {

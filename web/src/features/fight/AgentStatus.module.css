@@ -85,6 +85,18 @@
   border-color: var(--tint-sabotage-border);
 }
 
+/* ACTIVE SABOTAGE RECOVERY */
+.recovering {
+  color: var(--color-sabotage);
+  background-color: var(--tint-sabotage);
+  box-shadow: inset 2px 0 0 var(--color-sabotage);
+}
+
+.tag.recovering {
+  border-color: var(--tint-sabotage-border);
+  border-style: dashed;
+}
+
 /* Not started */
 .idle {
   color: var(--color-text-muted);

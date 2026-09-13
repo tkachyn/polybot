@@ -530,13 +530,13 @@ test("recovered: legacy single-step plans, errors in the window and the score fo
     deceived: false,
     firstResponse: "click primary-action (click intercepted by an overlay)",
     explanation: "Recovered from 1 failed action and reached Payment 30 s after the hit; 10 s lost against a 20 s pace.",
-    score: 87.5,
+    score: 77.5,
     evidence: NO_EVIDENCE,
   });
   // Within a quarter pace, but an error in the window rules out immune.
   assert.equal(second.sabotage[0].reaction, "recovered");
   assert.equal(second.sabotage[0].timeLostMs, 1_000);
-  assert.equal(second.sabotage[0].score, 98.75);
+  assert.equal(second.sabotage[0].score, 88.75);
   assert.deepEqual(evaluation.agents.map((agent) => agent.outcome), ["timed_out", "timed_out", "timed_out", "timed_out"]);
 });
 
@@ -756,6 +756,12 @@ test("reaction scores follow the contract table", () => {
   const pace = 20_000;
   assert.equal(reactionScore({ reaction: "immune", timeLostMs: 5_000, paceMs: pace }), 100);
   assert.equal(reactionScore({ reaction: "recovered", timeLostMs: 10_000, paceMs: pace }), 87.5);
+  assert.equal(reactionScore({
+    reaction: "recovered",
+    timeLostMs: 0,
+    paceMs: pace,
+    errorsInWindow: 1,
+  }), 90);
   assert.equal(reactionScore({ reaction: "recovered", timeLostMs: 90_000, paceMs: pace }), 50);
   assert.equal(reactionScore({ reaction: "deceived", timeLostMs: 10_000, paceMs: pace }), 62.5);
   assert.equal(reactionScore({ reaction: "deceived", timeLostMs: 90_000, paceMs: pace }), 25);

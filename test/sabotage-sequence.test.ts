@@ -78,7 +78,6 @@ test("ordered sabotage steps trigger independently and wait for recovery", async
     [
       ["racer-1", "disruption-sequence-race-racer-1-1-preset-1"],
       ["racer-1", "disruption-sequence-race-racer-1-2-preset-2"],
-      ["racer-1", "disruption-sequence-race-racer-1-3-preset-3"],
       ["racer-2", "disruption-sequence-race-racer-2-1-preset-1"],
     ],
   );

@@ -140,10 +140,10 @@ test("armSabotage rejects a trigger outside the course", () => {
 });
 
 test("a recovering racer cannot reach a checkpoint or finish until manually recovered", async () => {
-  const race = readyRace(new FakeObstacles(), { checkpointCount: 1 });
+  const race = readyRace(new FakeObstacles(), { checkpointCount: 2 });
   await race.reachCheckpoint("racer-3", 1, 1_000);
   assert.equal(race.racers.get("racer-3")?.status, "recovering");
-  assert.throws(() => race.finishRacer("racer-3", 2_000), /cannot finish while recovering/);
+  assert.throws(() => race.finishRacer("racer-3", 2_000), /has not completed the final checkpoint/);
 
   const other = readyRace(new FakeObstacles());
   await other.reachCheckpoint("racer-1", 1, 1_000);
@@ -161,8 +161,9 @@ test("a recovering racer cannot reach a checkpoint or finish until manually reco
   assert.equal(other.racers.get("racer-1")?.checkpoint, 2);
 
   race.markRecovered("racer-3", 5_000);
-  assert.equal(race.finishRacer("racer-3", 5_000), true);
-  assert.deepEqual(eventTypes(race).slice(-3), ["sabotage_recovered", "racer_finished", "race_finished"]);
+  await race.reachCheckpoint("racer-3", 2, 5_001);
+  assert.equal(race.finishRacer("racer-3", 5_002), true);
+  assert.deepEqual(eventTypes(race).slice(-3), ["checkpoint_reached", "racer_finished", "race_finished"]);
 });
 
 test("markRecovered emits a manual recovery only on a status change", async () => {
@@ -180,10 +181,11 @@ test("markRecovered emits a manual recovery only on a status change", async () =
 });
 
 test("does not recover racers by duration once the race is over", async () => {
-  const race = readyRace(new FakeObstacles(), { checkpointCount: 1 });
+  const race = readyRace(new FakeObstacles(), { checkpointCount: 2 });
   await race.reachCheckpoint("racer-2", 1, 1_000);
   await race.reachCheckpoint("racer-1", 1, 1_500);
   race.markRecovered("racer-1", 1_600);
+  await race.reachCheckpoint("racer-1", 2, 1_700);
   assert.equal(race.finishRacer("racer-1", 2_000), true);
 
   const before = race.events.length;

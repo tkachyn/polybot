@@ -9,7 +9,7 @@ import {
 
 test("labels OpenRouter models with readable names", () => {
   assert.equal(displayNameForModel("openai/gpt-5.6-luna"), "GPT-5.6 Luna");
-  assert.equal(displayNameForModel("anthropic/claude-sonnet-4.6"), "Claude Sonnet 4.6");
+  assert.equal(displayNameForModel("qwen/qwen3.8-27b"), "Qwen3.8 27B");
   assert.equal(displayNameForModel("google/gemma-3-27b-it"), "Gemma 3 27B IT");
   assert.equal(displayNameForModel("deepseek/deepseek-v4-pro-0813"), "DeepSeek V4 Pro 0813");
   assert.equal(displayNameForModel("x-ai/grok-4.1:free"), "Grok 4.1");
@@ -17,7 +17,7 @@ test("labels OpenRouter models with readable names", () => {
 
 test("maps model vendors to UI identity keys", () => {
   assert.equal(agentKeyForModel("openai/gpt-5.6-luna"), "gpt");
-  assert.equal(agentKeyForModel("anthropic/claude-sonnet-4.6"), "claude");
+  assert.equal(agentKeyForModel("qwen/qwen3.8-27b"), "qwen");
   assert.equal(agentKeyForModel("google/gemma-3-27b-it"), "gemini");
   assert.equal(agentKeyForModel("x-ai/grok-4.1"), "grok");
   assert.equal(agentKeyForModel("deepseek/deepseek-v4-pro-0813"), "deepseek");
@@ -25,11 +25,11 @@ test("maps model vendors to UI identity keys", () => {
 
 test("names each live racer after the model it actually runs", () => {
   const roster = competitorRoster(
-    "openai/gpt-5.6-luna,anthropic/claude-sonnet-4.6,google/gemma-3-27b-it,deepseek/deepseek-v4-pro-0813",
+    "openai/gpt-5.6-luna,qwen/qwen3.8-27b,google/gemma-3-27b-it,deepseek/deepseek-v4-pro-0813",
   );
   assert.deepEqual(openRouterAgents(undefined, roster), [
     { key: "gpt", name: "GPT-5.6 Luna", provider: "openrouter", model: "openai/gpt-5.6-luna" },
-    { key: "claude", name: "Claude Sonnet 4.6", provider: "openrouter", model: "anthropic/claude-sonnet-4.6" },
+    { key: "qwen", name: "Qwen3.8 27B", provider: "openrouter", model: "qwen/qwen3.8-27b" },
     { key: "gemini", name: "Gemma 3 27B IT", provider: "openrouter", model: "google/gemma-3-27b-it" },
     { key: "deepseek", name: "DeepSeek V4 Pro 0813", provider: "openrouter", model: "deepseek/deepseek-v4-pro-0813" },
   ]);
@@ -37,11 +37,11 @@ test("names each live racer after the model it actually runs", () => {
 
 test("keeps keys unique when two racers share a vendor", () => {
   const roster = competitorRoster(
-    "openai/gpt-5.6-luna,openai/gpt-5.6-mini,anthropic/claude-sonnet-4.6,openai/gpt-4.1",
+    "openai/gpt-5.6-luna,openai/gpt-5.6-mini,qwen/qwen3.8-27b,openai/gpt-4.1",
   );
   assert.deepEqual(
     openRouterAgents(undefined, roster).map((agent) => agent.key),
-    ["gpt", "gpt-2", "claude", "gpt-3"],
+    ["gpt", "gpt-2", "qwen", "gpt-3"],
   );
 });
 

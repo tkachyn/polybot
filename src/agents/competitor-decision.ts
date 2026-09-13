@@ -263,7 +263,7 @@ export function describeDecision(decision: AgentDecision): string {
         : `${typed} "${clip(decision.label, LABEL_TEXT_MAX)}" (${decision.targetRole})`;
     }
     case "evaluate":
-      return "Evaluated a bounded same-page DOM recovery script";
+      return "Ran active DOM recovery against the blocking challenge";
     case "navigate":
       return `Navigated to ${describeUrl(decision.url)}`;
     case "wait":

@@ -8,7 +8,11 @@ import type {
   SabotageTrigger,
 } from "../domain/types.js";
 import { validateDisruptionCommand } from "../infra/cdp-obstacle-provider.js";
-import type { SabotagePresetId } from "../domain/sabotage-presets.js";
+import {
+  SABOTAGE_PRESET_IDS,
+  sabotagePreset,
+  type SabotagePresetId,
+} from "../domain/sabotage-presets.js";
 
 const ALLOWED_HAZARDS: DisruptionCommand["hazardType"][] = [
   "blocking_modal",
@@ -60,9 +64,9 @@ export interface MasterPolicyModel {
   }): Promise<{ tier: SabotageTier; policy: DisruptionCommand }>;
   selectSabotageSequence?(input: {
     observation: MasterRaceObservation;
-    checkpoints: [number, number, number];
+    checkpoints: readonly number[];
     allowedPresetIds: readonly SabotagePresetId[];
-  }): Promise<{ presetIds: [SabotagePresetId, SabotagePresetId, SabotagePresetId] }>;
+  }): Promise<{ presetIds: readonly SabotagePresetId[] }>;
 }
 
 export class MasterObstacleProvider implements ObstacleProvider {
@@ -126,7 +130,10 @@ export class MasterObstacleProvider implements ObstacleProvider {
       raceId,
       courseId: "unknown",
       seed: "unknown",
-      checkpointCount: checkpoint,
+      // Legacy callers only provide the trigger checkpoint. Give the
+      // selector one completion checkpoint beyond it; the coordinator's
+      // race-aware path rejects a true final checkpoint before this fallback.
+      checkpointCount: checkpoint + 1,
       trigger: { kind: "target_opened", checkpoint: 1, milestone: "first_verified_checkpoint" },
     });
     return plan?.policy ?? null;
@@ -138,7 +145,18 @@ export class MasterObstacleProvider implements ObstacleProvider {
   ): Promise<DisruptionResult> {
     let last: DisruptionResult = { applied: false, reason: "not_applied" };
     for (const candidate of fallbackPolicies(policy)) {
-      const result = await this.executor.apply(racerId, candidate);
+      let result: DisruptionResult;
+      try {
+        result = await this.executor.apply(racerId, candidate);
+      } catch (error) {
+        // A CDP/session error on one hazard should not prevent the next
+        // compatible hazard from being attempted for this racer.
+        last = {
+          applied: false,
+          reason: error instanceof Error ? error.message : String(error),
+        };
+        continue;
+      }
       if (result.applied) {
         return samePolicy(candidate, policy)
           ? result
@@ -157,8 +175,50 @@ export class MasterObstacleProvider implements ObstacleProvider {
     checkpointCount: number;
     trigger: SabotageTrigger;
   }): Promise<SabotagePlan | null> {
+    const checkpoints = Array.from(
+      { length: Math.min(3, input.checkpointCount - input.trigger.checkpoint) },
+      (_, index) => input.trigger.checkpoint + index,
+    );
+    if (checkpoints.length === 0) return null;
     try {
       const observation = await this.observations.observe(input.raceId, input.trigger.checkpoint);
+      if (this.model.selectSabotageSequence && checkpoints.length >= 2) {
+        const selected = await this.withTimeout(
+          this.model.selectSabotageSequence({
+            observation,
+            checkpoints,
+            allowedPresetIds: SABOTAGE_PRESET_IDS,
+          }),
+        );
+        if (
+          selected.presetIds.length !== checkpoints.length ||
+          new Set(selected.presetIds).size !== selected.presetIds.length ||
+          selected.presetIds.some((presetId) => !SABOTAGE_PRESET_IDS.includes(presetId))
+        ) {
+          throw new Error("Invalid sabotage preset sequence");
+        }
+        const steps = selected.presetIds.map((presetId, index) => {
+          const preset = sabotagePreset(presetId);
+          if (!preset) throw new Error(`Unknown sabotage preset: ${presetId}`);
+          return {
+            stepId: preset.id,
+            checkpoint: checkpoints[index]!,
+            tier: preset.tier,
+            policy: { ...preset.policy },
+            selectedAt: Date.now(),
+          };
+        });
+        const first = steps[0]!;
+        return freezePlan({
+          raceId: input.raceId,
+          tier: highestTier(steps.map((step) => step.tier)),
+          trigger: input.trigger,
+          policy: first.policy,
+          selectedAt: Date.now(),
+          source: "model",
+          steps,
+        });
+      }
       const selected = await this.withTimeout(
         this.model.selectSabotage
           ? this.model.selectSabotage({
@@ -187,6 +247,28 @@ export class MasterObstacleProvider implements ObstacleProvider {
         source: "model",
       });
     } catch {
+      if (!this.legacyFallback && checkpoints.length >= 2) {
+        const presets = fallbackPresetIds(input.seed);
+        const steps = presets.slice(0, checkpoints.length).map((presetId, index) => {
+          const preset = sabotagePreset(presetId)!;
+          return {
+            stepId: preset.id,
+            checkpoint: checkpoints[index]!,
+            tier: preset.tier,
+            policy: { ...preset.policy },
+            selectedAt: Date.now(),
+          };
+        });
+        return freezePlan({
+          raceId: input.raceId,
+          tier: highestTier(steps.map((step) => step.tier)),
+          trigger: input.trigger,
+          policy: steps[0]!.policy,
+          selectedAt: Date.now(),
+          source: "fallback",
+          steps,
+        });
+      }
       const tier = this.legacyFallback ? "basic" : fallbackTier(input.seed);
       const policy = normalizeTarget(this.fallbackPolicies[tier]);
       validateSelectedPlan({ tier, policy });
@@ -227,7 +309,26 @@ function tierForPolicy(policy: DisruptionCommand): SabotageTier {
 
 function fallbackTier(seed: string): SabotageTier {
   const hash = [...seed].reduce((total, character) => total + character.charCodeAt(0), 0);
-  return (["basic", "intermediate", "difficult"] as const)[hash % 3];
+  return (["intermediate", "difficult", "difficult"] as const)[hash % 3];
+}
+
+function fallbackPresetIds(seed: string): [SabotagePresetId, SabotagePresetId, SabotagePresetId] {
+  const preferred: SabotagePresetId[] = [
+    "cover-with-modal",
+    "plant-decoy-control",
+    "disable-primary-action",
+  ];
+  const offset = [...seed].reduce((total, character) => total + character.charCodeAt(0), 0) % preferred.length;
+  const rotated = [...preferred.slice(offset), ...preferred.slice(0, offset)];
+  return rotated as [SabotagePresetId, SabotagePresetId, SabotagePresetId];
+}
+
+function highestTier(tiers: readonly SabotageTier[]): SabotageTier {
+  return tiers.includes("difficult")
+    ? "difficult"
+    : tiers.includes("intermediate")
+      ? "intermediate"
+      : "basic";
 }
 
 function validateSelectedPlan(input: {
@@ -244,6 +345,9 @@ function validateSelectedPlan(input: {
     difficult: { durationMs: 30_000, intensity: 3 },
   };
   const maximum = maximums[input.tier];
+  if (input.policy.intensity !== maximum.intensity) {
+    throw new Error(`Policy intensity must match the ${input.tier} sabotage tier`);
+  }
   if (
     input.policy.durationMs > maximum.durationMs ||
     input.policy.intensity > maximum.intensity

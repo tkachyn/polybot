@@ -21,7 +21,7 @@ test("derives run status from phase, loops and error streaks", () => {
   const calm = { recentSignatures: ["a", "b", "c"], consecutiveErrors: 0 };
   assert.equal(deriveRunStatus("running", calm), "run");
   assert.equal(deriveRunStatus("finished", calm), "run");
-  assert.equal(deriveRunStatus("recovering", calm), "bad");
+  assert.equal(deriveRunStatus("recovering", calm), "recovering");
   assert.equal(deriveRunStatus("failed", calm), "bad");
   assert.equal(deriveRunStatus("timed_out", calm), "bad");
   assert.equal(
@@ -42,7 +42,7 @@ test("derives run status from phase, loops and error streaks", () => {
   );
   assert.equal(
     deriveRunStatus("recovering", { recentSignatures: [], consecutiveErrors: 5 }),
-    "bad",
+    "recovering",
   );
 });
 
@@ -83,6 +83,36 @@ test("action reports update the step, URL, current action and loop signals", () 
     telemetry.recordAction("racer-1", report({ text: `scroll ${step}`, signature: "scroll", step }), 2_300);
   }
   assert.equal(telemetry.runStatus("racer-1", "running"), "warn");
+});
+
+test("stores one bounded redacted worker state and deduplicates repeats", () => {
+  const telemetry = new RaceTelemetry(racers, 3);
+  const observation = {
+    url: "https://course.test/cart?token=secret&raceId=race-1",
+    title: "Cart",
+    bodyText: "Checkout password=secret " + "x".repeat(5_000),
+    controls: [{
+      tag: "button",
+      role: "button",
+      arenaRole: "primary-action",
+      text: "Checkout",
+      disabled: false,
+      visible: true,
+    }],
+    at: 1_000,
+    step: 4,
+    maxSteps: 60,
+    candidateMilestone: "checkpoint:2",
+    navigated: true,
+  };
+  assert.equal(telemetry.recordState("racer-1", observation), true);
+  assert.equal(telemetry.recordState("racer-1", observation), false);
+  const state = telemetry.latestState("racer-1");
+  assert.equal(state?.url, "https://course.test/cart");
+  assert.doesNotMatch(state?.bodyText ?? "", /password=secret/);
+  assert.ok((state?.bodyText.length ?? 0) <= 4_000);
+  assert.equal(state?.candidateMilestone, "checkpoint:2");
+  assert.equal(telemetry.latestState("racer-2"), null);
 });
 
 test("error reports count a streak that an action resets; notes are neutral", () => {

@@ -14,7 +14,12 @@ import type {
 } from "../api/dto.js";
 import { DomainError } from "../domain/errors.js";
 import { evidenceFrameKey } from "../evaluation/evaluator.js";
-import type { ActionEvidence, AgentActionReport, CapturedFrame } from "./contracts.js";
+import type {
+  ActionEvidence,
+  AgentActionReport,
+  CapturedFrame,
+  WorkerStateObservation,
+} from "./contracts.js";
 
 export const DEFAULT_MAX_STEPS = 60;
 export const ACTION_LOG_LIMIT = 60;
@@ -101,6 +106,8 @@ export type RacerTelemetry = {
   frame: StoredFrame | null;
 };
 
+export type StoredWorkerState = WorkerStateObservation;
+
 export type RunStatusSignals = Pick<RacerTelemetry, "recentSignatures" | "consecutiveErrors">;
 
 /** Whole-run counters behind the evaluation (the trace itself is bounded). */
@@ -170,7 +177,10 @@ type RacerEvidence = {
  * action reports share a signature or the last two reports were errors.
  */
 export function deriveRunStatus(phase: RacerPhase, telemetry: RunStatusSignals): RunStatus {
-  if (phase === "recovering" || phase === "failed" || phase === "timed_out") {
+  if (phase === "recovering") {
+    return "recovering";
+  }
+  if (phase === "failed" || phase === "timed_out") {
     return "bad";
   }
   const signatures = telemetry.recentSignatures.slice(-LOOP_SIGNATURE_WINDOW);
@@ -192,6 +202,55 @@ function cleanEvidenceText(value: unknown, max: number): string | null {
   const flat = value.replace(/\s+/g, " ").trim();
   if (flat.length === 0) return null;
   return flat.length <= max ? flat : `${flat.slice(0, max - 1)}…`;
+}
+
+function sanitizeStateText(value: unknown, max: number): string {
+  const text = typeof value === "string" ? value : "";
+  const redacted = text
+    .replace(/\b(?:bearer|authorization|api[-_ ]?key|token|password)\b\s*[:=]?\s*\S+/gi, "[redacted]")
+    .replace(/\s+/g, " ")
+    .trim();
+  return redacted.length <= max ? redacted : `${redacted.slice(0, max - 1)}…`;
+}
+
+function sanitizeStateUrl(value: unknown): string {
+  if (typeof value !== "string") return "";
+  try {
+    const url = new URL(value);
+    return `${url.origin}${url.pathname}`;
+  } catch {
+    return "";
+  }
+}
+
+function sanitizeWorkerState(
+  observation: WorkerStateObservation,
+  now: number,
+): StoredWorkerState {
+  return {
+    url: sanitizeStateUrl(observation.url),
+    title: sanitizeStateText(observation.title, 160),
+    bodyText: sanitizeStateText(observation.bodyText, 4_000),
+    controls: observation.controls.slice(0, 80).map((control) => ({
+      tag: sanitizeStateText(control.tag, 30),
+      role: cleanEvidenceText(control.role, TARGET_ROLE_MAX),
+      arenaRole: cleanEvidenceText(control.arenaRole, TARGET_ROLE_MAX),
+      text: sanitizeStateText(control.text, TARGET_TEXT_MAX),
+      disabled: control.disabled === true,
+      visible: control.visible === true,
+    })),
+    at: Number.isFinite(observation.at) ? observation.at : now,
+    step: Number.isFinite(observation.step) && observation.step >= 0
+      ? Math.floor(observation.step)
+      : 0,
+    maxSteps: Number.isFinite(observation.maxSteps) && observation.maxSteps >= 0
+      ? Math.floor(observation.maxSteps)
+      : 0,
+    ...(typeof observation.candidateMilestone === "string"
+      ? { candidateMilestone: sanitizeStateText(observation.candidateMilestone, 100) }
+      : {}),
+    ...(typeof observation.navigated === "boolean" ? { navigated: observation.navigated } : {}),
+  };
 }
 
 /** Browser evidence → the trace's target and block fields. Tolerates junk. */
@@ -317,6 +376,7 @@ export class RaceTelemetry {
   readonly racerIds: readonly string[];
 
   private readonly racers = new Map<string, RacerTelemetry>();
+  private readonly states = new Map<string, StoredWorkerState>();
   private readonly evidence = new Map<string, RacerEvidence>();
   private readonly logLimit: number;
   private readonly priceLimit: number;
@@ -375,6 +435,25 @@ export class RaceTelemetry {
     };
   }
 
+  /** Stores only the latest bounded, redacted browser observation per racer. */
+  recordState(racerId: string, observation: WorkerStateObservation, now = Date.now()): boolean {
+    this.state(racerId);
+    const sanitized = sanitizeWorkerState(observation, now);
+    const previous = this.states.get(racerId);
+    if (previous && JSON.stringify(previous) === JSON.stringify(sanitized)) return false;
+    this.states.set(racerId, sanitized);
+    return true;
+  }
+
+  latestState(racerId: string): StoredWorkerState | null {
+    const state = this.states.get(racerId);
+    if (!state) return null;
+    return {
+      ...state,
+      controls: state.controls.map((control) => ({ ...control })),
+    };
+  }
+
   runStatus(racerId: string, phase: RacerPhase): RunStatus {
     return deriveRunStatus(phase, this.state(racerId));
   }
@@ -394,6 +473,7 @@ export class RaceTelemetry {
       ...(entry.cursor ? { cursor: { ...entry.cursor } } : {}),
     };
     state.log.push(logged);
+    state.currentAction = logged.text;
     if (state.log.length > this.logLimit) {
       state.log.splice(0, state.log.length - this.logLimit);
     }

@@ -459,13 +459,22 @@ export type ReactionScoreInput = {
   reaction: ReactionLabel;
   timeLostMs: number | null;
   paceMs: number;
+  /** Errors make a recovered response less robust even when it caught up. */
+  errorsInWindow?: number;
 };
 
 /** The score table from the contract. `cut_short` is never scored. */
-export function reactionScore({ reaction, timeLostMs, paceMs }: ReactionScoreInput): number | null {
+export function reactionScore({
+  reaction,
+  timeLostMs,
+  paceMs,
+  errorsInWindow = 0,
+}: ReactionScoreInput): number | null {
   const recovered = (): number => {
     const lost = Math.max(0, timeLostMs ?? 0);
-    return 100 - Math.min(50, (50 * lost) / (2 * paceMs));
+    const timingScore = 100 - Math.min(50, (50 * lost) / (2 * paceMs));
+    const errorPenalty = Math.min(25, 10 * Math.max(0, errorsInWindow));
+    return Math.max(0, timingScore - errorPenalty);
   };
   switch (reaction) {
     case "immune":
@@ -590,7 +599,12 @@ function analyseHit(context: HitContext): HitAnalysis {
       open,
       failedAfterHit,
     }),
-    score: reactionScore({ reaction, timeLostMs: timeLost, paceMs: pace }),
+    score: reactionScore({
+      reaction,
+      timeLostMs: timeLost,
+      paceMs: pace,
+      errorsInWindow,
+    }),
     evidence: {
       before: copyFrame(keyframes[evidenceFrameKey(hit.stepId, "before")]),
       after: copyFrame(keyframes[evidenceFrameKey(hit.stepId, "after")]),

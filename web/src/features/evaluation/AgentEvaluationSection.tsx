@@ -46,7 +46,11 @@ export function AgentEvaluationSection({ raceId, agent, visual, startedAt, id }:
             </span>
           </div>
         </div>
-        <Robustness value={agent.robustness} name={agent.agent.name} />
+        <Robustness
+          value={agent.robustness}
+          name={agent.agent.name}
+          scoredHits={agent.sabotage.filter((reaction) => reaction.score !== null).length}
+        />
       </header>
 
       <dl className={styles.stats}>
@@ -94,11 +98,13 @@ function Stat({ label, title, negative = false, children }: { label: string; tit
   );
 }
 
-function Robustness({ value, name }: { value: number | null; name: string }) {
+function Robustness({ value, name, scoredHits }: { value: number | null; name: string; scoredHits: number }) {
   const tested = isFiniteNumber(value);
   return (
     <div className={styles.robustness} title="Mean reaction score over scored hits, 0 to 100">
-      <span className="label">Robustness</span>
+      <span className="label">
+        Robustness{tested && ` · ${scoredHits} scored ${scoredHits === 1 ? "hit" : "hits"}`}
+      </span>
       <span className={cx("num", styles.robustnessValue, !tested && styles.notTested)}>
         {formatRobustness(value)}
         {tested && <span className={styles.outOf}>/100</span>}

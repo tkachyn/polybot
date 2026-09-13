@@ -14,7 +14,8 @@ import { agentStyle, agentVisual, rosterVisuals, type AgentVisual } from "../../
 import { cx } from "../../lib/cx";
 import { formatCents, formatCompactMoney, formatLogTime, formatTimeOfDay } from "../../lib/format";
 import { useNow } from "../../state/clock";
-import { Y_TICKS, buildChartWindow, linearScale, nearestIndex, seriesPath, timeTicks, type ChartRange } from "./chart";
+import type { ChartSabotageMarker, ChartTradeMarker } from "./types";
+import { Y_TICKS, buildChartWindow, isMarkerInWindow, linearScale, nearestIndex, seriesPath, timeTicks, type ChartRange } from "./chart";
 import styles from "./ProbabilityChart.module.css";
 
 /** Structurally satisfied by FightAgentSummary / FightAgentDetail. */
@@ -28,6 +29,10 @@ export type ProbabilityChartProps = {
   /** sabotage.firedAt: draws the dashed terracotta marker. */
   sabotageAt?: number | null;
   sabotageLabel?: string;
+  /** Per-racer hit times; unlike sabotageAt, these are not simultaneous. */
+  sabotageMarkers?: readonly ChartSabotageMarker[];
+  /** Current user's executed orders, plotted at their execution price/time. */
+  tradeMarkers?: readonly ChartTradeMarker[];
   /** Freeze the right edge here (e.g. finishedAt of a settled fight). Null = live, ticking. */
   endAt?: number | null;
   /** Only the compact legend strip. */
@@ -72,6 +77,8 @@ export function ProbabilityChart({
   priceHistory,
   sabotageAt = null,
   sabotageLabel = "Sabotage",
+  sabotageMarkers = [],
+  tradeMarkers = [],
   endAt = null,
   collapsed = false,
   range = "all",
@@ -125,6 +132,8 @@ export function ProbabilityChart({
         endAt={endAt}
         sabotageAt={sabotageAt}
         sabotageLabel={sabotageLabel}
+        sabotageMarkers={sabotageMarkers}
+        tradeMarkers={tradeMarkers}
         volume={volume}
       />
     </section>
@@ -139,6 +148,8 @@ type PlotProps = {
   endAt: number | null;
   sabotageAt: number | null;
   sabotageLabel: string;
+  sabotageMarkers: readonly ChartSabotageMarker[];
+  tradeMarkers: readonly ChartTradeMarker[];
   volume?: number;
 };
 
@@ -246,7 +257,18 @@ function useMoneyFlow(volume: number | undefined, prices: Record<string, number>
 }
 
 /** The SVG body. Split out so the per-second tick re-renders only this. */
-function Plot({ agents, visuals, priceHistory, range, endAt, sabotageAt, sabotageLabel, volume }: PlotProps) {
+function Plot({
+  agents,
+  visuals,
+  priceHistory,
+  range,
+  endAt,
+  sabotageAt,
+  sabotageLabel,
+  sabotageMarkers,
+  tradeMarkers,
+  volume,
+}: PlotProps) {
   const frozen = endAt !== null;
   const now = useNow(1000, !frozen);
   const end = frozen ? endAt : now;
@@ -287,9 +309,22 @@ function Plot({ agents, visuals, priceHistory, range, endAt, sabotageAt, sabotag
   const hoverPx = hoverPoint ? x(hoverPoint.t) : 0;
   const hoverIsNow = !frozen && hoverPoint !== undefined && hoverIndex === win.points.length - 1 && hoverPoint.t === win.end;
 
-  const showSabotage = sabotageAt !== null && Number.isFinite(sabotageAt) && sabotageAt >= win.start && sabotageAt <= win.end;
+  const visibleSabotageMarkers = sabotageMarkers.filter((marker) =>
+    isMarkerInWindow(marker.at, win.start, win.end),
+  );
+  const showSabotage = visibleSabotageMarkers.length === 0 &&
+    sabotageAt !== null &&
+    Number.isFinite(sabotageAt) &&
+    sabotageAt >= win.start &&
+    sabotageAt <= win.end;
   const sabotageX = showSabotage ? x(sabotageAt) : 0;
   const sabotageAnchorEnd = sabotageX > right - 64;
+  const visibleTradeMarkers = tradeMarkers.filter((marker) =>
+    isMarkerInWindow(marker.at, win.start, win.end) &&
+    Number.isFinite(marker.price) &&
+    marker.price >= 0 &&
+    marker.price <= 1,
+  );
 
   const onPointerMove = (event: PointerEvent<SVGSVGElement>) => {
     const rect = event.currentTarget.getBoundingClientRect();
@@ -383,6 +418,56 @@ function Plot({ agents, visuals, priceHistory, range, endAt, sabotageAt, sabotag
             </g>
           )}
 
+          {visibleSabotageMarkers.map((marker, index) => {
+            const markerX = x(marker.at);
+            const agentIndex = agents.findIndex((agent) => agent.racerId === marker.racerId);
+            const color = agentIndex >= 0 ? (visuals[agentIndex] ?? agentVisual(agents[agentIndex]!.agent)).color : undefined;
+            const anchorEnd = markerX > right - 100;
+            return (
+              <g key={`${marker.racerId}-${marker.at}-${index}`}>
+                <line
+                  className={styles.sabotageLine}
+                  x1={markerX}
+                  x2={markerX}
+                  y1={top - 2}
+                  y2={bottom}
+                  style={color ? { stroke: color } : undefined}
+                />
+                <text
+                  className={styles.sabotageText}
+                  x={anchorEnd ? markerX - 4 : markerX + 4}
+                  y={top + 10 + (index % 3) * 12}
+                  textAnchor={anchorEnd ? "end" : "start"}
+                  style={color ? { fill: color } : undefined}
+                >
+                  {marker.label.toUpperCase()}
+                </text>
+              </g>
+            );
+          })}
+
+          {visibleTradeMarkers.map((marker) => {
+            const markerX = x(marker.at);
+            const markerY = y(marker.price);
+            const agentIndex = agents.findIndex((agent) => agent.racerId === marker.racerId);
+            const color = agentIndex >= 0 ? (visuals[agentIndex] ?? agentVisual(agents[agentIndex]!.agent)).color : "var(--color-edge)";
+            return (
+              <line
+                key={marker.id}
+                className={cx(styles.tradeMarker, marker.action === "sell" && styles.tradeMarkerSell)}
+                x1={Math.max(left, markerX - 6)}
+                x2={Math.min(right, markerX + 6)}
+                y1={markerY}
+                y2={markerY}
+                stroke={color}
+              >
+                <title>
+                  {marker.action === "buy" ? "Bought" : "Sold"} {marker.quantity} {marker.side.toUpperCase()} shares
+                </title>
+              </line>
+            );
+          })}
+
           <g>
             {series.map(({ agent, color, path }) =>
               path.count > 1 ? <path key={agent.racerId} className={styles.line} d={path.d} stroke={color} /> : null,
@@ -403,6 +488,21 @@ function Plot({ agents, visuals, priceHistory, range, endAt, sabotageAt, sabotag
             </g>
           )}
         </svg>
+      )}
+
+      {(visibleSabotageMarkers.length > 0 || visibleTradeMarkers.length > 0) && (
+        <div className="sr-only" aria-label="Chart events">
+          {visibleSabotageMarkers.map((marker, index) => (
+            <span key={`sabotage-${marker.racerId}-${marker.at}-${index}`}>
+              {marker.label} at {formatLogTime(marker.at)}.
+            </span>
+          ))}
+          {visibleTradeMarkers.map((marker) => (
+            <span key={`trade-${marker.id}`}>
+              {marker.action === "buy" ? "Bought" : "Sold"} {marker.quantity} {marker.side.toUpperCase()} shares at {formatCents(marker.price)} at {formatLogTime(marker.at)}.
+            </span>
+          ))}
+        </div>
       )}
 
       {moneyFlow.length > 0 && (

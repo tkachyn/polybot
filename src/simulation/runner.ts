@@ -222,14 +222,13 @@ export class SimulatedCompetitorRunner implements CompetitorAgentRunner {
    * until the coordinator has recovered it. False when stopped meanwhile.
    */
   private async reportProgress(
-    report: () => Promise<void>,
+    report: () => Promise<boolean | void>,
     signal: AbortSignal,
   ): Promise<boolean> {
     const retryMs = Math.max(5, RECOVERY_RETRY_MS / this.options.timeScale);
     for (let attempt = 0; ; attempt += 1) {
       try {
-        await report();
-        return true;
+        return (await report()) !== false;
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         if (signal.aborted || !/while recovering/.test(message) ||

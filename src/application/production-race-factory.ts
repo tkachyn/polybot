@@ -16,7 +16,7 @@ import {
   DeterministicCourseVerifier,
   HttpCourseStateGateway,
 } from "../course/deterministic-course-verifier.js";
-import type { DisruptionCommand } from "../domain/types.js";
+import type { DisruptionCommand, SabotageTier } from "../domain/types.js";
 import { CdpObstacleProvider } from "../infra/cdp-obstacle-provider.js";
 import { SteelSessionManager } from "../infra/steel-session-manager.js";
 import type { DatasetStore } from "../dataset/store.js";
@@ -58,6 +58,12 @@ function positiveNumberEnv(name: string, fallback: number): number {
     throw new Error(`${name} must be a positive number`);
   }
   return parsed;
+}
+
+function positiveIntegerEnv(name: string, fallback: number): number {
+  const value = positiveNumberEnv(name, fallback);
+  if (!Number.isInteger(value)) throw new Error(`${name} must be a positive integer`);
+  return value;
 }
 
 /** OpenRouter model id per racer id, from COMPETITOR_LLM_MODELS. */
@@ -153,13 +159,26 @@ export function createProductionRaceCoordinator(
   const budget = new OpenRouterUsageBudget(
     positiveNumberEnv("RACE_LLM_BUDGET_USD", 0.25),
   );
-  // Keep the configured model window shared across racers using the same
-  // provider model. Other models remain unlimited unless added here.
-  const competitorRateLimiter = new OpenRouterModelRateLimiter();
+  // Keep one sliding-window capacity per configured model, shared by racers
+  // using that model. This prevents a provider-specific 429 from killing a
+  // racer before its first browser action.
+  const maxCalls = positiveIntegerEnv("OPENROUTER_MODEL_MAX_CALLS_PER_MINUTE", 20);
+  const windowMs = positiveIntegerEnv("OPENROUTER_MODEL_RATE_WINDOW_MS", 60_000);
+  const competitorRateLimiter = new OpenRouterModelRateLimiter(
+    Object.fromEntries(
+      [...new Set(roster.values())].map((model) => [model, { maxCalls, windowMs }]),
+    ),
+  );
+  const maxOutputTokens = positiveIntegerEnv("COMPETITOR_LLM_MAX_OUTPUT_TOKENS", 512);
   const competitorModels = new Map(
     [...roster].map(([racerId, model]) => [
       racerId,
-      new OpenRouterCompetitorDecisionModel({ model, budget, rateLimiter: competitorRateLimiter }),
+      new OpenRouterCompetitorDecisionModel({
+        model,
+        budget,
+        maxOutputTokens,
+        rateLimiter: competitorRateLimiter,
+      }),
     ]),
   );
 
@@ -200,33 +219,37 @@ export function createProductionRaceCoordinator(
     },
   };
 
-  const fallbackPolicies: Record<number, DisruptionCommand> = {
-    1: {
-      hazardType: "blocking_modal",
+  const fallbackPolicies: Partial<Record<SabotageTier, DisruptionCommand>> = {
+    basic: {
+      hazardType: "insert_decoy",
       targetRole: "primary-action",
       durationMs: 4_000,
       intensity: 1,
     },
-    2: {
-      hazardType: "blocking_modal",
+    intermediate: {
+      hazardType: "rename_control",
       targetRole: "primary-action",
       durationMs: 6_000,
       intensity: 2,
     },
-    3: {
+    difficult: {
       hazardType: "blocking_modal",
       targetRole: "primary-action",
-      durationMs: 8_000,
+      durationMs: 12_000,
       intensity: 3,
     },
   };
   const cdpExecutor = new CdpObstacleProvider(sessionManager);
+  const masterModel = process.env.MASTER_LLM_MODEL
+    ? new OpenRouterMasterPolicyModel({
+        model: process.env.MASTER_LLM_MODEL,
+        budget,
+      })
+    : undefined;
+  if (input.obstaclesEnabled && !masterModel) requiredEnv("MASTER_LLM_MODEL");
   const obstacleProvider = input.obstaclesEnabled
     ? new MasterObstacleProvider(
-        new OpenRouterMasterPolicyModel({
-          model: requiredEnv("MASTER_LLM_MODEL"),
-          budget,
-        }),
+        masterModel!,
         observationSource,
         cdpExecutor,
         fallbackPolicies,
@@ -243,6 +266,7 @@ export function createProductionRaceCoordinator(
       sessionManager,
       agentRunner,
       courseVerifier,
+      completionJudge: masterModel,
       eventStore,
       obstacleProvider,
       ledger: context.ledger,

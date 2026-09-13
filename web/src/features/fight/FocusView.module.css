@@ -109,6 +109,16 @@
   color: var(--color-text-muted);
 }
 
+.sabotageNotice {
+  margin: 0;
+  padding: var(--space-1-5) var(--space-2-5);
+  border-bottom: 1px solid var(--tint-sabotage-border);
+  background-color: var(--tint-sabotage);
+  color: var(--color-sabotage);
+  font-size: var(--fs-body-sm);
+  font-weight: var(--fw-semibold);
+}
+
 .logList {
   flex: 1 1 auto;
   min-height: 0;

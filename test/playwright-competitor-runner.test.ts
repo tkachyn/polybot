@@ -23,7 +23,10 @@ test("bounds same-page recovery scripts and rejects privileged capabilities", ()
     "window.__arenaRecoverDisruptions?.()",
   );
   assert.throws(() => validateEvaluateScript("fetch('https://example.com')"), /forbidden capability/);
+  assert.throws(() => validateEvaluateScript("document.forms[0].requestSubmit()"), /forbidden capability/);
+  assert.throws(() => validateEvaluateScript("document.querySelector('button')['click']()"), /forbidden capability/);
   assert.throws(() => validateEvaluateScript("x".repeat(2_001)), /cannot exceed/);
+  assert.throws(() => validateEvaluateScript("(() => {"), /invalid JavaScript syntax/);
 });
 
 type FakeElement = { role: string; text: string; decoy?: boolean; type?: string };
@@ -203,6 +206,7 @@ test("prepares a seeded racer URL and reports verified progress", async () => {
     model,
   });
   const checkpoints: number[] = [];
+  const states: Array<{ step: number; candidateMilestone?: string }> = [];
   let finished = false;
   const base = {
     raceId: "race-1",
@@ -214,6 +218,14 @@ test("prepares a seeded racer URL and reports verified progress", async () => {
       racerId: "racer-1",
       steelSessionId: "steel-1",
       page: page as unknown as Page,
+    },
+    reportState(observation: { step: number; candidateMilestone?: string }) {
+      states.push({
+        step: observation.step,
+        ...(observation.candidateMilestone === undefined
+          ? {}
+          : { candidateMilestone: observation.candidateMilestone }),
+      });
     },
   };
 
@@ -229,6 +241,9 @@ test("prepares a seeded racer URL and reports verified progress", async () => {
   assert.match(page.navigations[0], /raceId=race-1/);
   assert.match(page.navigations[0], /racerId=racer-1/);
   assert.match(page.navigations[0], /seed=seed-1/);
+  assert.deepEqual(states.map((state) => state.step), [0, 1, 2]);
+  assert.equal(states[1]?.candidateMilestone, "checkpoint:1");
+  assert.equal(states[2]?.candidateMilestone, "finish");
 });
 
 test("stops immediately when the verifier proves completion after an action", async () => {
@@ -253,6 +268,28 @@ test("stops immediately when the verifier proves completion after an action", as
   });
   assert.equal(checks, 1);
   assert.equal(explicitFinish, false);
+});
+
+test("reviews live progress after an action without a checkpoint decision", async () => {
+  const page = new FakePage();
+  const runner = new PlaywrightCompetitorRunner({
+    task: "Complete the course",
+    startUrl: "https://course.test/start",
+    model: new SequenceModel([{ type: "click", targetRole: "primary-action" }]),
+  });
+  const base = contextFor(page);
+  const reviews: number[] = [];
+  await runner.prepare(base);
+  await runner.run({
+    ...base,
+    async reportCheckpoint() {},
+    async reportFinish() {},
+    async reviewProgress(observation) {
+      reviews.push(observation.step);
+      return true;
+    },
+  });
+  assert.deepEqual(reviews, [1]);
 });
 
 test("resolves a distinct model for each racer", async () => {
@@ -379,6 +416,64 @@ test("moves the browser cursor to a target and reports its position", async () =
     viewportHeight: 600,
     action: "click",
   });
+});
+
+test("restores the native cursor at its last target after navigation", async () => {
+  const page = new CursorPage();
+  await runWith(page, [
+    { type: "click", targetRole: "primary-action" },
+    { type: "navigate", url: "https://course.test/next" },
+    { type: "finish" },
+  ]);
+
+  const targetMoves = page.moves.filter((move) => move.x === 70 && move.y === 50);
+  assert.ok(targetMoves.length >= 2, "navigation should restore the last cursor position");
+});
+
+test("uses the master completion judge when course finish proof is unavailable", async () => {
+  const page = new FakePage();
+  const sources: Array<string | undefined> = [];
+  const { reports } = await runWith(page, [{ type: "finish" }], {
+    reportFinish: async (source) => {
+      sources.push(source);
+      return source === "master";
+    },
+    completionJudge: {
+      async judgeCheckpoint() {
+        return false;
+      },
+      async judgeCompletion(input) {
+        assert.match(input.observation.bodyText, /Demo course/);
+        return true;
+      },
+    },
+  });
+
+  assert.deepEqual(sources, [undefined, "master"]);
+  assert.equal(reports[0]?.kind, "action");
+  assert.equal(reports[0]?.text, "Reported finish");
+});
+
+test("uses the master completion judge when checkpoint proof is unavailable", async () => {
+  const page = new FakePage();
+  const sources: Array<string | undefined> = [];
+  await runWith(page, [{ type: "checkpoint", checkpoint: 1 }, { type: "finish" }], {
+    reportCheckpoint: async (_checkpoint, source) => {
+      sources.push(source);
+      return source === "master";
+    },
+    completionJudge: {
+      async judgeCheckpoint(input) {
+        assert.equal(input.checkpoint, 1);
+        return true;
+      },
+      async judgeCompletion() {
+        return true;
+      },
+    },
+  });
+
+  assert.deepEqual(sources, [undefined, "master"]);
 });
 
 function timeoutError(callLog: string, action = "locator.click"): Error {
@@ -588,6 +683,8 @@ test("reports whether each action navigated", async () => {
 
   assert.deepEqual(reports.map((report) => report.evidence?.navigated), [false, true, true, false]);
   assert.equal(reports[2].url, "https://course.test/next");
+  assert.match(page.navigations[1] ?? "", /\/cart\?raceId=race-1/);
+  assert.match(page.navigations[1] ?? "", /racerId=racer-1/);
 });
 
 test("syncs progress after every action, success or error, before checking completion", async () => {
@@ -673,6 +770,66 @@ test("reports a visible note when a provider pauses for rate-limit capacity", as
   assert.equal(reports[0].kind, "note");
   assert.match(reports[0].text, /Rate limit pause complete/);
   assert.equal(reports[1].kind, "action");
+});
+
+test("retries provider decision failures without consuming a browser action", async () => {
+  const page = new FakePage();
+  let calls = 0;
+  const reports: AgentActionReport[] = [];
+  const runner = new PlaywrightCompetitorRunner({
+    task: "Complete the course",
+    startUrl: "https://course.test/start",
+    model: {
+      async decide() {
+        calls += 1;
+        if (calls === 1) throw new Error("provider returned malformed tool output");
+        return { type: "finish" };
+      },
+    },
+  });
+  const base = contextFor(page);
+  await runner.prepare(base);
+  await runner.run({
+    ...base,
+    async reportCheckpoint() {},
+    async reportFinish() {},
+    reportAction(report) { reports.push(report); },
+  });
+
+  assert.equal(calls, 2);
+  assert.equal(reports[0]?.kind, "note");
+  assert.match(reports[0]?.text ?? "", /no browser action used/);
+  assert.equal(reports[1]?.kind, "action");
+  assert.equal(reports[1]?.step, 1);
+});
+
+test("caps intermittent protocol failures instead of looping forever", async () => {
+  const page = new FakePage();
+  let calls = 0;
+  const reports: AgentActionReport[] = [];
+  const runner = new PlaywrightCompetitorRunner({
+    task: "Complete the course",
+    startUrl: "https://course.test/start",
+    model: {
+      async decide() {
+        calls += 1;
+        if (calls % 3 === 0) return { type: "inspect" };
+        throw new Error("invalid tool arguments");
+      },
+    },
+  });
+  const base = contextFor(page);
+  await runner.prepare(base);
+  await assert.rejects(
+    runner.run({
+      ...base,
+      async reportCheckpoint() {},
+      async reportFinish() {},
+      reportAction(report) { reports.push(report); },
+    }),
+    /after 6 provider\/protocol retries/,
+  );
+  assert.equal(reports.filter((report) => report.kind === "note").length, 6);
 });
 
 test("waits for a started navigation to commit before syncing progress", async () => {

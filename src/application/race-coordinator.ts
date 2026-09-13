@@ -53,12 +53,14 @@ import type { CreditLedger } from "../wallet/credit-ledger.js";
 import type {
   AgentActionReport,
   CapturedFrame,
+  CompletionJudge,
   CompetitorAgentRunner,
   CompetitorContext,
   CourseVerifier,
   RacerSessionHandle,
   RacerSessionManager,
   RaceEventStore,
+  WorkerStateObservation,
 } from "./contracts.js";
 import {
   defaultCheckpointLabel,
@@ -102,6 +104,8 @@ export type RaceCoordinatorDependencies = {
   sessionManager: RacerSessionManager;
   agentRunner: CompetitorAgentRunner;
   courseVerifier: CourseVerifier;
+  /** Optional site-agnostic master judge used when course proof is unavailable. */
+  completionJudge?: CompletionJudge;
   eventStore: RaceEventStore;
   obstacleProvider?: ObstacleProvider;
   /** Shared wallet. Defaults to a private per-market ledger. */
@@ -225,6 +229,11 @@ function createChanges(): PendingChanges {
   return { fight: false, points: [], frames: new Set(), accounts: new Set() };
 }
 
+type ProgressReviewOutcome = {
+  finished: boolean;
+  progressed: boolean;
+};
+
 export class RaceCoordinator {
   readonly engine: RaceEngine;
   readonly market: VirtualPredictionMarket;
@@ -254,6 +263,8 @@ export class RaceCoordinator {
   private readonly competitorModels: Record<string, string>;
   private readonly mode: ServerMode;
   private readonly progressSyncs = new Map<string, Promise<void>>();
+  private readonly progressReviews = new Map<string, Promise<ProgressReviewOutcome>>();
+  private readonly progressReviewKeys = new Map<string, string>();
   private evaluationVersion = 0;
   private evaluationUpdatedAt = 0;
   private lastEvaluationInputAt: number | null = null;
@@ -367,12 +378,15 @@ export class RaceCoordinator {
       for (const session of sessions) {
         const context: CompetitorContext = {
           ...this.baseContext(session),
-          reportCheckpoint: (checkpoint) =>
-            this.recordCheckpoint(session.racerId, checkpoint),
-          reportFinish: () => this.recordFinish(session.racerId),
+          reportCheckpoint: (checkpoint, source) =>
+            this.recordCheckpoint(session.racerId, checkpoint, Date.now(), source),
+          reportFinish: (source) =>
+            this.recordFinish(session.racerId, Date.now(), source),
           reportRecovery: () => this.recordRecovery(session.racerId),
           syncProgress: () => this.syncProgress(session.racerId),
           checkFinish: () => this.checkFinish(session.racerId),
+          reviewProgress: (observation) =>
+            this.reviewProgress(session.racerId, observation),
         };
         const task = this.dependencies.agentRunner
           .run(context)
@@ -395,9 +409,10 @@ export class RaceCoordinator {
     racerId: string,
     checkpoint: number,
     now = Date.now(),
-  ): Promise<void> {
+    source: "course" | "master" = "course",
+  ): Promise<boolean> {
     return this.enqueueLifecycle(() =>
-      this.recordCheckpointInternal(racerId, checkpoint, now),
+      this.recordCheckpointInternal(racerId, checkpoint, now, source === "master"),
     );
   }
 
@@ -406,13 +421,13 @@ export class RaceCoordinator {
     checkpoint: number,
     now: number,
     alreadyVerified = false,
-  ): Promise<void> {
+  ): Promise<boolean> {
     const session = this.getSession(racerId);
     const racer = this.engine.racers.get(racerId);
     if (!racer) throw new Error(`Unknown racer: ${racerId}`);
     // Browser actions and verifier sync can report the same checkpoint more
     // than once. Treat an already-claimed checkpoint as an idempotent success.
-    if (checkpoint <= racer.checkpoint) return;
+    if (checkpoint <= racer.checkpoint) return true;
     if (checkpoint !== racer.checkpoint + 1) {
       throw new Error(`${racerId} must reach checkpoint ${racer.checkpoint + 1} next`);
     }
@@ -428,17 +443,17 @@ export class RaceCoordinator {
           session,
         });
       } catch (error) {
-        if (isTransientCourseStateError(error)) return;
+        if (isTransientCourseStateError(error)) return false;
         throw error;
       }
       // A false result is normal while the page is still settling. The next
       // browser action's progress sync will retry it without failing the run.
-      if (!verified) return;
+      if (!verified) return false;
     }
 
     const plan = this.engine.race.sabotagePlan;
     const sabotageStep = plan?.steps?.find((step) => step.checkpoint === checkpoint);
-    if (plan && (sabotageStep || checkpoint === plan.trigger.checkpoint)) {
+    if (!alreadyVerified && plan && (sabotageStep || checkpoint === plan.trigger.checkpoint)) {
       let openingVerified: boolean;
       try {
         openingVerified = await this.dependencies.courseVerifier.verifyTargetOpening({
@@ -449,11 +464,11 @@ export class RaceCoordinator {
           session,
         });
       } catch (error) {
-        if (isTransientCourseStateError(error)) return;
+        if (isTransientCourseStateError(error)) return false;
         throw error;
       }
       if (!openingVerified) {
-        return;
+        return false;
       }
     }
 
@@ -468,10 +483,19 @@ export class RaceCoordinator {
     } finally {
       await this.afterEngineMutation(now);
     }
+    return (this.engine.racers.get(racerId)?.checkpoint ?? -1) >= checkpoint;
   }
 
-  async recordFinish(racerId: string, now = Date.now()): Promise<void> {
-    return this.enqueueLifecycle(() => this.recordFinishInternal(racerId, now));
+  async recordFinish(
+    racerId: string,
+    now = Date.now(),
+    source: "course" | "master" = "course",
+  ): Promise<boolean> {
+    return this.enqueueLifecycle(() => this.recordFinishInternal(
+      racerId,
+      now,
+      source === "master",
+    ));
   }
 
   async recordRecovery(racerId: string, now = Date.now()): Promise<void> {
@@ -541,6 +565,96 @@ export class RaceCoordinator {
     return run;
   }
 
+  /** Reviews the live page when a worker did not emit an explicit milestone. */
+  private reviewProgress(
+    racerId: string,
+    observation: WorkerStateObservation,
+  ): Promise<boolean> {
+    const checkpoint = this.engine.racers.get(racerId)?.checkpoint ?? -1;
+    const key = JSON.stringify({
+      checkpoint,
+      url: observation.url,
+      title: observation.title,
+      bodyText: observation.bodyText,
+      controls: observation.controls,
+      candidateMilestone: observation.candidateMilestone,
+    });
+    const previous = this.progressReviews.get(racerId) ??
+      Promise.resolve({ finished: false, progressed: false });
+    const run = previous
+      .catch(() => ({ finished: false, progressed: false }))
+      .then(async () => {
+        if (this.progressReviewKeys.get(racerId) === key) {
+          return { finished: false, progressed: false };
+        }
+        const outcome = await this.reviewProgressOnce(racerId, observation);
+        if (outcome.progressed) this.progressReviewKeys.set(racerId, key);
+        return outcome;
+      })
+      .catch(() => ({ finished: false, progressed: false }));
+    this.progressReviews.set(racerId, run);
+    void run.then(() => {
+      if (this.progressReviews.get(racerId) === run) {
+        this.progressReviews.delete(racerId);
+      }
+    });
+    return run.then((outcome) => outcome.finished);
+  }
+
+  private async reviewProgressOnce(
+    racerId: string,
+    observation: WorkerStateObservation,
+  ): Promise<ProgressReviewOutcome> {
+    const judge = this.dependencies.completionJudge;
+    if (!judge) return { finished: false, progressed: false };
+    const racer = this.engine.racers.get(racerId);
+    if (!racer) return { finished: false, progressed: false };
+    if (racer.status === "finished") return { finished: true, progressed: false };
+    if (racer.status !== "running") return { finished: false, progressed: false };
+
+    const now = observation.at;
+    let progressed = false;
+    const nextCheckpoint = racer.checkpoint + 1;
+    if (nextCheckpoint <= this.engine.race.checkpointCount) {
+      const verified = await judge.judgeCheckpoint({
+        task: this.fightMeta.task,
+        racerId,
+        checkpoint: nextCheckpoint,
+        observation,
+        candidateMilestone: observation.candidateMilestone,
+      });
+      if (!verified) return { finished: false, progressed: false };
+      const recorded = await this.recordCheckpoint(
+        racerId,
+        nextCheckpoint,
+        now,
+        "master",
+      );
+      if (!recorded) return { finished: false, progressed: false };
+      progressed = true;
+    }
+
+    const current = this.engine.racers.get(racerId);
+    if (!current || current.status !== "running") {
+      return { finished: false, progressed };
+    }
+    if (current.checkpoint !== this.engine.race.checkpointCount) {
+      return { finished: false, progressed };
+    }
+
+    const completed = await judge.judgeCompletion({
+      task: this.fightMeta.task,
+      racerId,
+      observation,
+      candidateMilestone: observation.candidateMilestone,
+    });
+    if (!completed) return { finished: false, progressed };
+    return {
+      finished: await this.recordFinish(racerId, now, "master"),
+      progressed: true,
+    };
+  }
+
   private async syncProgressOnce(racerId: string): Promise<void> {
     const checkpointCount = this.engine.race.checkpointCount;
     for (;;) {
@@ -581,7 +695,7 @@ export class RaceCoordinator {
     racerId: string,
     now: number,
     alreadyVerified = false,
-  ): Promise<void> {
+  ): Promise<boolean> {
     const session = this.getSession(racerId);
     if (!alreadyVerified) {
       let verified: boolean;
@@ -594,10 +708,10 @@ export class RaceCoordinator {
           session,
         });
       } catch (error) {
-        if (isTransientCourseStateError(error)) return;
+        if (isTransientCourseStateError(error)) return false;
         throw error;
       }
-      if (!verified) return;
+      if (!verified) return false;
     }
 
     const won = this.engine.finishRacer(racerId, now);
@@ -620,6 +734,7 @@ export class RaceCoordinator {
       this.flush(changes);
       this.scheduleFinalEvaluation();
     }
+    return this.engine.racers.get(racerId)?.status === "finished";
   }
 
   async tick(now = Date.now()): Promise<void> {
@@ -733,6 +848,13 @@ export class RaceCoordinator {
   recordAgentAction(racerId: string, report: AgentActionReport, now = Date.now()): void {
     this.telemetry.recordAction(racerId, report, now);
     this.touchEvaluation(typeof report.at === "number" ? report.at : now);
+    this.flush({ ...createChanges(), fight: true });
+  }
+
+  /** Stores the latest redacted browser state without treating it as proof. */
+  recordAgentState(racerId: string, observation: WorkerStateObservation, now = Date.now()): void {
+    if (!this.telemetry.recordState(racerId, observation, now)) return;
+    this.touchEvaluation(typeof observation.at === "number" ? observation.at : now);
     this.flush({ ...createChanges(), fight: true });
   }
 
@@ -866,6 +988,10 @@ export class RaceCoordinator {
     return this.telemetry.racer(racerId);
   }
 
+  latestAgentState(racerId: string) {
+    return this.telemetry.latestState(racerId);
+  }
+
   runStatus(racerId: string): RunStatus {
     const racer = this.engine.racers.get(racerId);
     if (!racer) throw new DomainError("not_found", `Unknown racer: ${racerId}`);
@@ -996,6 +1122,7 @@ export class RaceCoordinator {
       checkpoint: brief.checkpoint,
       milestone: "first_verified_checkpoint",
     };
+    if (trigger.checkpoint >= race.checkpointCount) return null;
     if (brief.policy) {
       return {
         raceId: race.id,
@@ -1015,6 +1142,7 @@ export class RaceCoordinator {
         trigger,
       });
     }
+    if (!provider.getPolicy) return null;
     const policy = await provider.getPolicy(race.id, brief.checkpoint);
     if (!policy) return null;
     return {
@@ -1042,6 +1170,12 @@ export class RaceCoordinator {
     }
     this.sabotageSettled = true;
     this.sabotageArmedAt ??= now;
+    if (!armed) {
+      // A course with no pre-completion checkpoint cannot receive sabotage.
+      // Do not leave a misleading armed brief in the spectator state.
+      this.sabotageBrief = null;
+      this.fightMeta.sabotage = null;
+    }
     if (this.sabotageDefaulted && armed && this.sabotageBrief) {
       const label = this.checkpointLabel(this.sabotageBrief.checkpoint);
       this.sabotageBrief = {
@@ -1069,6 +1203,14 @@ export class RaceCoordinator {
       seed: this.engine.race.seed,
       checkpointCount: this.engine.race.checkpointCount,
       session,
+      completionJudge: this.dependencies.completionJudge,
+      reportState: (observation) => {
+        try {
+          this.recordAgentState(racerId, observation);
+        } catch {
+          // State telemetry must never interrupt the competitor loop.
+        }
+      },
       reportAction: (report) => {
         try {
           this.recordAgentAction(racerId, report);
@@ -1190,7 +1332,7 @@ export class RaceCoordinator {
         this.telemetry.captureHitKeyframes(racerId, sabotageStepIdOf(event), at);
         this.telemetry.appendLog(racerId, {
           kind: "sabotage",
-          text: `Sabotage fired: ${this.hazardText()}`,
+          text: `Sabotage active: ${this.hazardText()}. Recover it with DOM inspection or a visible recovery action.`,
           at,
         });
         if (!this.sabotageHits.includes(racerId)) this.sabotageHits.push(racerId);
@@ -1202,7 +1344,7 @@ export class RaceCoordinator {
         const reason = typeof metadata.reason === "string" ? metadata.reason : "not applied";
         this.telemetry.appendLog(racerId, {
           kind: "sabotage",
-          text: `Sabotage misfired (${reason}): ${this.hazardText()}`,
+          text: `Sabotage attempt did not apply (${reason}): ${this.hazardText()}`,
           at,
         });
         return;
@@ -1212,7 +1354,7 @@ export class RaceCoordinator {
         this.telemetry.markRecovered(racerId, at);
         this.telemetry.appendLog(racerId, {
           kind: "recovered",
-          text: RECOVERY_TEXT[cause] ?? "Recovered",
+          text: `Sabotage cleared: ${RECOVERY_TEXT[cause] ?? "recovered"}`,
           at,
         });
         this.market.adjustConfidence(racerId, CONFIDENCE_SIGNALS.recovery * liquidity);

@@ -18,7 +18,10 @@ describe("agentStatusView", () => {
   it("maps run statuses to the band copy", () => {
     expect(agentStatusView({ runStatus: "run", phase: "running" })).toEqual({ tone: "run", label: "On task" });
     expect(agentStatusView({ runStatus: "warn", phase: "running" })).toEqual({ tone: "warn", label: "Looping" });
-    expect(agentStatusView({ runStatus: "bad", phase: "recovering" })).toEqual({ tone: "bad", label: "Blocked" });
+    expect(agentStatusView({ runStatus: "recovering", phase: "recovering" })).toEqual({
+      tone: "recovering",
+      label: "Recovering from sabotage",
+    });
   });
 
   it("lets terminal and pre-start phases win", () => {

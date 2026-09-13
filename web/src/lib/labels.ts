@@ -22,6 +22,7 @@ import type {
 export const RUN_STATUS_LABEL: Readonly<Record<RunStatus, string>> = {
   run: "On task",
   warn: "Looping",
+  recovering: "Recovering from sabotage",
   bad: "Blocked",
 };
 

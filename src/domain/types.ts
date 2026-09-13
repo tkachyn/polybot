@@ -132,7 +132,7 @@ export interface ObstacleProvider {
     checkpointCount: number;
     trigger: SabotageTrigger;
   }): Promise<SabotagePlan | null>;
-  getPolicy(raceId: string, checkpoint: number): Promise<DisruptionCommand | null>;
+  getPolicy?(raceId: string, checkpoint: number): Promise<DisruptionCommand | null>;
   apply(
     racerId: string,
     policy: DisruptionCommand,

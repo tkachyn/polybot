@@ -163,6 +163,13 @@ export function FeaturedFightCard({ fight }: { fight: FightSummary }) {
             agents={shown.agents}
             priceHistory={history}
             sabotageAt={shown.sabotage?.firedAt ?? null}
+            sabotageMarkers={current?.agents
+              .filter((agent) => agent.sabotageHitAt !== null)
+              .map((agent) => ({
+                racerId: agent.racerId,
+                at: agent.sabotageHitAt!,
+                label: `${agent.agent.name} hit`,
+              })) ?? []}
             sabotageLabel="Sabotage"
             endAt={shown.status === "resolved" ? shown.finishedAt : null}
             volume={shown.volume}

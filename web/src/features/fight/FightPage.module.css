@@ -1,7 +1,7 @@
 /*
- * Fixed, non-scrolling screen. Header strips take their natural height; the
- * body absorbs the rest and has a floor. Below 720px of height, or in the
- * compact layout, the screen scrolls internally rather than clipping.
+ * Header strips take their natural height; the body absorbs the rest. Short
+ * viewports get a tall enough arena to keep all four agent footers reachable,
+ * with this screen acting as the scroll container instead of clipping them.
  */
 .screen {
   display: grid;
@@ -10,7 +10,10 @@
   flex: 1 1 auto;
   min-width: 0;
   min-height: 0;
-  overflow: hidden;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
 }
 
 .body {
@@ -73,10 +76,15 @@
 
 /* --- Short viewports and compact layout -------------------------------------- */
 
-@media (max-height: 719px) {
+@media (max-height: 899px) {
   .screen {
+    grid-template-rows: auto auto auto;
     overflow-y: auto;
-    overscroll-behavior: contain;
+  }
+
+  .body {
+    min-height: 620px;
+    overflow: visible;
   }
 }
 

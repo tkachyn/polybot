@@ -93,6 +93,75 @@ test("selects one immutable tier and applies it independently to all racers", as
   );
 });
 
+test("selects a hard ordered sequence at each verified checkpoint", async () => {
+  const model: MasterPolicyModel = {
+    async selectSabotageSequence() {
+      return {
+        presetIds: ["cover-with-modal", "plant-decoy-control"],
+      };
+    },
+  };
+  const provider = new MasterObstacleProvider(model, {
+    async observe() {
+      return { raceId: "race-sequence", checkpoint: 1, racers: [] };
+    },
+  }, {
+    async apply() {
+      return { applied: true };
+    },
+  });
+
+  const plan = await provider.armRace?.({
+    raceId: "race-sequence",
+    courseId: "course-1",
+    seed: "seed-1",
+    checkpointCount: 3,
+    trigger: {
+      kind: "target_opened",
+      checkpoint: 1,
+      milestone: "first_verified_checkpoint",
+    },
+  });
+
+  assert.equal(plan?.source, "model");
+  assert.deepEqual(plan?.steps?.map((step) => step.checkpoint), [1, 2]);
+  assert.deepEqual(plan?.steps?.map((step) => step.stepId), [
+    "cover-with-modal",
+    "plant-decoy-control",
+  ]);
+  assert.equal(plan?.tier, "difficult");
+});
+
+test("does not arm sabotage when the trigger is the final checkpoint", async () => {
+  const provider = new MasterObstacleProvider({
+    async selectSabotage() {
+      return { tier: "basic", policy };
+    },
+  }, {
+    async observe() {
+      return { raceId: "race-final", checkpoint: 1, racers: [] };
+    },
+  }, {
+    async apply() {
+      return { applied: true };
+    },
+  });
+
+  const plan = await provider.armRace?.({
+    raceId: "race-final",
+    courseId: "course-1",
+    seed: "seed-1",
+    checkpointCount: 1,
+    trigger: {
+      kind: "target_opened",
+      checkpoint: 1,
+      milestone: "first_verified_checkpoint",
+    },
+  });
+
+  assert.equal(plan, null);
+});
+
 test("deduplicates concurrent reports for one racer", async () => {
   let applications = 0;
   const obstacleProvider: ObstacleProvider = {

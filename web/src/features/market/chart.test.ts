@@ -1,8 +1,17 @@
 import { describe, expect, it } from "vitest";
 import type { PricePoint } from "@contract";
-import { MIN_SPAN_MS, buildChartWindow, linearScale, lowerBound, nearestIndex, seriesPath, timeTicks } from "./chart";
+import { MIN_SPAN_MS, buildChartWindow, isMarkerInWindow, linearScale, lowerBound, nearestIndex, seriesPath, timeTicks } from "./chart";
 
 const p = (t: number, a: number, b = 1 - a): PricePoint => ({ t, prices: { a, b } });
+
+describe("chart event markers", () => {
+  it("keeps sabotage and trade events at the chart boundaries", () => {
+    expect(isMarkerInWindow(1_000, 1_000, 2_000)).toBe(true);
+    expect(isMarkerInWindow(2_000, 1_000, 2_000)).toBe(true);
+    expect(isMarkerInWindow(999, 1_000, 2_000)).toBe(false);
+    expect(isMarkerInWindow(Number.NaN, 1_000, 2_000)).toBe(false);
+  });
+});
 
 describe("buildChartWindow", () => {
   it("draws a flat span from a single live price when there is no history", () => {

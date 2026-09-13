@@ -295,6 +295,7 @@ function agentDetail(view: FightView, racer: Racer, index: number): FightAgentDe
     log: telemetry.log,
     frame,
     browserView: coordinator.browserView(racer.racerId),
+    workerState: coordinator.latestAgentState(racer.racerId),
   };
 }
 

@@ -118,7 +118,7 @@ test("sabotage reveal rule and armed → fired → state", async () => {
   assert.equal(live.sabotage?.firedAt, 12_000);
   assert.deepEqual(live.sabotage?.hitRacerIds, ["racer-1"]);
   assert.equal(live.agents[0].phase, "recovering");
-  assert.equal(live.agents[0].runStatus, "bad");
+  assert.equal(live.agents[0].runStatus, "recovering");
   assert.equal(live.agents[0].sabotageHitAt, 12_000);
   assert.equal(live.agents[0].checkpoints[1].sabotageFired, true);
 });

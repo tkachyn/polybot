@@ -199,7 +199,9 @@ export class RaceEngine {
       !plan ||
       !step ||
       checkpoint !== step.checkpoint ||
+      checkpoint >= this.race.checkpointCount ||
       this.race.status === "hazards_frozen" ||
+      this.race.status === "finishing" ||
       this.claimedSabotage.has(`${racerId}:${step.stepId}`)
     ) {
       return { claimed: true, obstacleApplied: false };

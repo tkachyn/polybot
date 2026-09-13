@@ -152,7 +152,7 @@ test("describeDecision produces spectator log text", () => {
   assert.equal(describeDecision({ type: "wait", durationMs: 500 }), "Waited 500ms");
   assert.equal(
     describeDecision({ type: "evaluate", script: "window.__arenaRecoverDisruptions?.()" }),
-    "Evaluated a bounded same-page DOM recovery script",
+    "Ran active DOM recovery against the blocking challenge",
   );
   assert.equal(describeDecision({ type: "finish" }), "Reported finish");
   const long = describeDecision({ type: "type", targetRole: "q", text: "x".repeat(200) });

@@ -98,12 +98,20 @@ Demo-day checklist:
 
 ```text
 racer-1: openai/gpt-5.6-luna
-racer-2: anthropic/claude-sonnet-4.6
+racer-2: qwen/qwen3.8-27b
 racer-3: google/gemma-3-27b-it
-racer-4: deepseek/deepseek-v4-pro-0813
+racer-4: google/gemini-3.7-flash
 ```
 
 `RACE_LLM_BUDGET_USD` is a shared software stop for all model calls in one race; `GET /races/:raceId` reports it as `llmUsage` and the per-racer models as `competitors`. Keep a separate hard credit limit on the OpenRouter API key because a few concurrent in-flight calls can finish after the software limit is reached.
+
+Competitor calls use a bounded retry policy for provider rate limits, 5xx
+responses and transport timeouts. `OPENROUTER_MODEL_MAX_CALLS_PER_MINUTE`
+(default `20`) and `OPENROUTER_MODEL_RATE_WINDOW_MS` (default `60000`) are
+applied independently to every configured model. `COMPETITOR_LLM_MAX_OUTPUT_TOKENS`
+(default `512`) gives reasoning models enough room to produce the required
+browser-action tool call. A provider retry or rate-limit pause does not consume
+a browser action; the live log reports it as a model-provider pause.
 
 `STEEL_API_KEYS` accepts a comma-separated list. New sessions rotate to the next key when Steel rejects the current key for authentication, credits, quota or rate limits. Live sessions retain the key that created them.
 
@@ -173,6 +181,9 @@ The script sends `POST /races` with `courseId: "arena-shop"`, three checkpoints,
 | `OPENROUTER_API_KEY` | none | Live mode: key for all competitor and master model calls |
 | `OPENROUTER_APP_URL` / `OPENROUTER_APP_NAME` | `http://localhost:3001` / `Browser Agent Arena` | OpenRouter attribution headers |
 | `COMPETITOR_LLM_MODELS` | none | Live mode: four comma-separated OpenRouter model ids |
+| `OPENROUTER_MODEL_MAX_CALLS_PER_MINUTE` | `20` | Per-model competitor request window |
+| `OPENROUTER_MODEL_RATE_WINDOW_MS` | `60000` | Duration of the per-model request window |
+| `COMPETITOR_LLM_MAX_OUTPUT_TOKENS` | `512` | Competitor tool-call output budget |
 | `MASTER_LLM_MODEL` | none | Live mode: OpenRouter model for the sabotage director (needed when `obstaclesEnabled`) |
 | `RACE_LLM_BUDGET_USD` | `0.25` | Live mode: shared per-race LLM spend cap |
 | `COURSE_BASE_URL` / `COURSE_VERIFIER_TOKEN` | none | Live mode: course verifier endpoint and token |

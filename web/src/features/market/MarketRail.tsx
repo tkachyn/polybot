@@ -16,16 +16,19 @@ import { OrderForm } from "./OrderForm";
 import { OutcomeTable } from "./OutcomeTable";
 import { ProbabilityChart } from "./ProbabilityChart";
 import { Receipt, type FilledOrder } from "./Receipt";
-import type { MarketRailProps, Slip } from "./types";
+import type { ChartSabotageMarker, ChartTradeMarker, MarketRailProps, Slip } from "./types";
 import styles from "./MarketRail.module.css";
+import { useSession } from "../../state/session";
 
 function slipKey(raceId: string, slip: Slip | null): string {
   return slip ? `${raceId}|${slip.racerId}|${slip.side}|${slip.price}` : `${raceId}|`;
 }
 
 export function MarketRail({ fight, priceHistory, slip, onSlipChange }: MarketRailProps) {
+  const { portfolio } = useSession();
   const [amount, setAmount] = useState("");
   const [filled, setFilled] = useState<FilledOrder | null>(null);
+  const [tradeMarkers, setTradeMarkers] = useState<ChartTradeMarker[]>([]);
 
   const onSlipChangeRef = useRef(onSlipChange);
   onSlipChangeRef.current = onSlipChange;
@@ -35,12 +38,42 @@ export function MarketRail({ fight, priceHistory, slip, onSlipChange }: MarketRa
   const slipAgent = agentIndex >= 0 ? fight.agents[agentIndex] : undefined;
   const activeSlip = slipAgent ? slip : null;
   const currentKey = slipKey(fight.raceId, activeSlip);
+  const persistedTradeMarkers = useMemo(
+    () => (portfolio?.history ?? [])
+      .filter((entry) =>
+        entry.raceId === fight.raceId &&
+        (entry.type === "buy" || entry.type === "sell") &&
+        entry.racerId !== null &&
+        entry.quantity !== null &&
+        entry.price !== null,
+      )
+      .map((entry) => ({
+        id: entry.id,
+        racerId: entry.racerId!,
+        at: entry.at,
+        price: entry.price!,
+        action: entry.type as "buy" | "sell",
+        side: entry.side ?? "yes",
+        quantity: entry.quantity!,
+      })),
+    [portfolio?.history, fight.raceId],
+  );
+  const chartTradeMarkers = useMemo(() => {
+    const merged = [...persistedTradeMarkers, ...tradeMarkers];
+    return merged.filter((marker, index) =>
+      merged.findIndex((candidate) => candidate.id === marker.id) === index,
+    );
+  }, [persistedTradeMarkers, tradeMarkers]);
 
   // A receipt belongs to the slip that produced it: another slip (from the
   // table or the arena), no slip, or another fight dismisses it.
   useEffect(() => {
     setFilled((f) => (f && f.key !== currentKey ? null : f));
   }, [currentKey]);
+
+  useEffect(() => {
+    setTradeMarkers([]);
+  }, [fight.raceId]);
 
   const select = useCallback((next: Slip | null) => {
     setFilled(null);
@@ -52,6 +85,17 @@ export function MarketRail({ fight, priceHistory, slip, onSlipChange }: MarketRa
   const onFilled = useCallback(
     (response: OrderResponse) => {
       if (!slipAgent) return;
+      setTradeMarkers((markers) => markers.some((marker) => marker.id === response.receipt.orderId)
+        ? markers
+        : [...markers, {
+            id: response.receipt.orderId,
+            racerId: response.receipt.racerId,
+            at: response.receipt.executedAt,
+            price: response.receipt.price,
+            action: response.receipt.action,
+            side: response.receipt.side,
+            quantity: response.receipt.quantity,
+          }]);
       setFilled({
         key: currentKey,
         receipt: response.receipt,
@@ -88,6 +132,8 @@ export function MarketRail({ fight, priceHistory, slip, onSlipChange }: MarketRa
         agents={fight.agents}
         priceHistory={priceHistory}
         sabotageAt={fight.sabotage?.firedAt ?? null}
+        sabotageMarkers={sabotageMarkersFor(fight)}
+        tradeMarkers={chartTradeMarkers}
         endAt={fight.status === "resolved" ? fight.finishedAt : null}
         volume={fight.volume}
         className={cx(styles.chartFloor, panelOpen && styles.chartFloorCompact)}
@@ -97,6 +143,16 @@ export function MarketRail({ fight, priceHistory, slip, onSlipChange }: MarketRa
       <MarketFooter fight={fight} />
     </div>
   );
+}
+
+function sabotageMarkersFor(fight: FightDetail): ChartSabotageMarker[] {
+  return fight.agents
+    .filter((agent) => agent.sabotageHitAt !== null)
+    .map((agent) => ({
+      racerId: agent.racerId,
+      at: agent.sabotageHitAt!,
+      label: `${agent.agent.name} hit`,
+    }));
 }
 
 function MarketFooter({ fight }: { fight: FightDetail }) {

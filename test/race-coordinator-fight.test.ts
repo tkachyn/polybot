@@ -3,6 +3,7 @@ import test from "node:test";
 import type {
   CompetitorAgentRunner,
   CompetitorContext,
+  CompletionJudge,
   CourseVerifier,
   RacerSessionHandle,
   RacerSessionManager,
@@ -101,6 +102,7 @@ function setup(options: {
   obstacles?: ObstacleProvider;
   prepareError?: Error;
   fight?: Parameters<typeof normalizeFightMetadata>[0]["fight"];
+  completionJudge?: CompletionJudge;
 } = {}) {
   const sessions = new FakeSessions();
   const runner = new FakeRunner(options.prepareError);
@@ -120,6 +122,7 @@ function setup(options: {
       sessionManager: sessions,
       agentRunner: runner,
       courseVerifier: verifier,
+      completionJudge: options.completionJudge,
       eventStore: events,
       obstacleProvider: options.obstacles,
       ledger,
@@ -208,6 +211,48 @@ test("a default sabotage arms at checkpoint 1 and describes the armed hazard", a
   await coordinator.shutdown();
 });
 
+test("master review advances a worker that never emits checkpoint decisions", async () => {
+  const checkpointClaims: number[] = [];
+  const completionClaims: number[] = [];
+  const { coordinator, runner } = setup({
+    completionJudge: {
+      async judgeCheckpoint(input) {
+        checkpointClaims.push(input.checkpoint);
+        return true;
+      },
+      async judgeCompletion() {
+        completionClaims.push(1);
+        return true;
+      },
+    },
+  });
+  await coordinator.prepareAndStart(1_000);
+  const context = runner.running.get("racer-1");
+  assert.ok(context?.reviewProgress);
+
+  const observation = {
+    url: "https://shop.test/checkout",
+    title: "Checkout",
+    bodyText: "Order confirmation",
+    controls: [],
+    at: 2_000,
+    step: 1,
+    maxSteps: 60,
+  };
+  const duplicateReviews = await Promise.all([
+    context!.reviewProgress!(observation),
+    context!.reviewProgress!(observation),
+  ]);
+  assert.deepEqual(duplicateReviews, [false, false]);
+  assert.equal(await context!.reviewProgress!({ ...observation, at: 2_001, step: 2 }), false);
+  assert.equal(await context!.reviewProgress!({ ...observation, at: 2_002, step: 3 }), true);
+
+  assert.deepEqual(checkpointClaims, [1, 2, 3]);
+  assert.equal(completionClaims.length, 1);
+  assert.equal(coordinator.engine.racers.get("racer-1")?.status, "finished");
+  await coordinator.shutdown();
+});
+
 test("an operator plan keeps its summary and fixed policy", async () => {
   const fixed: DisruptionCommand = { ...policy, hazardType: "insert_decoy", intensity: 3 };
   const obstacles = new FakeObstacles();
@@ -256,16 +301,20 @@ test("an obstacle provider with armRace chooses the race-wide plan", async () =>
     fight: { sabotage: { checkpoint: 3, summary: "Late modal" } },
   });
   await coordinator.prepareAndStart(1_000);
-  assert.deepEqual(triggers, [3]);
-  assert.equal(coordinator.sabotage?.tier, "basic");
-  assert.equal(coordinator.engine.race.sabotagePlan?.source, "model");
+  assert.deepEqual(triggers, []);
+  assert.equal(coordinator.sabotage, null);
+  assert.equal(coordinator.engine.race.sabotagePlan, undefined);
 
   await coordinator.recordCheckpoint("racer-4", 1, 1_100);
   await coordinator.recordCheckpoint("racer-4", 2, 1_200);
   assert.deepEqual(verifier.openings, []);
   await coordinator.recordCheckpoint("racer-4", 3, 1_300);
-  assert.deepEqual(verifier.openings, ["racer-4"]);
-  assert.deepEqual(coordinator.sabotage?.hitRacerIds, ["racer-4"]);
+  assert.deepEqual(verifier.openings, []);
+  assert.equal(coordinator.sabotage, null);
+  assert.equal(
+    coordinator.engine.events.some((event) => event.type === "sabotage_applied"),
+    false,
+  );
   await coordinator.shutdown();
 });
 
@@ -287,7 +336,7 @@ test("sabotage hits drive telemetry, run status, signals and sabotage state", as
   assert.equal(sabotage?.firedAt, 3_000);
   assert.deepEqual(sabotage?.hitRacerIds, ["racer-1"]);
   assert.equal(coordinator.engine.racers.get("racer-1")?.status, "recovering");
-  assert.equal(coordinator.runStatus("racer-1"), "bad");
+  assert.equal(coordinator.runStatus("racer-1"), "recovering");
   assert.equal(coordinator.market.pricesSnapshot()["racer-1"], round(145 / 445));
 
   await coordinator.recordRecovery("racer-1", 7_000);
@@ -300,6 +349,9 @@ test("sabotage hits drive telemetry, run status, signals and sabotage state", as
     telemetry.log.map((entry) => entry.kind),
     ["checkpoint", "checkpoint", "sabotage", "recovered"],
   );
+  assert.match(telemetry.log[2]?.text ?? "", /^Sabotage active:/);
+  assert.equal(telemetry.log[2]?.kind, "sabotage");
+  assert.equal(telemetry.log[3]?.text, "Sabotage cleared: Recovered");
   assert.deepEqual(telemetry.checkpointClearedAt, [2_000, 3_000, null]);
   assert.equal(telemetry.sabotageHitAt, 3_000);
   assert.equal(telemetry.recoveredAt, 7_000);

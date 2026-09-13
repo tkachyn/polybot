@@ -158,6 +158,15 @@
   letter-spacing: var(--tracking-label);
 }
 
+.tradeMarker {
+  stroke-width: 3;
+  stroke-linecap: round;
+}
+
+.tradeMarkerSell {
+  stroke-dasharray: 2 2;
+}
+
 .crosshair {
   stroke: var(--color-divider);
   stroke-width: 1;

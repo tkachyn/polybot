@@ -314,7 +314,9 @@ function Overview({ agents, visuals, ids }: { agents: readonly AgentEvaluation[]
                   <OutcomeChip outcome={agent.outcome} />
                 </span>
                 <span className={styles.tileScore}>
-                  <span className="label label-sm">Robustness</span>
+                  <span className="label label-sm">
+                    Robustness{isFiniteNumber(robustness) && ` · ${agent.sabotage.filter((reaction) => reaction.score !== null).length} hits`}
+                  </span>
                   <span className={cx("num", isFiniteNumber(robustness) ? styles.tileValue : styles.tileUntested)}>{formatRobustness(robustness)}</span>
                 </span>
                 <ProgressBar value={isFiniteNumber(robustness) ? robustness / 100 : 0} color="var(--agent-color)" size="xs" label={`${agent.agent.name} robustness`} />

@@ -12,8 +12,8 @@ This document binds the Sabotage Markets UI (`docs/sabotage-markets-handoff.md`)
 | Sabotage | One sabotage per fight at a named checkpoint, revealed to bettors upfront, armed → fired | One immutable plan, fired independently per racer after the racer's verified trigger checkpoint | The engine's `SabotagePlan` is the source of truth. The default plan is a single step at checkpoint 1, and each racer triggers it independently when that racer reaches the checkpoint. Explicit multi-step plans remain supported for future course-specific strategies. |
 | Duration | 30-minute cap | 180 s target, 300 s cap | Durations are per race and supplied by the backend (`freezesAt`, `closesAt`). The UI never hard-codes them. |
 | Void | Rules undefined | Cap reached → unresolved, credits returned | A voided fight refunds each open position at its average price. The history shows a `refund` entry. |
-| Capture | Undecided | Steel viewer URL | Live mode exposes a read-only Steel debug viewer in `agent.browserView` (`interactive=false`, `showControls=false`); the runner injects a pointer-transparent cursor into the course page so its paced movement is captured in live video, periodic screenshots and HLS replay. Click and type telemetry retains the browser pointer position for diagnostics. Simulated mode and viewer failures use periodic frames. The UI must keep the frame path as a fallback and must not reset the viewer iframe while polling. |
-| Agents | GPT Luna 5.6, Claude Sonnet 4.6, Gemma 3 27B IT, DeepSeek V4 Pro 0813 | One model per live racer | Each fight has a per-race roster (`AgentIdentity` × 4). In live mode each racer is driven by its own OpenRouter model from `COMPETITOR_LLM_MODELS`, and its identity reports `provider: "openrouter"` with that model id. Without an operator `agents` roster, each agent's `name` and `key` are derived from the model it runs, so bettors never see one model under another's name. An operator roster keeps its keys and names. |
+| Capture | Undecided | Steel viewer URL | Live mode exposes a read-only Steel debug viewer in `agent.browserView` (`interactive=false`, `showControls=false`); the runner injects a pointer-transparent black cursor with a light outline into the course page so its paced movement is captured in live video, periodic screenshots and HLS replay. Click and type telemetry retains the browser pointer position for diagnostics. Simulated mode and viewer failures use periodic frames. The UI must keep the frame path as a fallback and must not reset the viewer iframe while polling. |
+| Agents | GPT Luna 5.6, Qwen3.8 27B, Gemma 3 27B IT, Gemini 3.7 Flash | One model per live racer | Each fight has a per-race roster (`AgentIdentity` × 4). In live mode each racer is driven by its own OpenRouter model from `COMPETITOR_LLM_MODELS`, and its identity reports `provider: "openrouter"` with that model id. Without an operator `agents` roster, each agent's `name` and `key` are derived from the model it runs, so bettors never see one model under another's name. An operator roster keeps its keys and names. |
 | Selling | Not designed | Supported | Sell is available from the Portfolio open-positions table. |
 
 ## Modes
@@ -111,7 +111,8 @@ Clients treat `snapshot` as a full replace. They append `price` points whose `t`
   - `finished` or `timed_out` → `resolved`
 - **Opening price:** YES price at race start, or at creation before start. `change = yes - openingYes`.
 - **runStatus:**
-  - `bad` if phase is `recovering` (sabotage active), `failed` or `timed_out`.
+  - `recovering` if phase is `recovering` (sabotage active).
+  - `bad` if phase is `failed` or `timed_out`.
   - Otherwise `warn` if the last 3 action reports share one signature, or the last 2 reports were errors.
   - Otherwise `run`.
 - **Recovery:** a `recovering` racer returns to `running` only after the agent actively clears the sabotage or the race ends. `durationMs` is policy metadata, not an automatic recovery deadline. It cannot clear a checkpoint or finish while recovering. A `recovered` log entry is written.
@@ -222,7 +223,7 @@ Score per hit:
 | Label | Score |
 | --- | --- |
 | `immune` | 100 |
-| `recovered` | `100 − min(50, 50 × timeLost / (2 × pace))` |
+| `recovered` | `100 − min(50, 50 × timeLost / (2 × pace)) − min(25, 10 × errorsInWindow)`, floored at 0 |
 | `deceived` | the recovered formula − 25, floored at 10 |
 | `stalled` | 25 |
 | `derailed` | 0 |

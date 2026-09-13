@@ -9,6 +9,44 @@ export type RacerSessionHandle = {
   viewerUrl?: string;
 };
 
+export type CompletionObservation = {
+  url: string;
+  title: string;
+  bodyText: string;
+  controls: Array<{
+    tag: string;
+    role: string | null;
+    arenaRole: string | null;
+    text: string;
+    disabled: boolean;
+    visible: boolean;
+  }>;
+};
+
+export type WorkerStateObservation = CompletionObservation & {
+  at: number;
+  step: number;
+  maxSteps: number;
+  candidateMilestone?: string;
+  navigated?: boolean;
+};
+
+export interface CompletionJudge {
+  judgeCheckpoint(input: {
+    task: string;
+    racerId: string;
+    checkpoint: number;
+    observation: CompletionObservation;
+    candidateMilestone?: string;
+  }): Promise<boolean>;
+  judgeCompletion(input: {
+    task: string;
+    racerId: string;
+    observation: CompletionObservation;
+    candidateMilestone?: string;
+  }): Promise<boolean>;
+}
+
 export interface RacerSessionManager {
   create(racerId: string): Promise<RacerSessionHandle>;
   release(racerId: string): Promise<void>;
@@ -97,8 +135,20 @@ export type CompetitorContext = {
   seed: string;
   checkpointCount: number;
   session: RacerSessionHandle;
-  reportCheckpoint(checkpoint: number): Promise<void>;
-  reportFinish(): Promise<void>;
+  /** Returns false when the authoritative verifier has not accepted progress. */
+  reportCheckpoint(checkpoint: number, source?: "course" | "master"): Promise<boolean | void>;
+  /** Returns false when the authoritative verifier has not accepted finish. */
+  reportFinish(source?: "course" | "master"): Promise<boolean | void>;
+  /** Optional site-agnostic fallback when the course has no completion proof. */
+  completionJudge?: CompletionJudge;
+  /** Page state is evidence/request-for-review data, never completion proof. */
+  reportState?(observation: WorkerStateObservation): void;
+  /**
+   * Reviews the current page for the next checkpoint or completion. Worker
+   * claims remain hints; the callback decides from the supplied observation.
+   * Returns true only when the race accepted a verified finish.
+   */
+  reviewProgress?(observation: WorkerStateObservation): Promise<boolean>;
   /** Ends the racer's current persistent sabotage recovery state. */
   reportRecovery?(): Promise<void>;
   /** Verifier-backed completion check after a browser action. */

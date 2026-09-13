@@ -507,15 +507,18 @@ browserTest("the runner records a paced, pointer-transparent in-page cursor", as
 
     const result = await page.evaluate(() => {
       const cursor = document.getElementById("arena-agent-cursor");
+      const shape = cursor?.querySelector(".arena-agent-cursor-shape");
       const rect = cursor?.getBoundingClientRect();
       return {
         pointerEvents: cursor ? getComputedStyle(cursor).pointerEvents : null,
+        shapeFilter: shape ? getComputedStyle(shape).filter : null,
         left: rect?.left ?? null,
         top: rect?.top ?? null,
         mutations: (window as unknown as { arenaCursorMutations?: () => number }).arenaCursorMutations?.() ?? 0,
       };
     });
     assert.equal(result.pointerEvents, "none");
+    assert.match(result.shapeFilter ?? "", /drop-shadow/);
     assert.ok(result.mutations > 1, "cursor should move through intermediate positions");
     assert.ok(Math.abs((result.left ?? 0) - (targetBox.x + targetBox.width / 2)) < 1);
     assert.ok(Math.abs((result.top ?? 0) - (targetBox.y + targetBox.height / 2)) < 1);

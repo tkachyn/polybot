@@ -11,6 +11,7 @@ import type {
   AgentActionReport,
   CompetitorAgentRunner,
   CompetitorContext,
+  WorkerStateObservation,
 } from "../application/contracts.js";
 import {
   datasetAction,
@@ -124,6 +125,8 @@ const CURSOR_PIXELS_PER_MS = 2.4;
 /** Gives the recorded page time to render the pointer arriving at a target. */
 const CURSOR_SETTLE_MS = 100;
 const EVALUATE_TIMEOUT_MS = 1_000;
+const MAX_CONSECUTIVE_DECISION_FAILURES = 3;
+const MAX_TOTAL_DECISION_FAILURES = 6;
 const UNSAFE_EVALUATE_PATTERNS: ReadonlyArray<RegExp> = [
   /\bfetch\s*\(/i,
   /\bXMLHttpRequest\b/i,
@@ -136,6 +139,9 @@ const UNSAFE_EVALUATE_PATTERNS: ReadonlyArray<RegExp> = [
   /\bwindow\s*\.\s*open\s*\(/i,
   /\b(?:eval|Function)\s*\(/i,
   /\bimport\s*\(/i,
+  /(?:\.|["'])\s*(?:click|submit|requestSubmit)\s*\(/i,
+  /\[\s*["'](?:click|submit|requestSubmit)["']\s*\]\s*\(/i,
+  /\b(?:setTimeout|setInterval|queueMicrotask)\s*\(/i,
 ];
 
 type CursorPoint = { x: number; y: number };
@@ -157,7 +163,7 @@ const CURSOR_BOOTSTRAP_SCRIPT = `
       style.id = styleId;
       style.textContent = [
         "#" + cursorId + "{position:fixed;left:0;top:0;width:22px;height:28px;z-index:2147483647;pointer-events:none;user-select:none;will-change:transform;transition:transform 16ms linear;}",
-        "#" + cursorId + " .arena-agent-cursor-shape{position:absolute;left:1px;top:1px;width:18px;height:24px;background:#fff;clip-path:polygon(0 0,0 100%,29% 72%,45% 100%,61% 93%,44% 65%,94% 65%);filter:drop-shadow(0 1px 1px rgb(0 0 0 / 80%));}",
+        "#" + cursorId + " .arena-agent-cursor-shape{position:absolute;left:1px;top:1px;width:18px;height:24px;background:#000;clip-path:polygon(0 0,0 100%,29% 72%,45% 100%,61% 93%,44% 65%,94% 65%);filter:drop-shadow(0 0 1.5px #fff) drop-shadow(0 1px 1px rgb(0 0 0 / 80%));}",
         "#" + cursorId + " .arena-agent-cursor-pulse{position:absolute;left:-10px;top:-8px;width:38px;height:38px;border:2px solid #ff5364;border-radius:50%;opacity:0;}",
         "#" + cursorId + ".arena-agent-cursor-pulsing .arena-agent-cursor-pulse{animation:arena-agent-cursor-pulse 650ms ease-out both;}",
         "@keyframes arena-agent-cursor-pulse{0%{opacity:.9;transform:scale(.35)}100%{opacity:0;transform:scale(1.2)}}",
@@ -210,6 +216,12 @@ export function validateEvaluateScript(script: string): string {
   }
   const unsafe = UNSAFE_EVALUATE_PATTERNS.find((pattern) => pattern.test(source));
   if (unsafe) throw new Error(`evaluate script uses a forbidden capability: ${unsafe.source}`);
+  try {
+    // Parse only; the script is still executed in the page context below.
+    new Function(`return (${source});`);
+  } catch {
+    throw new Error("invalid JavaScript syntax");
+  }
   return source;
 }
 
@@ -299,6 +311,9 @@ export class PlaywrightCompetitorRunner implements CompetitorAgentRunner {
     const capture = this.startFrames(page, context);
     const history: Array<{ decision: AgentDecision; error?: string }> = [];
     const secrets = new SecretScrubber();
+    let totalDecisionFailures = 0;
+    let consecutiveDecisionFailures = 0;
+    let initialStateReported = false;
 
     try {
       for (let action = 0; action < this.maxActions; action += 1) {
@@ -306,26 +321,58 @@ export class PlaywrightCompetitorRunner implements CompetitorAgentRunner {
         const step = action + 1;
         const observed = await this.observe(page);
         const observedAt = Date.now();
+        if (!initialStateReported) {
+          this.reportState(context, observed.observation, 0, observedAt);
+          initialStateReported = true;
+        }
         // The screenshot this step's observation was taken with.
         await this.captureStepFrame(page, context, capture, step);
-        const wait = await model.prepareForCall?.(controller.signal);
-        const rateLimitWaitMs = wait && wait.waitedMs > 0 ? wait.waitedMs : 0;
-        if (rateLimitWaitMs > 0) {
-          this.reportNote(context, step, {
-            text: `Rate limit pause complete; resumed after ${Math.ceil(rateLimitWaitMs / 1_000)}s`,
-            signature: `rate-limit:${Math.ceil(rateLimitWaitMs / 1_000)}`,
-          });
+        let decision: AgentDecision;
+        let promptedAt = Date.now();
+        let decidedAt = promptedAt;
+        let rateLimitWaitMs = 0;
+        let decisionIssue: DecisionIssue | null = null;
+        for (;;) {
+          const wait = await model.prepareForCall?.(controller.signal);
+          rateLimitWaitMs = wait && wait.waitedMs > 0 ? wait.waitedMs : 0;
+          if (rateLimitWaitMs > 0) {
+            this.reportNote(context, step, {
+              text: `Rate limit pause complete; resumed after ${Math.ceil(rateLimitWaitMs / 1_000)}s`,
+              signature: `rate-limit:${Math.ceil(rateLimitWaitMs / 1_000)}`,
+            });
+          }
+          promptedAt = Date.now();
+          try {
+            decision = await model.decide({
+              task: this.options.task,
+              racerId: context.racerId,
+              observation: observed.observation,
+              history: history.slice(-10),
+              signal: controller.signal,
+            });
+            decidedAt = Date.now();
+            decisionIssue = model.takeDecisionIssue?.() ?? null;
+            consecutiveDecisionFailures = 0;
+            break;
+          } catch (error) {
+            if (controller.signal.aborted) return;
+            totalDecisionFailures += 1;
+            consecutiveDecisionFailures += 1;
+            const reason = error instanceof Error ? error.message : String(error);
+            this.reportNote(context, step, {
+              text: `Model provider pause (${consecutiveDecisionFailures}/${MAX_CONSECUTIVE_DECISION_FAILURES}, ${totalDecisionFailures}/${MAX_TOTAL_DECISION_FAILURES} total); no browser action used. Retrying: ${reason}`,
+              signature: `model-provider-retry:${totalDecisionFailures}`,
+            });
+            if (
+              consecutiveDecisionFailures >= MAX_CONSECUTIVE_DECISION_FAILURES ||
+              totalDecisionFailures >= MAX_TOTAL_DECISION_FAILURES
+            ) {
+              throw new Error(
+                `${context.racerId} model decision failed after ${totalDecisionFailures} provider/protocol retries: ${reason}`,
+              );
+            }
+          }
         }
-        const promptedAt = Date.now();
-        const decision = await model.decide({
-          task: this.options.task,
-          racerId: context.racerId,
-          observation: observed.observation,
-          history: history.slice(-10),
-          signal: controller.signal,
-        });
-        const decidedAt = Date.now();
-        const decisionIssue = model.takeDecisionIssue?.() ?? null;
         if (controller.signal.aborted) return;
 
         const outcome = await this.attempt(page, context, decision);
@@ -347,6 +394,35 @@ export class PlaywrightCompetitorRunner implements CompetitorAgentRunner {
         // Progress comes from the course's ground truth after every action,
         // successful or not. Explicit checkpoint decisions remain a fallback.
         await this.syncProgress(context);
+        const after = await this.observe(page);
+        this.reportState(
+          context,
+          after.observation,
+          step,
+          Date.now(),
+          candidateMilestone(decision),
+          outcome.evidence.navigated,
+        );
+        if (context.reviewProgress) {
+          try {
+            if (await context.reviewProgress({
+              ...after.observation,
+              at: Date.now(),
+              step,
+              maxSteps: Number.isFinite(this.maxActions) ? this.maxActions : 0,
+              ...(candidateMilestone(decision) === undefined
+                ? {}
+                : { candidateMilestone: candidateMilestone(decision) }),
+              ...(outcome.evidence.navigated === undefined
+                ? {}
+                : { navigated: outcome.evidence.navigated }),
+            })) {
+              return;
+            }
+          } catch {
+            // A semantic review is advisory and must not end the run.
+          }
+        }
         if (outcome.finished) return;
         // A site adapter can prove completion after any action. Keep the
         // explicit finish tool as a fallback, but do not require the model
@@ -450,6 +526,29 @@ export class PlaywrightCompetitorRunner implements CompetitorAgentRunner {
       });
     } catch {
       // Telemetry must never break the competitor loop.
+    }
+  }
+
+  private reportState(
+    context: CompetitorContext,
+    observation: BrowserObservation,
+    step: number,
+    at: number,
+    milestone?: string,
+    navigated?: boolean,
+  ): void {
+    try {
+      const state: WorkerStateObservation = {
+        ...observation,
+        at,
+        step,
+        maxSteps: Number.isFinite(this.maxActions) ? this.maxActions : 0,
+        ...(milestone === undefined ? {} : { candidateMilestone: milestone }),
+        ...(navigated === undefined ? {} : { navigated }),
+      };
+      context.reportState?.(state);
+    } catch {
+      // State telemetry must never break the competitor loop.
     }
   }
 
@@ -619,10 +718,12 @@ export class PlaywrightCompetitorRunner implements CompetitorAgentRunner {
         await this.evaluateDom(page, decision.script);
         return false;
       case "navigate": {
+        const current = new URL(currentUrl(page) ?? this.options.startUrl, this.options.startUrl);
         const target = new URL(decision.url, this.options.startUrl);
         if (target.origin !== new URL(this.options.startUrl).origin) {
           throw new Error("Cross-origin navigation is not allowed");
         }
+        preserveRunProof(target, current);
         await page.goto(target.toString(), { waitUntil: "domcontentloaded" });
         await this.restoreCursor(page, context.racerId);
         return false;
@@ -637,11 +738,39 @@ export class PlaywrightCompetitorRunner implements CompetitorAgentRunner {
         await page.waitForTimeout(Math.max(0, Math.min(decision.durationMs, 2_000)));
         return false;
       case "checkpoint":
-        await context.reportCheckpoint(decision.checkpoint);
-        return false;
+        if (await context.reportCheckpoint(decision.checkpoint) !== false) return false;
+        if (context.completionJudge) {
+          try {
+            const judged = await context.completionJudge.judgeCheckpoint({
+              task: this.options.task,
+              racerId: context.racerId,
+              checkpoint: decision.checkpoint,
+              observation: await this.observe(page).then((result) => result.observation),
+              candidateMilestone: candidateMilestone(decision),
+            });
+            if (judged) {
+              return await context.reportCheckpoint(decision.checkpoint, "master") !== false;
+            }
+          } catch {
+            // Fall through to a visible, recoverable progress error.
+          }
+        }
+        throw new Error(`Checkpoint ${decision.checkpoint} was not verified; continue from the current page state`);
       case "finish":
-        await context.reportFinish();
-        return true;
+        if (await context.reportFinish() !== false) return true;
+        if (!context.completionJudge) return false;
+        try {
+          const judged = await context.completionJudge.judgeCompletion({
+            task: this.options.task,
+            racerId: context.racerId,
+            observation: await this.observe(page).then((result) => result.observation),
+            candidateMilestone: candidateMilestone(decision),
+          });
+          if (!judged) return false;
+          return await context.reportFinish("master") !== false;
+        } catch {
+          return false;
+        }
     }
   }
 
@@ -750,6 +879,7 @@ export class PlaywrightCompetitorRunner implements CompetitorAgentRunner {
     const point = this.cursorPositions.get(racerId) ?? initialCursorPoint(page);
     this.cursorPositions.set(racerId, point);
     await movePageCursor(page, point.x, point.y, "click", false);
+    if (page.mouse) await page.mouse.move(point.x, point.y);
   }
 
   /**
@@ -855,6 +985,12 @@ export class PlaywrightCompetitorRunner implements CompetitorAgentRunner {
       return false;
     }
   }
+}
+
+function candidateMilestone(decision: AgentDecision): string | undefined {
+  if (decision.type === "checkpoint") return `checkpoint:${decision.checkpoint}`;
+  if (decision.type === "finish") return "finish";
+  return undefined;
 }
 
 /** A browser action that could not start, with its classification. */
@@ -1081,6 +1217,22 @@ function initialCursorPoint(page: Page): CursorPoint {
 
 function readViewportSize(page: Page): { width: number; height: number } | null {
   return typeof page.viewportSize === "function" ? page.viewportSize() : null;
+}
+
+const RUN_PROOF_QUERY_KEYS = [
+  "raceId",
+  "racerId",
+  "courseId",
+  "seed",
+  "steelSessionId",
+  "checkpointCount",
+] as const;
+
+function preserveRunProof(target: URL, current: URL): void {
+  for (const key of RUN_PROOF_QUERY_KEYS) {
+    const value = current.searchParams.get(key);
+    if (value !== null) target.searchParams.set(key, value);
+  }
 }
 
 async function movePageCursor(

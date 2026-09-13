@@ -231,10 +231,10 @@ export function buildDisruptionScript(
           });
           const message = document.createElement("p");
           message.style.margin = "0";
-          message.textContent = "The interface is temporarily unavailable";
+          message.textContent = "We’re having trouble loading this page";
           panel.appendChild(message);
           const instruction = document.createElement("p");
-          instruction.textContent = "Use an in-page DOM recovery action to continue";
+          instruction.textContent = "Please try again in a moment";
           instruction.style.margin = "0";
           instruction.style.opacity = "0.72";
           overlay.appendChild(panel);

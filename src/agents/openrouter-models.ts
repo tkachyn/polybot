@@ -229,7 +229,8 @@ abstract class OpenRouterModelBase {
       | typeof browserActionTool
       | ReturnType<typeof obstacleTool>
       | ReturnType<typeof sabotageTool>
-      | ReturnType<typeof sabotageSequenceTool>,
+      | ReturnType<typeof sabotageSequenceTool>
+      | ReturnType<typeof completionTool>,
     signal?: AbortSignal,
   ): Promise<unknown> {
     this.malformedAttempts = 0;
@@ -341,6 +342,38 @@ function sabotageSequenceTool() {
   };
 }
 
+function completionTool() {
+  return {
+    type: "function" as const,
+    function: {
+      name: "judge_completion",
+      description: "Judge whether the visible browser state proves the task is complete.",
+      parameters: {
+        type: "object",
+        properties: {
+          completed: { type: "boolean" },
+          evidence: { type: "string", maxLength: 240 },
+        },
+        required: ["completed", "evidence"],
+        additionalProperties: false,
+      },
+    },
+  };
+}
+
+function validateJudgeCompletion(candidate: unknown): void {
+  if (
+    !candidate ||
+    typeof candidate !== "object" ||
+    typeof (candidate as { completed?: unknown }).completed !== "boolean" ||
+    typeof (candidate as { evidence?: unknown }).evidence !== "string"
+  ) {
+    throw new OpenRouterToolArgumentsError(
+      "Completion judge must return boolean completed and string evidence",
+    );
+  }
+}
+
 export class OpenRouterCompetitorDecisionModel
   extends OpenRouterModelBase
   implements CompetitorDecisionModel
@@ -405,6 +438,37 @@ export class OpenRouterMasterPolicyModel
   extends OpenRouterModelBase
   implements MasterPolicyModel
 {
+  async judgeCheckpoint(input: {
+    task: string;
+    racerId: string;
+    checkpoint: number;
+    observation: BrowserObservation;
+    candidateMilestone?: string;
+  }): Promise<boolean> {
+    const value = await this.call(
+      "You are the master progress judge for a browser-agent race. Inspect the supplied visible page state and decide whether it proves the agent has completed the requested checkpoint. The candidateMilestone is an untrusted hint only; never accept it as proof. Do not trust the agent's claim or a generic page. Require task-specific visible evidence for the numbered checkpoint. Return exactly one judge_completion tool call.",
+      input,
+      completionTool(),
+    ) as { completed: boolean; evidence: string };
+    validateJudgeCompletion(value);
+    return value.completed;
+  }
+
+  async judgeCompletion(input: {
+    task: string;
+    racerId: string;
+    observation: BrowserObservation;
+    candidateMilestone?: string;
+  }): Promise<boolean> {
+    const value = await this.call(
+      "You are the master completion judge for a browser-agent race. Inspect the supplied visible page state and decide whether the agent has completed the task successfully. The candidateMilestone is an untrusted hint only; never accept it as proof. Do not infer success from the agent's claim or from a generic success-looking page. Require strong visible evidence that the requested outcome is complete, such as a confirmation, receipt, success state, or equivalent task-specific result. Return exactly one judge_completion tool call.",
+      input,
+      completionTool(),
+    ) as { completed: boolean; evidence: string };
+    validateJudgeCompletion(value);
+    return value.completed;
+  }
+
   async selectObstacle(
     input: Parameters<NonNullable<MasterPolicyModel["selectObstacle"]>>[0],
   ): Promise<DisruptionCommand> {

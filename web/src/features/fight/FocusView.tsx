@@ -74,7 +74,7 @@ export function FocusView({ fight, agent, visual, slip, markers, onClose }: Focu
             </span>
           }
         />
-        <ActionLog entries={agent.log} agentName={name} />
+        <ActionLog entries={agent.log} agentName={name} recovering={agent.phase === "recovering"} />
       </div>
 
       <footer className={styles.footer}>
@@ -100,7 +100,15 @@ export function FocusView({ fight, agent, visual, slip, markers, onClose }: Focu
 }
 
 /** Timestamped log that scrolls in its own box and sticks to the newest entry unless scrolled up. */
-function ActionLog({ entries, agentName }: { entries: ActionLogEntry[]; agentName: string }) {
+function ActionLog({
+  entries,
+  agentName,
+  recovering,
+}: {
+  entries: ActionLogEntry[];
+  agentName: string;
+  recovering: boolean;
+}) {
   const listRef = useRef<HTMLOListElement>(null);
   const stick = useRef(true);
   const lastSeq = entries[entries.length - 1]?.seq ?? null;
@@ -121,6 +129,11 @@ function ActionLog({ entries, agentName }: { entries: ActionLogEntry[]; agentNam
         <span className="label">Action log</span>
         <span className={cx("label num", styles.logCount)}>{entries.length}</span>
       </div>
+      {recovering && (
+        <p className={styles.sabotageNotice} role="status" aria-live="polite">
+          Sabotage active — agent is recovering
+        </p>
+      )}
       {entries.length === 0 ? (
         <p className={styles.logEmpty}>No actions yet</p>
       ) : (

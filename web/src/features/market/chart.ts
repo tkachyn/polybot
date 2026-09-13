@@ -22,6 +22,11 @@ export const RANGE_MS: Readonly<Record<ChartRange, number | null>> = {
 /** The x domain never collapses below this, so 0/1-point series still draw. */
 export const MIN_SPAN_MS = 30_000;
 
+/** True when a timestamp can be rendered inside the chart's current window. */
+export function isMarkerInWindow(at: number, start: number, end: number): boolean {
+  return Number.isFinite(at) && at >= start && at <= end;
+}
+
 export type ChartWindow = {
   start: number;
   end: number;
