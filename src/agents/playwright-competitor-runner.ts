@@ -298,6 +298,14 @@ export class PlaywrightCompetitorRunner implements CompetitorAgentRunner {
     }
   }
 
+  /**
+   * The action budget, declared so spectators see it from the start rather
+   * than a placeholder until the first report. Undefined when unbounded.
+   */
+  get maxSteps(): number | undefined {
+    return Number.isFinite(this.maxActions) ? this.maxActions : undefined;
+  }
+
   async prepare(
     context: Omit<CompetitorContext, "reportCheckpoint" | "reportFinish">,
   ): Promise<void> {

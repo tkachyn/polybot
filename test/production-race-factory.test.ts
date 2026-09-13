@@ -3,7 +3,9 @@ import test from "node:test";
 import { MASTER_CAPACITY_SHARE } from "../src/agents/openrouter-models.js";
 import {
   agentKeyForModel,
+  competitorMaxActions,
   competitorRoster,
+  DEFAULT_COMPETITOR_MAX_ACTIONS,
   displayNameForModel,
   masterCapacityShare,
   modelRateLimits,
@@ -80,4 +82,21 @@ test("paces the master in the same window as the racers on its model", () => {
   // On a racer's model the master holds only its share; on a model of its own, the whole window.
   assert.equal(masterCapacityShare(roster, " OpenAI/GPT-5.6-Luna "), MASTER_CAPACITY_SHARE);
   assert.equal(masterCapacityShare(roster, "x-ai/grok-4.1"), 1);
+});
+
+test("caps each live racer at COMPETITOR_MAX_ACTIONS steps, 40 by default", () => {
+  const saved = process.env.COMPETITOR_MAX_ACTIONS;
+  try {
+    delete process.env.COMPETITOR_MAX_ACTIONS;
+    assert.equal(competitorMaxActions(), DEFAULT_COMPETITOR_MAX_ACTIONS);
+    // Room for the slowest winning run seen (30 steps), not for a 77-step loop.
+    assert.equal(DEFAULT_COMPETITOR_MAX_ACTIONS, 40);
+    process.env.COMPETITOR_MAX_ACTIONS = "25";
+    assert.equal(competitorMaxActions(), 25);
+    process.env.COMPETITOR_MAX_ACTIONS = "2.5";
+    assert.throws(() => competitorMaxActions(), /positive integer/);
+  } finally {
+    if (saved === undefined) delete process.env.COMPETITOR_MAX_ACTIONS;
+    else process.env.COMPETITOR_MAX_ACTIONS = saved;
+  }
 });

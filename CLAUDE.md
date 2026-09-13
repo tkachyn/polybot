@@ -104,7 +104,10 @@ a registry-backed recovery helper. CDP commands for one racer are serialized thr
 ### Competitor agents
 
 `PlaywrightCompetitorRunner` runs a bounded observe→decide→act loop (`COMPETITOR_MAX_ACTIONS`,
-default 20). The model returns one `AgentDecision` at a time via a forced tool call; parsing
+default 40: winning shop runs took 13–30 steps, a racer stuck in sabotage recovery 77). The
+production factory passes it as `maxActions`, the runner declares it as `maxSteps` so
+spectators see the real budget from the start, and a racer past it fails ("exceeded N
+actions"). The model returns one `AgentDecision` at a time via a forced tool call; parsing
 goes through `parseAgentDecision`. Actions are deliberately narrow: clicks and typing resolve
 only through `data-arena-role`, navigation is same-origin-only, and waits are rejected while
 a disruption is active. OpenRouter tool JSON gets one bounded repair retry, and a reply

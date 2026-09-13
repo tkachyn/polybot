@@ -154,6 +154,17 @@ export function openRouterAgents(
 }
 
 /**
+ * Browser actions per racer before it is stopped. Winning shop runs took
+ * 13-30 steps; a racer stuck in sabotage recovery once took 77.
+ */
+export const DEFAULT_COMPETITOR_MAX_ACTIONS = 40;
+
+/** Each racer's step cap, from COMPETITOR_MAX_ACTIONS. */
+export function competitorMaxActions(): number {
+  return positiveIntegerEnv("COMPETITOR_MAX_ACTIONS", DEFAULT_COMPETITOR_MAX_ACTIONS);
+}
+
+/**
  * One sliding-window limit per configured model, the racers' and the
  * master's alike, so every call to a model counts against the same capacity.
  */
@@ -225,6 +236,8 @@ export function createProductionRaceCoordinator(
   const agentRunner = new PlaywrightCompetitorRunner({
     task: context.fight.task ?? input.task,
     startUrl: input.startUrl,
+    // Stops a looping racer; spectators see the budget from the start.
+    maxActions: competitorMaxActions(),
     modelForRacer(racerId) {
       const model = competitorModels.get(racerId);
       if (!model) throw new Error(`No OpenRouter model configured for ${racerId}`);

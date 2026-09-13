@@ -400,6 +400,16 @@ async function runWith(
   return { reports, model };
 }
 
+test("declares its action budget so spectators see it before the first step", () => {
+  const options = {
+    task: "Complete the course",
+    startUrl: "https://course.test/start",
+    model: new SequenceModel([]),
+  };
+  assert.equal(new PlaywrightCompetitorRunner({ ...options, maxActions: 40 }).maxSteps, 40);
+  assert.equal(new PlaywrightCompetitorRunner(options).maxSteps, undefined);
+});
+
 test("moves the browser cursor to a target and reports its position", async () => {
   const page = new CursorPage();
   const { reports } = await runWith(page, [

@@ -122,7 +122,10 @@ shares with a racer, and sends each request once. Without a slot its call fails
 at once and the caller falls back (a seed-derived sabotage plan). `COMPETITOR_LLM_MAX_OUTPUT_TOKENS` (default `512`) gives
 reasoning models enough room to produce the required browser-action tool call. A
 provider retry or rate-limit pause does not consume a browser action; the live log
-reports it as a model-provider pause.
+reports it as a model-provider pause. `COMPETITOR_MAX_ACTIONS` (default `40`)
+caps each racer's browser actions: winning shop runs took 13–30 steps, while a
+racer stuck in sabotage recovery once took 77. Spectators see the cap from the
+start, and a racer that reaches it stops.
 
 `STEEL_API_KEYS` accepts a comma-separated list. New sessions rotate to the next key when Steel rejects the current key for authentication, credits, quota or rate limits. Live sessions retain the key that created them. Steel closes a session when its timeout passes, so each is created with the race's absolute cap plus 180 s (480 s for the default 300 s race).
 
@@ -195,6 +198,7 @@ The script sends `POST /races` with `courseId: "arena-shop"`, three checkpoints,
 | `OPENROUTER_MODEL_MAX_CALLS_PER_MINUTE` | `20` | Per-model competitor request window |
 | `OPENROUTER_MODEL_RATE_WINDOW_MS` | `60000` | Duration of the per-model request window |
 | `COMPETITOR_LLM_MAX_OUTPUT_TOKENS` | `512` | Competitor tool-call output budget |
+| `COMPETITOR_MAX_ACTIONS` | `40` | Live mode: browser actions per racer before it is stopped |
 | `MASTER_LLM_MODEL` | none | Live mode: OpenRouter model for the sabotage director (needed when `obstaclesEnabled`) |
 | `RACE_LLM_BUDGET_USD` | `0.25` | Live mode: shared per-race LLM spend cap |
 | `COURSE_BASE_URL` / `COURSE_VERIFIER_TOKEN` | none | Live mode: course verifier endpoint and token |
