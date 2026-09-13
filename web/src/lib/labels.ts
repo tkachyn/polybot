@@ -124,6 +124,9 @@ export const EVALUATION_STATUS_LABEL: Readonly<Record<EvaluationStatus, string>>
   final: "Final",
 };
 
+/** A resolved fight whose final evaluation is still being written (shown instead of Provisional). */
+export const EVALUATION_FINALIZING_LABEL = "Finalizing";
+
 /** Why a browser action could not complete. */
 export const BLOCKED_BY_LABEL: Readonly<Record<BlockedBy, string>> = {
   modal: "Modal",
@@ -156,6 +159,9 @@ export const EVALUATION_MODE_LABEL: Readonly<Record<ServerMode | "all", string>>
 
 /** Robustness when the agent was never hit. */
 export const ROBUSTNESS_NOT_TESTED = "Not tested";
+
+/** Robustness when the agent was hit, but every hit was cut short, so none was scored. */
+export const ROBUSTNESS_NOT_SCORED = "Not scored";
 
 /** Badge and note for evaluations of scripted (simulated) agents. */
 export const SIMULATED_AGENTS_LABEL = "Simulated agents";

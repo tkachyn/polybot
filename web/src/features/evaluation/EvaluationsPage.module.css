@@ -12,6 +12,12 @@
   gap: var(--space-2);
 }
 
+/* Stands in for the figures line while a window or mode loads. */
+.subtitleSkeleton {
+  display: block;
+  margin-block: 3px;
+}
+
 .note {
   display: flex;
   align-items: flex-start;
@@ -75,6 +81,11 @@
   font-size: var(--fs-body);
 }
 
+/* An error banner inside a panel, above the content it concerns. */
+.panelAlert {
+  padding: var(--space-3) var(--space-4) 0;
+}
+
 .caption {
   padding: var(--space-3) var(--space-4);
   border-top: 1px solid var(--color-hairline);
@@ -92,14 +103,11 @@
 
 /* --- Matrix ------------------------------------------------------------------------- */
 
+/* Positioned, so the cells' .sr-only text stays inside the scroller instead of widening the page. */
 .matrixWrap {
+  position: relative;
   width: 100%;
   overflow-x: auto;
-  transition: opacity var(--duration-base) var(--ease-standard);
-}
-
-.stale {
-  opacity: 0.55;
 }
 
 .matrix {
@@ -270,6 +278,14 @@
 .fileLink:hover {
   text-decoration: underline;
   text-underline-offset: 2px;
+}
+
+/* An empty window: the file is listed, but there is nothing to download. */
+.fileLinkDisabled,
+.fileLinkDisabled:hover {
+  color: var(--color-text-muted);
+  text-decoration: none;
+  cursor: not-allowed;
 }
 
 .fileIcon {

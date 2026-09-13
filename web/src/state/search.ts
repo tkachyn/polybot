@@ -1,17 +1,17 @@
 /**
- * Global search. The top-bar input writes `?q=` on the home route ("/"),
- * keeping the home route's other params (e.g. the `status` filter). Screens
- * read the current query with useSearchQuery().
+ * Lobby search. The home screen's search box writes `?q=` on the home route
+ * ("/"), keeping the route's other params (the `filter`). Screens read the
+ * current query with useSearchQuery().
  *
  * URL conventions for "/":
  *   q       free-text search (raw; trim before matching)
- *   status  filter: all | live | upcoming | resolved (owned by the home screen)
+ *   filter  all | live | upcoming | resolved (owned by the home screen,
+ *           features/home/filter.ts)
  */
 import { useCallback, useEffect } from "react";
 import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
 
 export const SEARCH_PARAM = "q";
-export const HOME_STATUS_PARAM = "status";
 export const HOME_PATH = "/";
 
 let lastHomeSearch = "";

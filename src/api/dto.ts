@@ -773,6 +773,24 @@ export type RobustnessMatrixResponse = {
   rows: RobustnessRow[];
   /** Final evaluations included. */
   evaluations: number;
+  /**
+   * The newest included fights (at most 8), newest first: the reports behind
+   * these figures, in the same window and mode. Each opens at
+   * /fights/:raceId, also after the fight has left the lobby.
+   */
+  recent: EvaluationReportSummary[];
+};
+
+/** One final evaluation in the matrix: enough to list and link its report. */
+export type EvaluationReportSummary = {
+  raceId: string;
+  number: number;
+  title: string;
+  mode: ServerMode;
+  finishedAt: number | null;
+  /** Null when the fight was voided or no agent won. */
+  winner: AgentIdentity | null;
+  voided: boolean;
 };
 
 // ---------------------------------------------------------------------------

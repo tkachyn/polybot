@@ -176,7 +176,7 @@ export class MasterObstacleProvider implements ObstacleProvider {
     trigger: SabotageTrigger;
   }): Promise<SabotagePlan | null> {
     const checkpoints = Array.from(
-      { length: Math.min(3, input.checkpointCount - input.trigger.checkpoint) },
+      { length: Math.min(2, input.checkpointCount - input.trigger.checkpoint) },
       (_, index) => input.trigger.checkpoint + index,
     );
     if (checkpoints.length === 0) return null;

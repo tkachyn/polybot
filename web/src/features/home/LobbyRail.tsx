@@ -11,29 +11,39 @@
  */
 import { Link } from "react-router-dom";
 import type { FightSummary, LeaderboardRow } from "@contract";
-import { AgentMonogram, IconChevronRight, Skeleton } from "../../components";
+import { AgentMonogram, IconChevronRight, Skeleton, Tag } from "../../components";
 import { useLeaderboard } from "../leaderboard/useLeaderboard";
 import { agentStyle, rosterVisuals } from "../../lib/agents";
 import { cx } from "../../lib/cx";
-import { formatChance, formatCompactMoney, formatNumber, formatPercent, formatTimeOfDay } from "../../lib/format";
-import { buildPlaceholderLeaderboard } from "./placeholders";
+import { formatCompactMoney, formatNumber, formatPercent, formatTimeOfDay } from "../../lib/format";
+import type { RailList } from "./lobby";
+import { PREVIEW_FIGHT_HINT, PREVIEW_STANDINGS_HINT, buildPlaceholderLeaderboard } from "./placeholders";
 import styles from "./LobbyRail.module.css";
 
-/** Rows shown in the rail; the full ranking lives on /leaderboard. */
+/** Standings rows shown. The standings have no page of their own, so the header doesn't link. */
 const RAIL_ROWS = 5;
 
-/** A card header. With `to`, the whole header leads to that screen. */
-function CardHead({ to, title }: { to?: string; title: string }) {
+/**
+ * A card header. With `to`, the whole header leads to that screen. With
+ * `preview`, the card's rows are samples (./placeholders) and say so.
+ */
+function CardHead({ to, title, preview = null }: { to?: string; title: string; preview?: string | null }) {
+  const main = (
+    <span className={styles.headMain}>
+      <h2 className={styles.headTitle}>{title}</h2>
+      {preview && (
+        <Tag tone="edge" title={preview}>
+          Preview
+        </Tag>
+      )}
+    </span>
+  );
   if (!to) {
-    return (
-      <div className={styles.head}>
-        <h2 className={styles.headTitle}>{title}</h2>
-      </div>
-    );
+    return <div className={styles.head}>{main}</div>;
   }
   return (
     <Link to={to} className={styles.head}>
-      <h2 className={styles.headTitle}>{title}</h2>
+      {main}
       <IconChevronRight size={14} className={styles.headIcon} />
     </Link>
   );
@@ -49,8 +59,9 @@ function LeaderboardRailRow({ row }: { row: LeaderboardRow }) {
         <span className={styles.rowName} title={agent.name}>
           {agent.name}
         </span>
-        <span className={styles.rowSub}>
-          <span className="num">{formatNumber(row.wins)}</span> of <span className="num">{formatNumber(row.fights)}</span>
+        {/* Plain text flow: in a flex row each fragment took a gap as well as its space. */}
+        <span className={styles.rowSubLine}>
+          Won <span className="num">{formatNumber(row.wins)}</span> of <span className="num">{formatNumber(row.fights)}</span>
           {row.fights === 1 ? " fight" : " fights"}
         </span>
       </span>
@@ -65,13 +76,15 @@ function LeaderboardRailRow({ row }: { row: LeaderboardRow }) {
 function LeaderboardCard() {
   const { data, error } = useLeaderboard();
   // A backend with no resolved fights yet has no standings; fall back to the
-  // demo ranking so the rail is never an empty box. Real rows always win.
-  const source = data ? (data.rows.length > 0 ? data.rows : buildPlaceholderLeaderboard()) : null;
+  // demo ranking, tagged Preview, so the rail is never an empty box. Real
+  // rows always win.
+  const preview = data !== null && data.rows.length === 0;
+  const source = data ? (preview ? buildPlaceholderLeaderboard() : data.rows) : null;
   const rows = source?.slice(0, RAIL_ROWS) ?? null;
 
   return (
     <section className={styles.card}>
-      <CardHead title="Leaderboard" />
+      <CardHead title="Leaderboard" preview={preview ? PREVIEW_STANDINGS_HINT : null} />
       {error && !data ? (
         <p className={styles.empty}>Standings are unavailable right now.</p>
       ) : rows === null ? (
@@ -113,22 +126,24 @@ function ResolvedRow({ fight, preview }: { fight: FightSummary; preview: boolean
               <span className={styles.rowWinner} style={agentStyle(visual)}>
                 {winner.agent.name}
               </span>
+              <span className={styles.rowWon}>won</span>
             </>
           ) : (
             <span className={styles.rowVoid}>Voided · positions refunded</span>
           )}
         </span>
       </span>
+      {/* The result is the winner on the left; the figure is what was traded. */}
       <span className={styles.rowFigures}>
-        <span className={cx("num", styles.rowFigure)}>{winner ? formatChance(winner.yes) : "—"}</span>
-        <span className={cx("num", styles.rowFigureSub)}>{formatCompactMoney(fight.volume)}</span>
+        <span className={cx("num", styles.rowFigure, styles.rowFigureSmall)}>{formatCompactMoney(fight.volume)}</span>
+        <span className={styles.rowFigureSub}>volume</span>
       </span>
     </>
   );
 
   if (preview) {
     return (
-      <li className={cx(styles.row, styles.rowTop)} title="Preview only: this demo runs the featured fight">
+      <li className={cx(styles.row, styles.rowTop)} title={PREVIEW_FIGHT_HINT}>
         {body}
       </li>
     );
@@ -169,7 +184,7 @@ function UpcomingRow({ fight, preview }: { fight: FightSummary; preview: boolean
 
   if (preview) {
     return (
-      <li className={cx(styles.row, styles.rowTop)} title="Preview only: this demo runs the featured fight">
+      <li className={cx(styles.row, styles.rowTop)} title={PREVIEW_FIGHT_HINT}>
         {body}
       </li>
     );
@@ -183,15 +198,18 @@ function UpcomingRow({ fight, preview }: { fight: FightSummary; preview: boolean
   );
 }
 
-function UpcomingCard({ fights, preview }: { fights: readonly FightSummary[]; preview: boolean }) {
+function UpcomingCard({ list }: { list: RailList | null }) {
+  const preview = list?.preview ?? false;
   // Soonest first; a fight with no time yet sorts last.
-  const shown = [...fights]
+  const shown = [...(list?.fights ?? [])]
     .sort((a, b) => (a.startsAt ?? Infinity) - (b.startsAt ?? Infinity))
     .slice(0, UPCOMING_ROWS);
   return (
     <section className={styles.card}>
-      <CardHead title="Upcoming" />
-      {shown.length === 0 ? (
+      <CardHead title="Upcoming" preview={preview ? PREVIEW_FIGHT_HINT : null} />
+      {list === null ? (
+        <RailRowsSkeleton count={2} />
+      ) : shown.length === 0 ? (
         <p className={styles.empty}>Scheduled fights appear here before they open.</p>
       ) : (
         <ul className={styles.rows}>
@@ -204,12 +222,15 @@ function UpcomingCard({ fights, preview }: { fights: readonly FightSummary[]; pr
   );
 }
 
-function ResolvedCard({ fights, preview }: { fights: readonly FightSummary[]; preview: boolean }) {
-  const shown = fights.slice(0, PAST_FIGHT_ROWS);
+function ResolvedCard({ list }: { list: RailList | null }) {
+  const preview = list?.preview ?? false;
+  const shown = (list?.fights ?? []).slice(0, PAST_FIGHT_ROWS);
   return (
     <section className={styles.card}>
-      <CardHead to="/resolved" title="Past fights" />
-      {shown.length === 0 ? (
+      <CardHead to="/resolved" title="Past fights" preview={preview ? PREVIEW_FIGHT_HINT : null} />
+      {list === null ? (
+        <RailRowsSkeleton count={PAST_FIGHT_ROWS} />
+      ) : shown.length === 0 ? (
         <p className={styles.empty}>Settled fights appear here with their winner.</p>
       ) : (
         <ul className={styles.rows}>
@@ -222,23 +243,36 @@ function ResolvedCard({ fights, preview }: { fights: readonly FightSummary[]; pr
   );
 }
 
+/** Row placeholders while the lobby loads: never sample rows, which read as data. */
+function RailRowsSkeleton({ count }: { count: number }) {
+  return (
+    <ul className={styles.rows} aria-hidden="true">
+      {Array.from({ length: count }, (_, i) => (
+        <li key={i} className={cx(styles.row, styles.rowTop)}>
+          <span className={styles.rowText}>
+            <Skeleton width="92%" height={12} />
+            <Skeleton width="58%" height={10} />
+          </span>
+          <Skeleton width={36} height={14} />
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 export type LobbyRailProps = {
-  /** Scheduled fights. Only the soonest few are shown. */
-  upcoming: readonly FightSummary[];
-  /** Settled fights, newest first. Only the first few are shown. */
-  resolved: readonly FightSummary[];
-  /** Hardcoded demo fights: rows render, but do not link. */
-  preview?: boolean;
-  /** Demo upcoming fights, when the scheduled ones are placeholders. */
-  upcomingPreview?: boolean;
+  /** Scheduled fights, or null while the lobby loads. Only the soonest few are shown. */
+  upcoming: RailList | null;
+  /** Settled fights, newest first, or null while the lobby loads. Only the first few are shown. */
+  resolved: RailList | null;
 };
 
-export function LobbyRail({ upcoming, resolved, preview = false, upcomingPreview = preview }: LobbyRailProps) {
+export function LobbyRail({ upcoming, resolved }: LobbyRailProps) {
   return (
     <aside className={styles.rail} aria-label="Standings, upcoming and past fights">
       <LeaderboardCard />
-      <UpcomingCard fights={upcoming} preview={upcomingPreview} />
-      <ResolvedCard fights={resolved} preview={preview} />
+      <UpcomingCard list={upcoming} />
+      <ResolvedCard list={resolved} />
     </aside>
   );
 }

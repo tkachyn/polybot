@@ -3,8 +3,9 @@
  * reacted to each sabotage hit (GET /api/fights/:raceId/evaluation, refetched
  * when the fight's evaluation pointer changes).
  *
- * Rendered near the top of the resolved-fight screen (features/settled). It
- * renders no Page of its own.
+ * Rendered near the top of the resolved-fight screen (features/settled), and
+ * as EvaluationReportView by the screen for a fight that has left the lobby,
+ * which loads the evaluation itself. It renders no Page of its own.
  */
 import { useId, useMemo, type MouseEvent, type ReactNode } from "react";
 import type { AgentEvaluation, EvaluatedSabotageStep, FightEvaluation, FightEvaluationPointer, ReactionLabel } from "@contract";
@@ -12,20 +13,13 @@ import { AgentMonogram, Button, EmptyState, ErrorBanner, IconAlert, ProgressBar,
 import { agentStyle, rosterVisuals, type AgentVisual } from "../../lib/agents";
 import { cx } from "../../lib/cx";
 import { formatDateTime, formatFightNumber, formatNumber, isFiniteNumber } from "../../lib/format";
-import {
-  EVALUATION_MODE_LABEL,
-  HAZARD_LABEL,
-  REACTION_LABEL,
-  SABOTAGE_TIER_LABEL,
-  SIMULATED_AGENTS_COPY,
-  SIMULATED_AGENTS_LABEL,
-} from "../../lib/labels";
+import { EVALUATION_MODE_LABEL, REACTION_LABEL, SIMULATED_AGENTS_COPY, SIMULATED_AGENTS_LABEL } from "../../lib/labels";
 import { AgentEvaluationSection } from "./AgentEvaluationSection";
 import { EvaluationStatusChip, OutcomeChip, ReactionChip } from "./Chip";
-import { formatCheckpoint, formatRobustness } from "./format";
+import { evaluationDisplayStatus, robustnessView, sabotageStepMeta, sabotageStepTitle } from "./format";
 import { REACTION_TONE } from "./tones";
 import { Disclosure } from "./TraceTables";
-import { useFightEvaluation } from "./useFightEvaluation";
+import { useFightEvaluation, type FightEvaluationState } from "./useFightEvaluation";
 import styles from "./EvaluationReport.module.css";
 
 /** The contract caps findings at six; the UI enforces it too. */
@@ -35,17 +29,46 @@ export type EvaluationReportProps = {
   raceId: string;
   /** `FightDetail.evaluation`. A new `updatedAt` refetches; an equal pointer never does. */
   pointer: FightEvaluationPointer | null | undefined;
+  /** The fight has resolved: a provisional evaluation then reads "Finalizing", never "Provisional". */
+  resolved?: boolean;
   className?: string;
 };
 
-export function EvaluationReport({ raceId, pointer, className }: EvaluationReportProps) {
-  const { evaluation, status, error, updating, reload } = useFightEvaluation(raceId, pointer);
+export function EvaluationReport({ raceId, pointer, resolved = false, className }: EvaluationReportProps) {
+  const state = useFightEvaluation(raceId, pointer);
+  return <EvaluationReportView state={state} resolved={resolved} className={className} />;
+}
+
+export type EvaluationReportViewProps = {
+  /** The evaluation and its load state, from useFightEvaluation. */
+  state: FightEvaluationState;
+  /** The fight has resolved: a provisional evaluation then reads "Finalizing", never "Provisional". */
+  resolved?: boolean;
+  /** The fight has left the lobby: its keyframes and replay are no longer served. */
+  archived?: boolean;
+  className?: string;
+};
+
+/** The report for an evaluation the caller loads (see useFightEvaluation). */
+export function EvaluationReportView({ state, resolved = false, archived = false, className }: EvaluationReportViewProps) {
+  const { evaluation, status, error, updating, reload } = state;
   const baseId = useId().replace(/:/g, "");
   const headingId = `${baseId}-title`;
 
   let body;
   if (status === "ready" && evaluation) {
-    body = <ReportBody evaluation={evaluation} baseId={baseId} headingId={headingId} updating={updating} error={error} onRetry={reload} />;
+    body = (
+      <ReportBody
+        evaluation={evaluation}
+        baseId={baseId}
+        headingId={headingId}
+        updating={updating}
+        error={error}
+        onRetry={reload}
+        resolved={resolved}
+        archived={archived}
+      />
+    );
   } else if (status === "not_found") {
     body = (
       <ReportCard headingId={headingId}>
@@ -137,9 +160,11 @@ type ReportBodyProps = {
   updating: boolean;
   error: unknown;
   onRetry: () => void;
+  resolved: boolean;
+  archived: boolean;
 };
 
-function ReportBody({ evaluation, baseId, headingId, updating, error, onRetry }: ReportBodyProps) {
+function ReportBody({ evaluation, baseId, headingId, updating, error, onRetry, resolved, archived }: ReportBodyProps) {
   const visuals = useMemo(() => rosterVisuals(evaluation.agents.map((a) => a.agent)), [evaluation.agents]);
   const sectionIds = evaluation.agents.map((_, i) => `${baseId}-agent-${i + 1}`);
   const simulated = evaluation.mode === "simulated";
@@ -152,7 +177,7 @@ function ReportBody({ evaluation, baseId, headingId, updating, error, onRetry }:
             <ReportTitle headingId={headingId} eyebrow={`Fight ${formatFightNumber(evaluation.number)} · Evaluation`} />
             <div className={styles.badges}>
               {updating && <span className={cx("label", styles.updating)}>Updating…</span>}
-              <EvaluationStatusChip status={evaluation.status} />
+              <EvaluationStatusChip status={evaluationDisplayStatus(evaluation.status, resolved)} />
               {simulated && (
                 <Tag tone="edge" title={SIMULATED_AGENTS_COPY} className={styles.simTag}>
                   {SIMULATED_AGENTS_LABEL}
@@ -193,6 +218,8 @@ function ReportBody({ evaluation, baseId, headingId, updating, error, onRetry }:
               agent={agent}
               visual={visuals[i] ?? rosterVisuals([agent.agent])[0]!}
               startedAt={evaluation.startedAt}
+              mode={evaluation.mode}
+              archived={archived}
               id={sectionIds[i] ?? `${baseId}-agent-${i + 1}`}
             />
           ))}
@@ -249,9 +276,13 @@ function SabotageSequence({ steps }: { steps: readonly EvaluatedSabotageStep[] }
             <li key={step.stepId} className={styles.sequenceStep}>
               <span className={cx("num", styles.stepBadge)}>{step.index}</span>
               <span className={styles.sequenceText}>
-                <span className={styles.sequenceLabel}>{step.label}</span>
+                <span className={styles.sequenceLabel}>{sabotageStepTitle(step).title}</span>
                 <span className={styles.sequenceMeta}>
-                  {HAZARD_LABEL[step.hazardType]} · {SABOTAGE_TIER_LABEL[step.tier]} · {formatCheckpoint(step.checkpoint, step.checkpointLabel)}
+                  {sabotageStepMeta(step).map((item, i) => (
+                    <span key={i} className={item.wrap ? styles.metaWrap : undefined}>
+                      {item.text}
+                    </span>
+                  ))}
                 </span>
               </span>
             </li>
@@ -304,7 +335,7 @@ function Overview({ agents, visuals, ids }: { agents: readonly AgentEvaluation[]
         {agents.map((agent, i) => {
           const visual = visuals[i] ?? rosterVisuals([agent.agent])[0]!;
           const id = ids[i] ?? "";
-          const robustness = agent.robustness;
+          const robustness = robustnessView(agent);
           return (
             <li key={agent.racerId}>
               <a href={`#${id}`} className={styles.tile} style={agentStyle(visual)} onClick={(event) => jumpTo(event, id)}>
@@ -313,13 +344,18 @@ function Overview({ agents, visuals, ids }: { agents: readonly AgentEvaluation[]
                   <span className={styles.tileName}>{agent.agent.name}</span>
                   <OutcomeChip outcome={agent.outcome} />
                 </span>
-                <span className={styles.tileScore}>
+                <span className={styles.tileScore} title={robustness.title}>
                   <span className="label label-sm">
-                    Robustness{isFiniteNumber(robustness) && ` · ${agent.sabotage.filter((reaction) => reaction.score !== null).length} hits`}
+                    Robustness{robustness.scored && ` · ${robustness.scoredHits} ${robustness.scoredHits === 1 ? "hit" : "hits"}`}
                   </span>
-                  <span className={cx("num", isFiniteNumber(robustness) ? styles.tileValue : styles.tileUntested)}>{formatRobustness(robustness)}</span>
+                  <span className={cx("num", robustness.scored ? styles.tileValue : styles.tileUntested)}>{robustness.text}</span>
                 </span>
-                <ProgressBar value={isFiniteNumber(robustness) ? robustness / 100 : 0} color="var(--agent-color)" size="xs" label={`${agent.agent.name} robustness`} />
+                <ProgressBar
+                  value={isFiniteNumber(agent.robustness) ? agent.robustness / 100 : 0}
+                  color="var(--agent-color)"
+                  size="xs"
+                  label={`${agent.agent.name} robustness`}
+                />
                 <ReactionMarks agent={agent} />
               </a>
             </li>

@@ -1,18 +1,27 @@
 /**
  * One agent's sabotage timeline: a row per hit, in sequence order, with the
- * reaction and its cost, the evidence (keyframes and the Steel replay) and
- * the Steel trace around the hit.
+ * reaction and its cost, the evidence (keyframes and the Steel replay), the
+ * Steel trace around the hit, and a short note where either doesn't exist.
  */
 import { useMemo, useState, type ReactNode } from "react";
-import type { AgentEvaluation, SabotageReaction } from "@contract";
+import type { AgentEvaluation, SabotageReaction, ServerMode } from "@contract";
 import { evidenceFrameUrl, replayUrl } from "../../api/client";
 import { Button, Tag } from "../../components";
 import { cx } from "../../lib/cx";
 import { EMPTY, formatNumber } from "../../lib/format";
-import { HAZARD_LABEL, SABOTAGE_TIER_LABEL } from "../../lib/labels";
 import { ReactionChip } from "./Chip";
 import { EvidenceDialog, type EvidenceItem, type EvidenceSide } from "./EvidenceDialog";
-import { describeHitOffset, formatCheckpoint, formatFightTime, formatOffset, formatReplayOffset, formatScore, formatSeconds } from "./format";
+import {
+  describeHitOffset,
+  evidenceNotes,
+  formatFightTime,
+  formatOffset,
+  formatReplayOffset,
+  formatScore,
+  formatSeconds,
+  sabotageStepMeta,
+  sabotageStepTitle,
+} from "./format";
 import { IconPlay } from "./icons";
 import { ReplayDialog } from "./ReplayPlayer";
 import { SteelExcerpt } from "./TraceTables";
@@ -23,9 +32,13 @@ export type SabotageTimelineProps = {
   agent: AgentEvaluation;
   /** Fight start, for "hit at 01:12". */
   startedAt: number | null;
+  /** The fight's mode: replays and Steel traces exist for live fights only. */
+  mode: ServerMode;
+  /** The fight has left the lobby, so its keyframes and replay are no longer served. */
+  archived?: boolean;
 };
 
-export function SabotageTimeline({ raceId, agent, startedAt }: SabotageTimelineProps) {
+export function SabotageTimeline({ raceId, agent, startedAt, mode, archived = false }: SabotageTimelineProps) {
   const reactions = useMemo(() => [...agent.sabotage].sort((a, b) => a.stepIndex - b.stepIndex || a.appliedAt - b.appliedAt), [agent.sabotage]);
   if (reactions.length === 0) {
     return <p className={styles.none}>Not hit by any sabotage step, so robustness was not tested.</p>;
@@ -33,7 +46,7 @@ export function SabotageTimeline({ raceId, agent, startedAt }: SabotageTimelineP
   return (
     <ol className={styles.timeline}>
       {reactions.map((reaction) => (
-        <ReactionRow key={reaction.stepId} raceId={raceId} agent={agent} reaction={reaction} startedAt={startedAt} />
+        <ReactionRow key={reaction.stepId} raceId={raceId} agent={agent} reaction={reaction} startedAt={startedAt} mode={mode} archived={archived} />
       ))}
     </ol>
   );
@@ -44,20 +57,26 @@ type ReactionRowProps = {
   agent: AgentEvaluation;
   reaction: SabotageReaction;
   startedAt: number | null;
+  mode: ServerMode;
+  archived: boolean;
 };
 
-function ReactionRow({ raceId, agent, reaction, startedAt }: ReactionRowProps) {
+function ReactionRow({ raceId, agent, reaction, startedAt, mode, archived }: ReactionRowProps) {
   const [evidenceOpen, setEvidenceOpen] = useState<EvidenceSide | null>(null);
   const [replayOpen, setReplayOpen] = useState(false);
   const name = agent.agent.name;
+  // The same title and de-duplicated hazard as the sequence card and the trace.
+  const { title, hazard } = sabotageStepTitle(reaction);
   const { before, after, replayOffsetSec } = reaction.evidence;
   const delay = reaction.progressedAt !== null ? reaction.progressedAt - reaction.appliedAt : null;
   const active = reaction.expiredAt !== null ? reaction.expiredAt - reaction.appliedAt : null;
-  const replayOffset = agent.steel.replayAvailable ? replayOffsetSec : null;
+  // A fight that has left the lobby no longer serves its keyframes or replay: don't offer them.
+  const replayOffset = agent.steel.replayAvailable && !archived ? replayOffsetSec : null;
   const frames: Record<EvidenceSide, EvidenceItem | null> = {
-    before: before ? { frame: before, src: evidenceFrameUrl(raceId, agent.racerId, before.key) } : null,
-    after: after ? { frame: after, src: evidenceFrameUrl(raceId, agent.racerId, after.key) } : null,
+    before: before && !archived ? { frame: before, src: evidenceFrameUrl(raceId, agent.racerId, before.key) } : null,
+    after: after && !archived ? { frame: after, src: evidenceFrameUrl(raceId, agent.racerId, after.key) } : null,
   };
+  const notes = evidenceNotes({ mode, replayAvailable: agent.steel.replayAvailable, traceAvailable: agent.steel.traceAvailable, archived });
 
   return (
     <li className={styles.row}>
@@ -67,11 +86,13 @@ function ReactionRow({ raceId, agent, reaction, startedAt }: ReactionRowProps) {
       <div className={styles.content}>
         <div className={styles.head}>
           <div className={styles.what}>
-            <h5 className={styles.preset}>{reaction.label}</h5>
+            <h5 className={styles.preset}>{title}</h5>
             <p className={styles.where}>
-              <span>{HAZARD_LABEL[reaction.hazardType]}</span>
-              <span>{SABOTAGE_TIER_LABEL[reaction.tier]}</span>
-              <span>{formatCheckpoint(reaction.checkpoint, reaction.checkpointLabel)}</span>
+              {sabotageStepMeta(reaction).map((item, i) => (
+                <span key={i} className={item.wrap ? styles.whereWrap : undefined}>
+                  {item.text}
+                </span>
+              ))}
               <span className="num">Hit at {formatFightTime(reaction.appliedAt, startedAt)}</span>
             </p>
           </div>
@@ -133,24 +154,18 @@ function ReactionRow({ raceId, agent, reaction, startedAt }: ReactionRowProps) {
               </Button>
             )}
           </div>
-        ) : (
+        ) : archived ? null : (
           <p className={styles.muted}>No keyframes were captured for this hit.</p>
         )}
 
         {agent.steel.traceAvailable && <SteelExcerpt trace={agent.steel.trace} at={reaction.appliedAt} />}
+        {notes.length > 0 && <p className={styles.evidenceNote}>{notes.join(" ")}</p>}
       </div>
 
       {evidenceOpen && (
         <EvidenceDialog
           title={`${name} · sabotage ${reaction.stepIndex}`}
-          subtitle={[
-            reaction.label,
-            // A step without a named preset is labelled after its hazard; don't repeat it.
-            HAZARD_LABEL[reaction.hazardType].toLowerCase() === reaction.label.toLowerCase()
-              ? null
-              : HAZARD_LABEL[reaction.hazardType],
-            reaction.checkpointLabel,
-          ].filter(Boolean).join(" · ")}
+          subtitle={[title, hazard, reaction.checkpointLabel].filter(Boolean).join(" · ")}
           frames={frames}
           initial={evidenceOpen}
           appliedAt={reaction.appliedAt}
@@ -163,7 +178,7 @@ function ReactionRow({ raceId, agent, reaction, startedAt }: ReactionRowProps) {
           startAt={replayOffset}
           agentName={name}
           stepIndex={reaction.stepIndex}
-          stepLabel={reaction.label}
+          stepLabel={title}
           onClose={() => setReplayOpen(false)}
         />
       )}

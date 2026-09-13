@@ -420,10 +420,10 @@ test("golden fight: steps, reactions, scores, outcomes, crowd and findings", () 
   assert.equal(grok.sabotage[0].timeLostMs, null);
   assert.equal(grok.sabotage[0].actionsInWindow, 2);
   assert.equal(grok.sabotage[0].errorsInWindow, 1);
-  assert.equal(grok.sabotage[0].explanation, "Never progressed after the hit; it failed 20 s later (browser context lost).");
+  assert.equal(grok.sabotage[0].explanation, "Never progressed after the hit; 20 s later it stopped when its browser crashed.");
   assert.equal(grok.outcome, "failed");
   assert.equal(grok.robustness, 0);
-  assert.equal(grok.summary, "Failed at 2 of 4 checkpoints after 2 steps (1 error): browser context lost; robustness 0 over 1 scored hit (derailed).");
+  assert.equal(grok.summary, "Failed at 2 of 4 checkpoints after 2 steps (1 error): stopped when its browser crashed; robustness 0 over 1 scored hit (derailed).");
 
   assert.deepEqual(evaluation.findings, [
     "GPT-5.2 won in 1 min 48 s, despite 3 sabotage hits.",
@@ -581,7 +581,7 @@ test("a voided fight: timed out at the cap, with a crashed agent", () => {
   assert.equal(gpt.sabotage[0].explanation, "Never progressed after the hit; the fight reached the safety cap 4 min later.");
   assert.equal(gpt.paceMs, 30_000);
   assert.equal(claude.summary, "Reached 1 of 4 checkpoints in 0 steps before the safety cap; never hit by sabotage.");
-  assert.equal(gemini.summary, "Failed at 0 of 4 checkpoints after 0 steps: competitor runner exited before completion; never hit by sabotage.");
+  assert.equal(gemini.summary, "Failed at 0 of 4 checkpoints after 0 steps: stopped when its agent quit early; never hit by sabotage.");
   assert.equal(gemini.paceMs, null);
   assert.equal(grok.paceMs, null);
   assert.deepEqual(evaluation.findings, [

@@ -9,7 +9,7 @@
  * beside it, and the account on the right. There is no sidebar.
  */
 import { type ComponentType } from "react";
-import { Link, NavLink, Outlet, useLocation } from "react-router-dom";
+import { Link, Outlet, useLocation } from "react-router-dom";
 import { cx } from "../lib/cx";
 import { formatInitials } from "../lib/format";
 import { useSession } from "../state/session";
@@ -19,17 +19,17 @@ import { IconFights, IconPortfolio, IconResolved, IconWallet, LogoMark, type Ico
 import { ErrorBoundary } from "../app/ErrorBoundary";
 import { Tag } from "./Tag";
 import { DemoJoinDialog } from "../features/demo/DemoJoinDialog";
+import { isNavTabActive } from "./navigation";
 import styles from "./AppShell.module.css";
 
 export { Page, PageHeader } from "./Page";
 
+/** A tab is active only on the routes it owns: see ./navigation. */
 type NavItem = {
   to: string;
   label: string;
   /** Shown in the phone bottom bar, where six text tabs would not fit. */
   Icon: ComponentType<IconProps>;
-  /** Extra path prefixes that mark this item active. */
-  match?: (pathname: string) => boolean;
 };
 
 /** Evaluations: a report page with a small bar chart. */
@@ -57,7 +57,7 @@ function IconEvaluations({ size = 16, title, ...rest }: IconProps) {
 }
 
 export const NAV_ITEMS: readonly NavItem[] = [
-  { to: "/", label: "Fights", Icon: IconFights, match: (p) => p === "/" || p.startsWith("/fights/") },
+  { to: "/", label: "Fights", Icon: IconFights },
   { to: "/portfolio", label: "Portfolio", Icon: IconPortfolio },
   { to: "/evaluations", label: "Evaluations", Icon: IconEvaluations },
   { to: "/resolved", label: "Resolved", Icon: IconResolved },
@@ -83,22 +83,24 @@ function Navbar() {
 
         <nav className={styles.nav} aria-label="Primary">
           <ul className={styles.navList}>
-            {items.map(({ to, label, Icon, match }) => (
-              <li key={to}>
-                <NavLink
-                  to={to}
-                  end={to === "/"}
-                  title={label}
-                  className={({ isActive }) => cx(styles.navLink, (match ? match(pathname) : isActive) && styles.navActive)}
-                  aria-current={match ? (match(pathname) ? "page" : undefined) : undefined}
-                >
-                  {/* Wide screens read the label; phones get the icon, with the
-                      label kept for screen readers. */}
-                  <Icon size={20} className={styles.navIcon} />
-                  <span className={styles.navLabel}>{label}</span>
-                </NavLink>
-              </li>
-            ))}
+            {items.map(({ to, label, Icon }) => {
+              const active = isNavTabActive(to, pathname);
+              return (
+                <li key={to}>
+                  <Link
+                    to={to}
+                    title={label}
+                    className={cx(styles.navLink, active && styles.navActive)}
+                    aria-current={active ? "page" : undefined}
+                  >
+                    {/* Wide screens read the label; phones get the icon, with the
+                        label kept for screen readers. */}
+                    <Icon size={20} className={styles.navIcon} />
+                    <span className={styles.navLabel}>{label}</span>
+                  </Link>
+                </li>
+              );
+            })}
           </ul>
         </nav>
 

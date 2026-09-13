@@ -166,6 +166,26 @@ test("simulated fights close with final evaluations that feed the matrix and the
     assert.ok(settledSteps.length > 0, "the resolved fight has steps");
     assert.ok(settledSteps.some((step) => step.observation !== null), "steps carry what the agent saw");
     assert.ok(settledSteps.some((step) => step.reasoning !== null), "steps carry the agent's reasoning");
+    // As for a live runner, a step that repeats the previous tool call without
+    // progress is wasted (the dataset compares action-based signatures).
+    const runs = new Map<string, DatasetStep[]>();
+    for (const step of steps) {
+      const key = `${step.raceId}:${step.racerId}`;
+      runs.set(key, [...(runs.get(key) ?? []), step]);
+    }
+    let repeats = 0;
+    for (const run of runs.values()) {
+      run.sort((left, right) => left.step - right.step);
+      run.forEach((step, index) => {
+        const previous = run[index - 1];
+        if (!previous || JSON.stringify(previous.action) !== JSON.stringify(step.action)) return;
+        if (step.labels.quality === "harmful" || step.labels.quality === "progress") return;
+        repeats += 1;
+        assert.equal(step.labels.quality, "wasted", `${step.id} repeats ${JSON.stringify(step.action)}`);
+      });
+    }
+    assert.ok(repeats > 0, "the export has repeated tool calls to check");
+
     const shots = steps.filter((step) => step.screenshot !== null);
     assert.ok(shots.length > 0, "steps link the screenshots their observations were taken with");
     for (const step of shots) assert.ok(bundle[step.screenshot as string], `${step.screenshot} is in the zip`);

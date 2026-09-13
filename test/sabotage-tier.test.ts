@@ -93,9 +93,11 @@ test("selects one immutable tier and applies it independently to all racers", as
   );
 });
 
-test("selects a hard ordered sequence at each verified checkpoint", async () => {
+test("caps the ordered sabotage sequence at two steps", async () => {
+  let requestedCheckpoints: readonly number[] = [];
   const model: MasterPolicyModel = {
-    async selectSabotageSequence() {
+    async selectSabotageSequence(input) {
+      requestedCheckpoints = input.checkpoints;
       return {
         presetIds: ["cover-with-modal", "plant-decoy-control"],
       };
@@ -115,7 +117,7 @@ test("selects a hard ordered sequence at each verified checkpoint", async () => 
     raceId: "race-sequence",
     courseId: "course-1",
     seed: "seed-1",
-    checkpointCount: 3,
+    checkpointCount: 4,
     trigger: {
       kind: "target_opened",
       checkpoint: 1,
@@ -124,6 +126,7 @@ test("selects a hard ordered sequence at each verified checkpoint", async () => 
   });
 
   assert.equal(plan?.source, "model");
+  assert.deepEqual(requestedCheckpoints, [1, 2]);
   assert.deepEqual(plan?.steps?.map((step) => step.checkpoint), [1, 2]);
   assert.deepEqual(plan?.steps?.map((step) => step.stepId), [
     "cover-with-modal",

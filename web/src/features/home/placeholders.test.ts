@@ -2,12 +2,18 @@ import { describe, expect, it } from "vitest";
 import type { FightDetail } from "@contract";
 import { slipFromParam, formatSlipParam } from "../market/slipParam";
 import { formatChance } from "./FeaturedFightCard";
-import { PLACEHOLDER_TEMPLATES, buildPlaceholderFights, placeholderNumbers } from "./placeholders";
+import {
+  DEFAULT_PREVIEW_NUMBER,
+  PLACEHOLDER_TEMPLATES,
+  buildPlaceholderFights,
+  placeholderNumbers,
+  previewsAllowed,
+} from "./placeholders";
 
 const NOW = 1_800_000_000_000;
 
 describe("placeholder fights", () => {
-  const fights = buildPlaceholderFights(NOW, 412);
+  const fights = buildPlaceholderFights(NOW, [412]);
 
   it("builds one card per template, in lobby order", () => {
     expect(fights.map((f) => f.status)).toEqual(["live", "live", "upcoming", "upcoming", "resolved", "resolved"]);
@@ -30,13 +36,8 @@ describe("placeholder fights", () => {
     }
   });
 
-  it("never reuses the featured fight's number and stays positive", () => {
-    for (const base of [1, 2, 5, 412]) {
-      const numbers = placeholderNumbers(base);
-      expect(new Set(numbers).size).toBe(numbers.length);
-      expect(numbers).not.toContain(base);
-      expect(Math.min(...numbers)).toBeGreaterThan(0);
-    }
+  it("uses ids that can never match a real fight", () => {
+    for (const fight of fights) expect(fight.raceId.startsWith("preview-")).toBe(true);
   });
 
   it("places times relative to now", () => {
@@ -47,6 +48,69 @@ describe("placeholder fights", () => {
     expect(resolved!.winnerRacerId).toBe("racer-2");
     expect(voided!.voided).toBe(true);
     expect(voided!.marketStatus).toBe("unresolved");
+  });
+});
+
+describe("placeholderNumbers", () => {
+  const range = (from: number, to: number) => Array.from({ length: to - from + 1 }, (_, i) => from + i);
+  const upcomingIndexes = PLACEHOLDER_TEMPLATES.flatMap((t, i) => (t.status === "upcoming" ? [i] : []));
+
+  const cases: Record<string, number[]> = {
+    "no fights yet": [],
+    "one fight": [412],
+    "the QA lobby (#0428-#0459)": range(401, 459),
+    "fights from #1": [1, 2, 3],
+    "a single #1": [1],
+    "a sparse lobby": [3, 7, 8, 40, 41, 43],
+  };
+
+  for (const [name, real] of Object.entries(cases)) {
+    it(`never collides with a real fight: ${name}`, () => {
+      const numbers = placeholderNumbers(real);
+      expect(numbers).toHaveLength(PLACEHOLDER_TEMPLATES.length);
+      expect(new Set(numbers).size).toBe(numbers.length);
+      for (const n of numbers) {
+        expect(Number.isInteger(n)).toBe(true);
+        expect(n).toBeGreaterThan(0);
+        expect(real).not.toContain(n);
+      }
+    });
+  }
+
+  it("numbers upcoming previews after the newest real fight", () => {
+    const numbers = placeholderNumbers(range(428, 459));
+    expect(upcomingIndexes.map((i) => numbers[i])).toEqual([460, 461]);
+  });
+
+  it("numbers the others below the oldest real fight when there is room", () => {
+    const numbers = placeholderNumbers([428, 429, 430]);
+    const others = numbers.filter((_, i) => !upcomingIndexes.includes(i));
+    for (const n of others) expect(n).toBeLessThan(428);
+  });
+
+  it("sits around the default number when the backend has no fight", () => {
+    const numbers = placeholderNumbers([]);
+    expect(upcomingIndexes.map((i) => numbers[i])).toEqual([DEFAULT_PREVIEW_NUMBER, DEFAULT_PREVIEW_NUMBER + 1]);
+  });
+
+  it("ignores values that are not fight numbers", () => {
+    expect(placeholderNumbers([Number.NaN, -3, 0, 2.5, 10])).not.toContain(10);
+  });
+});
+
+describe("previewsAllowed", () => {
+  it("never while the lobby is loading", () => {
+    expect(previewsAllowed({ loaded: false, error: null })).toBe(false);
+  });
+
+  it("never while the server is unreachable, loaded or not", () => {
+    const error = new Error("Can't reach the server");
+    expect(previewsAllowed({ loaded: false, error })).toBe(false);
+    expect(previewsAllowed({ loaded: true, error })).toBe(false);
+  });
+
+  it("on a loaded, healthy lobby", () => {
+    expect(previewsAllowed({ loaded: true, error: null })).toBe(true);
   });
 });
 

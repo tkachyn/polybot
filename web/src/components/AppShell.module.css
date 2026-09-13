@@ -171,17 +171,27 @@
 
 /* --- Reflow (< 1000px) ------------------------------------------------------ */
 
+/*
+ * Down to 760px the brand, all five tabs and the account share one row, so
+ * the tabs tighten (smaller label, less tracking and spacing) rather than
+ * scroll a tab out of sight.
+ */
 @media (max-width: 999px) {
   .navbarInner {
-    gap: var(--space-5);
-  }
-
-  .navList {
     gap: var(--space-4);
   }
 
+  .navList {
+    gap: var(--space-3);
+  }
+
+  .navLink {
+    font-size: var(--fs-body-sm);
+    letter-spacing: 0.05em;
+  }
+
   .end {
-    gap: var(--space-2-5);
+    gap: var(--space-2);
   }
 }
 

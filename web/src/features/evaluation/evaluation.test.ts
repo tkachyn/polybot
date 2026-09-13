@@ -3,10 +3,13 @@ import type { ReactionLabel, RobustnessCell, SabotageReaction, SteelTraceEntry, 
 import { datasetExportUrl, datasetFileUrl, evidenceFrameUrl, replayUrl } from "../../api/client";
 import { EMPTY, MINUS } from "../../lib/format";
 import { AGENT_OUTCOME_LABEL, BLOCKED_BY_LABEL, EVALUATION_MODE_LABEL, EVALUATION_STATUS_LABEL, REACTION_DESCRIPTION, REACTION_LABEL } from "../../lib/labels";
-import { DATASET_FILES, simulatedDatasetWarning } from "./dataset";
+import { DATASET_FILES, datasetScope, simulatedDatasetWarning } from "./dataset";
 import {
   cellCountsText,
+  checkpointParts,
   describeHitOffset,
+  evaluationDisplayStatus,
+  evidenceNotes,
   formatCheckpoint,
   formatFightTime,
   formatOffset,
@@ -16,10 +19,13 @@ import {
   formatSeconds,
   formatSurvival,
   matrixCellView,
+  robustnessView,
+  sabotageStepMeta,
+  sabotageStepTitle,
 } from "./format";
-import { parseEvaluationMode, parseEvaluationWindow } from "./params";
+import { matchesSelection, parseEvaluationMode, parseEvaluationWindow } from "./params";
 import { EVALUATION_STATUS_TONE, OUTCOME_TONE, REACTION_TONE, TONE_COLOR_VAR } from "./tones";
-import { interleaveHits, steelTraceAround, traceReasoning, traceTotals } from "./trace";
+import { interleaveHits, isTraceStep, steelTraceAround, traceReasoning, traceTotals } from "./trace";
 
 // ---------------------------------------------------------------------------
 // Fixtures (tests only)
@@ -143,9 +149,35 @@ describe("scores and survival", () => {
     expect(formatScore(Number.NaN)).toBe(EMPTY);
   });
 
-  it("reads a null robustness as not tested", () => {
+  it("reads a null robustness as not scored when the agent was hit, not tested when it never was", () => {
     expect(formatRobustness(null)).toBe("Not tested");
+    expect(formatRobustness(null, 1)).toBe("Not scored");
     expect(formatRobustness(62.6)).toBe("63");
+    expect(formatRobustness(62.6, 2)).toBe("63");
+  });
+
+  it("explains a missing robustness: cut-short hits are not scored, an unhit agent is not tested", () => {
+    const cut = { ...hit(1, 100, "cut_short"), score: null };
+    expect(robustnessView({ robustness: null, sabotage: [cut] })).toEqual({
+      text: "Not scored",
+      scored: false,
+      scoredHits: 0,
+      title: "Hit, but cut short: the fight ended too soon after the hit to judge it, so it wasn’t scored.",
+    });
+    expect(robustnessView({ robustness: null, sabotage: [cut, { ...cut, stepId: "step-2" }] }).title).toMatch(/^Hit 2 times, all cut short/);
+    expect(robustnessView({ robustness: null, sabotage: [] })).toEqual({
+      text: "Not tested",
+      scored: false,
+      scoredHits: 0,
+      title: "Never hit by sabotage, so robustness was not tested.",
+    });
+    // A cut-short hit beside a scored one: scored, over the one scored hit.
+    expect(robustnessView({ robustness: 80, sabotage: [hit(1, 100), cut] })).toEqual({
+      text: "80",
+      scored: true,
+      scoredHits: 1,
+      title: "Mean reaction score over 1 scored hit, 0 to 100.",
+    });
   });
 
   it("formats survival as a whole percent", () => {
@@ -224,6 +256,69 @@ describe("time formatting", () => {
   });
 });
 
+describe("report status", () => {
+  it("never calls a resolved fight's report provisional: it is finalizing", () => {
+    expect(evaluationDisplayStatus("provisional", false)).toBe("provisional");
+    expect(evaluationDisplayStatus("provisional", true)).toBe("finalizing");
+    expect(evaluationDisplayStatus("final", true)).toBe("final");
+    expect(evaluationDisplayStatus("final", false)).toBe("final");
+  });
+});
+
+describe("evidence notes", () => {
+  it("says why a hit has no replay or Steel trace", () => {
+    expect(evidenceNotes({ mode: "simulated", replayAvailable: false, traceAvailable: false })).toEqual([
+      "Replays and Steel traces exist for live fights only.",
+    ]);
+    expect(evidenceNotes({ mode: "live", replayAvailable: true, traceAvailable: true })).toEqual([]);
+    expect(evidenceNotes({ mode: "live", replayAvailable: false, traceAvailable: true })).toEqual(["No Steel recording was saved for this session."]);
+    expect(evidenceNotes({ mode: "live", replayAvailable: true, traceAvailable: false })).toEqual(["No Steel trace was saved for this session."]);
+    expect(evidenceNotes({ mode: "live", replayAvailable: false, traceAvailable: false })).toEqual([
+      "No Steel recording or trace was saved for this session.",
+    ]);
+  });
+
+  it("says what a fight that has left the lobby no longer serves", () => {
+    expect(evidenceNotes({ mode: "live", replayAvailable: true, traceAvailable: true, archived: true })).toEqual([
+      "Keyframes and the replay aren’t kept once a fight leaves the lobby.",
+    ]);
+    expect(evidenceNotes({ mode: "simulated", replayAvailable: false, traceAvailable: false, archived: true })).toEqual([
+      "Keyframes aren’t kept once a fight leaves the lobby.",
+      "Replays and Steel traces exist for live fights only.",
+    ]);
+  });
+});
+
+describe("sabotage step labels", () => {
+  it("does not repeat a hazard the step is already named after", () => {
+    // A step without a named preset is labelled after its hazard type.
+    expect(sabotageStepTitle({ label: "Blocking modal", hazardType: "blocking_modal" })).toEqual({ title: "Blocking modal", hazard: null });
+    expect(sabotageStepTitle({ label: "Insert decoy", hazardType: "insert_decoy" })).toEqual({ title: "Insert decoy", hazard: null });
+    expect(sabotageStepTitle({ label: "Temporary disable", hazardType: "temporary_disable" })).toEqual({ title: "Temporary disable", hazard: null });
+    expect(sabotageStepTitle({ label: "Decoy control", hazardType: "insert_decoy" })).toEqual({ title: "Decoy control", hazard: null });
+    // A named preset keeps its hazard; a missing label falls back to the hazard alone.
+    expect(sabotageStepTitle({ label: "Plant a decoy control", hazardType: "insert_decoy" })).toEqual({
+      title: "Plant a decoy control",
+      hazard: "Decoy control",
+    });
+    expect(sabotageStepTitle({ label: "  ", hazardType: "rename_control" })).toEqual({ title: "Renamed control", hazard: null });
+  });
+
+  it("splits the facts under a step into items a line never breaks inside", () => {
+    const step = { tier: "difficult" as const, checkpoint: 3, checkpointLabel: "Seat map" };
+    expect(sabotageStepMeta({ ...step, label: "Blocking modal", hazardType: "blocking_modal" })).toEqual([
+      { text: "Difficult", wrap: false },
+      { text: "Checkpoint 3", wrap: false },
+      { text: "Seat map", wrap: true },
+    ]);
+    expect(
+      sabotageStepMeta({ ...step, label: "Cover the page with a modal", hazardType: "blocking_modal", checkpointLabel: "Checkpoint 3" }).map((item) => item.text),
+    ).toEqual(["Blocking modal", "Difficult", "Checkpoint 3"]);
+    expect(checkpointParts(3, "Seat map")).toEqual(["Checkpoint 3", "Seat map"]);
+    expect(checkpointParts(2, "checkpoint 2")).toEqual(["Checkpoint 2"]);
+  });
+});
+
 // ---------------------------------------------------------------------------
 // Filters, URLs and traces
 // ---------------------------------------------------------------------------
@@ -238,6 +333,18 @@ describe("evaluation filters", () => {
     expect(parseEvaluationWindow("90")).toBe(90);
     expect(parseEvaluationWindow("45")).toBe(30);
     expect(parseEvaluationWindow(null)).toBe(30);
+  });
+
+  it("shows a matrix response only for the window and mode on screen", () => {
+    const simulated30 = { windowDays: 30, mode: "simulated" as const };
+    expect(matchesSelection(simulated30, 30, "simulated")).toBe(true);
+    // Switched to Live or to 7 days while the old response is still held: not this selection's figures.
+    expect(matchesSelection(simulated30, 30, "live")).toBe(false);
+    expect(matchesSelection(simulated30, 7, "simulated")).toBe(false);
+    // No mode chosen: the server picks one, so its answer matches.
+    expect(matchesSelection(simulated30, 30, null)).toBe(true);
+    expect(matchesSelection(simulated30, 90, null)).toBe(false);
+    expect(matchesSelection({ windowDays: 7, mode: "all" }, 7, "all")).toBe(true);
   });
 
   it("builds evidence and replay URLs", () => {
@@ -270,6 +377,14 @@ describe("dataset downloads", () => {
     }
   });
 
+  it("disables the downloads only when the window is known to hold no fight", () => {
+    expect(datasetScope(0)).toEqual({ empty: true, summary: "No fights in this window" });
+    expect(datasetScope(1)).toEqual({ empty: false, summary: "1 fight · 4 episodes" });
+    expect(datasetScope(1_250)).toEqual({ empty: false, summary: "1,250 fights · 5,000 episodes" });
+    // Unknown (loading, or the matrix failed): keep the downloads, say nothing.
+    expect(datasetScope(null)).toEqual({ empty: false, summary: null });
+  });
+
   it("warns against training on simulated rows whenever the download includes them", () => {
     expect(simulatedDatasetWarning("live")).toBeNull();
     expect(simulatedDatasetWarning(null)).toBeNull();
@@ -293,7 +408,20 @@ describe("trace helpers", () => {
 
   it("counts errors, decoy clicks, blocked steps and cleared sabotage", () => {
     const trace = [step(1, 1, { kind: "error", blockedBy: "modal" }), step(2, 2, { decoy: true }), step(3, 3, { clearedSabotage: true }), step(4, 4)];
-    expect(traceTotals(trace)).toEqual({ steps: 4, errors: 1, decoys: 1, blocked: 1, cleared: 1 });
+    expect(traceTotals(trace)).toEqual({ steps: 4, notes: 0, errors: 1, decoys: 1, blocked: 1, cleared: 1 });
+  });
+
+  it("counts steps the way the agent's step count does: notes are not steps", () => {
+    // The runner's step-0 page load and a rate-limit pause are logged, not taken: 3 steps, as in "Steps 3/90".
+    const trace = [
+      step(0, 0, { kind: "note", text: "open https://shop.arena.test/" }),
+      step(1, 1),
+      step(2, 2, { kind: "error" }),
+      step(2, 3, { kind: "note", text: "paused for the rate limit" }),
+      step(3, 4),
+    ];
+    expect(traceTotals(trace)).toMatchObject({ steps: 3, notes: 2, errors: 1 });
+    expect(trace.filter(isTraceStep).map((entry) => entry.step)).toEqual([1, 2, 3]);
   });
 
   it("reads the model's reasoning, trimmed, or null when it gave none", () => {

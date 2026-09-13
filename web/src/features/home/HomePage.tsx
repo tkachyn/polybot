@@ -1,33 +1,38 @@
 /**
- * Fights (home). Route "/".
+ * Fights (home). Route "/", `?filter=live|upcoming|resolved&q=`.
  *
- * Demo layout: the first fight from the backend is the featured card, large
- * and fully live (Kalshi-style outcomes, Yes / No and a probability chart).
- * The cards beneath it are hardcoded previews (./placeholders) that look like
- * real fights but are not interactive.
+ * A filter row (All / Live / Upcoming / Resolved, and search) over the
+ * lobby: the featured fight, then every other fight as a card, one section
+ * per status: every live fight (trading open or frozen), what is coming up,
+ * and the latest resolved fights (see ./lobby for what each filter shows).
+ * The rail on the right is the compact read: standings, the next few fights,
+ * and everything settled.
  *
- * The featured card is the live fight and the grid beneath it is what is
- * coming up, in full. The rail on the right is the compact read: standings,
- * the next few fights, and everything already settled.
+ * The featured card is one fight, large and fully live (Kalshi-style
+ * outcomes, Yes / No and a probability chart), picked and kept by ./featured
+ * so it never changes mid-race. Preview cards (./placeholders) stand in,
+ * marked as such, while the backend has no upcoming fights.
  */
-import { useCallback, useMemo, useState } from "react";
-import { EmptyState, ErrorBanner, Page } from "../../components";
+import { useCallback, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useNavigationType, useSearchParams } from "react-router-dom";
+import { Button, ButtonLink, EmptyState, ErrorBanner, Page, Tag } from "../../components";
 import { cx } from "../../lib/cx";
-import { useSearchQuery } from "../../state/search";
+import { formatNumber } from "../../lib/format";
+import { serverNow } from "../../state/clock";
 import { useFights } from "../../state/fights";
+import { SEARCH_PARAM, useSetSearchQuery } from "../../state/search";
 import { FeaturedFightCard, FeaturedFightEmpty, FeaturedFightSkeleton } from "./FeaturedFightCard";
 import { FightCardList, FightCardListSkeleton } from "./FightCard";
-import { filterFights } from "./filter";
-import { buildPlaceholderFights } from "./placeholders";
+import { useFeaturedFight } from "./featured";
+import { FILTER_PARAM, parseFightFilter, type FightFilter } from "./filter";
+import { buildLobby, buildRail, type LobbySection } from "./lobby";
 import { LobbyRail } from "./LobbyRail";
+import { LobbyToolbar } from "./LobbyToolbar";
+import { PREVIEW_FIGHT_HINT, buildPlaceholderFights, previewsAllowed } from "./placeholders";
 import styles from "./HomePage.module.css";
-
-/** Number the previews around when the backend has no fight yet. */
-const DEFAULT_FEATURED_NUMBER = 412;
 
 export function HomePage() {
   const { fights, error, loaded, refresh } = useFights();
-  const query = useSearchQuery().trim();
   const [retrying, setRetrying] = useState(false);
 
   const retry = useCallback(async () => {
@@ -39,28 +44,78 @@ export function HomePage() {
     }
   }, [refresh]);
 
-  // The backend lists live fights first, so the demo's real fight leads.
-  const featured = fights[0] ?? null;
-  const featuredNumber = featured?.number ?? DEFAULT_FEATURED_NUMBER;
-  const [anchor] = useState(() => Date.now());
-  const previews = useMemo(() => buildPlaceholderFights(anchor, featuredNumber), [anchor, featuredNumber]);
+  // The filter and the search live in the URL, so a filtered lobby can be
+  // linked to (the Resolved screen's "Watch live fights") and survives Back.
+  const [params, setParams] = useSearchParams();
+  const filter = parseFightFilter(params.get(FILTER_PARAM));
+  const rawQuery = params.get(SEARCH_PARAM) ?? "";
+  const query = rawQuery.trim();
+  const setQuery = useSetSearchQuery();
+  const setFilter = useCallback(
+    (next: FightFilter) => {
+      setParams(
+        (current) => {
+          const updated = new URLSearchParams(current);
+          if (next === "all") updated.delete(FILTER_PARAM);
+          else updated.set(FILTER_PARAM, next);
+          return updated;
+        },
+        { replace: true },
+      );
+    },
+    [setParams],
+  );
+  // "See all" keeps the search: all resolved fights that match it.
+  const seeAllResolved = useMemo(() => {
+    const next = new URLSearchParams(params);
+    next.set(FILTER_PARAM, "resolved");
+    return `?${next.toString()}`;
+  }, [params]);
 
-  const matching = useMemo(() => filterFights(previews, "all", query), [previews, query]);
+  // A link to another filter ("See all") starts that list at the top; the
+  // page stays mounted, so nothing else would move it. Back is restored by <Page>.
+  const navigationType = useNavigationType();
+  const topRef = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    if (navigationType === "PUSH") topRef.current?.scrollIntoView({ block: "nearest" });
+  }, [filter, navigationType]);
 
-  // Real fights fill the rail once the backend has any of that status; the
-  // demo's previews stand in only while it has none.
-  const scheduled = useMemo(() => fights.filter((f) => f.status === "upcoming"), [fights]);
-  const previewUpcoming = useMemo(() => matching.filter((f) => f.status === "upcoming"), [matching]);
-  const upcoming = scheduled.length > 0 ? scheduled : previewUpcoming;
+  // One fight, kept while it runs: never swapped for a newer one mid-race.
+  const featured = useFeaturedFight(fights);
 
-  const settled = useMemo(() => fights.filter((f) => f.status === "resolved"), [fights]);
-  const previewResolved = useMemo(() => matching.filter((f) => f.status === "resolved"), [matching]);
-  const resolved = settled.length > 0 ? settled : previewResolved;
+  const [anchor] = useState(() => serverNow());
+  // Previews stand in only on a loaded, healthy lobby (never behind a skeleton
+  // or beside an error), numbered clear of every real fight.
+  const allowPreviews = previewsAllowed({ loaded, error });
+  const previews = useMemo(
+    () => (allowPreviews ? buildPlaceholderFights(anchor, fights.map((f) => f.number)) : []),
+    [allowPreviews, anchor, fights],
+  );
+
+  const lobby = useMemo(
+    () => buildLobby({ fights, featured, filter, query, previews }),
+    [fights, featured, filter, query, previews],
+  );
+  const rail = useMemo(() => buildRail({ fights, loaded, previews }), [fights, loaded, previews]);
+
+  // The lobby has no fight at all: the featured slot says so.
+  const noFights = !lobby.hero && filter === "all" && !query;
+  const nothingShown = !lobby.hero && lobby.sections.every((s) => s.fights.length === 0);
 
   return (
     <Page title="Fights">
       <div className={styles.layout}>
         <div className={styles.main}>
+          <div ref={topRef} className={styles.top}>
+            <LobbyToolbar
+              filter={filter}
+              onFilter={setFilter}
+              counts={loaded ? lobby.counts : null}
+              query={rawQuery}
+              onQuery={setQuery}
+            />
+          </div>
+
           {error && (
             <ErrorBanner
               error={error}
@@ -70,32 +125,137 @@ export function HomePage() {
             />
           )}
 
-          {!loaded ? <FeaturedFightSkeleton /> : featured ? <FeaturedFightCard fight={featured} /> : <FeaturedFightEmpty />}
-
-          <section className={styles.section} aria-labelledby="upcoming-heading">
-            <h2 id="upcoming-heading" className={cx("label", styles.sectionHead)}>
-              Upcoming
-            </h2>
-            {!loaded ? (
+          {!loaded ? (
+            <>
+              <FeaturedFightSkeleton />
               <FightCardListSkeleton count={2} />
-            ) : upcoming.length === 0 ? (
-              <EmptyState
-                title="Nothing scheduled"
-                description="Fights are listed here before they open, with the sabotage they will face."
-              />
-            ) : (
-              <FightCardList fights={upcoming} label="Upcoming fights" preview={scheduled.length === 0} />
-            )}
-          </section>
+            </>
+          ) : (
+            <>
+              {lobby.hero ? <FeaturedFightCard fight={lobby.hero} /> : noFights ? <FeaturedFightEmpty /> : null}
+              {nothingShown && !noFights ? (
+                <LobbyEmpty
+                  filter={filter}
+                  query={query}
+                  onClearQuery={() => setQuery("")}
+                  onFilter={setFilter}
+                />
+              ) : (
+                lobby.sections.map((section) =>
+                  section.fights.length > 0 ? (
+                    <LobbySectionView
+                      key={section.status}
+                      section={section}
+                      title={sectionTitle(section, lobby.hero?.status === "live")}
+                      seeAllTo={seeAllResolved}
+                    />
+                  ) : null,
+                )
+              )}
+            </>
+          )}
         </div>
 
-        <LobbyRail
-          upcoming={upcoming}
-          resolved={resolved}
-          preview={settled.length === 0}
-          upcomingPreview={scheduled.length === 0}
-        />
+        <LobbyRail upcoming={rail.upcoming} resolved={rail.resolved} />
       </div>
     </Page>
+  );
+}
+
+function sectionTitle(section: LobbySection, heroIsLive: boolean): string {
+  if (section.status === "live") return heroIsLive ? "More live fights" : "Live now";
+  if (section.status === "upcoming") return "Upcoming";
+  return section.total > section.fights.length ? "Recently resolved" : "Resolved";
+}
+
+function LobbySectionView({ section, title, seeAllTo }: { section: LobbySection; title: string; seeAllTo: string }) {
+  const headingId = useId();
+  // Only the All view caps a section (its resolved fights).
+  const capped = section.total > section.fights.length;
+  return (
+    <section className={styles.section} aria-labelledby={headingId}>
+      <div className={styles.sectionHead}>
+        <h2 id={headingId} className={cx("label", styles.sectionTitle)}>
+          {title}
+        </h2>
+        {section.preview && (
+          <Tag tone="edge" title={PREVIEW_FIGHT_HINT}>
+            Preview
+          </Tag>
+        )}
+        {capped && (
+          <ButtonLink to={seeAllTo} variant="subtle" size="sm" className={styles.sectionMore}>
+            See all <span className="num">{formatNumber(section.total)}</span>
+          </ButtonLink>
+        )}
+      </div>
+      {section.preview && (
+        <p className={styles.previewNote}>
+          Nothing is scheduled yet, so these sample fights show what’s coming. They can’t be opened or traded.
+        </p>
+      )}
+      <FightCardList fights={section.fights} label={`${title} fights`} preview={section.preview} />
+    </section>
+  );
+}
+
+const EMPTY_COPY: Readonly<Record<Exclude<FightFilter, "all">, { title: string; description: string }>> = {
+  live: {
+    title: "No live fights right now",
+    description: "Upcoming fights go live on their own; this list fills as soon as one starts.",
+  },
+  upcoming: {
+    title: "Nothing scheduled",
+    description: "Fights are listed here before they open, with the sabotage they will face.",
+  },
+  resolved: {
+    title: "No resolved fights yet",
+    description: "When a fight settles, its winner, final prices and volume are listed here.",
+  },
+};
+
+/** Nothing matches the filter or the search. */
+function LobbyEmpty({
+  filter,
+  query,
+  onClearQuery,
+  onFilter,
+}: {
+  filter: FightFilter;
+  query: string;
+  onClearQuery: () => void;
+  onFilter: (filter: FightFilter) => void;
+}) {
+  if (query) {
+    return (
+      <EmptyState
+        title={`No fights match “${query}”`}
+        description={
+          filter === "all"
+            ? "Search by task, agent name or fight number."
+            : "Nothing under this filter matches. Try All, or another search."
+        }
+        action={
+          <Button size="sm" onClick={onClearQuery}>
+            Clear search
+          </Button>
+        }
+      />
+    );
+  }
+  if (filter === "all") return null;
+  const copy = EMPTY_COPY[filter];
+  return (
+    <EmptyState
+      title={copy.title}
+      description={copy.description}
+      action={
+        filter === "live" ? (
+          <Button size="sm" onClick={() => onFilter("upcoming")}>
+            See upcoming fights
+          </Button>
+        ) : undefined
+      }
+    />
   );
 }

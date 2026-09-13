@@ -29,6 +29,13 @@
   color: var(--color-text);
 }
 
+.headMain {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
 .headTitle {
   font-size: var(--fs-body-lg);
 }
@@ -133,6 +140,11 @@
   text-overflow: ellipsis;
   white-space: nowrap;
   color: var(--agent-color);
+}
+
+.rowWon {
+  flex: none;
+  color: var(--color-text-muted);
 }
 
 .rowVoid {

@@ -4,6 +4,7 @@
  *   head     FIGHT #0412 · status pill · clock
  *   title    the task (2 lines) · SABOTAGE + summary (1 line)
  *   agents   one row per agent: mark, name over a progress rule, chance
+ *            (once resolved: what one YES share paid, $1.00 or $0.00)
  *   footer   volume / traders / checkpoints · resolution · View
  *
  * Shared by the Fights (home) and Resolved screens.
@@ -23,9 +24,19 @@ import {
 } from "../../components";
 import { agentStyle, rosterVisuals, type AgentVisual } from "../../lib/agents";
 import { cx } from "../../lib/cx";
-import { formatChance, formatClock, formatCompactMoney, formatFightNumber, formatNumber, formatTimeOfDay, isoDuration } from "../../lib/format";
+import {
+  formatChance,
+  formatClock,
+  formatCompactMoney,
+  formatFightNumber,
+  formatMoney,
+  formatNumber,
+  formatTimeOfDay,
+  isoDuration,
+} from "../../lib/format";
 import { RUN_STATUS_LABEL, SABOTAGE_HIDDEN_COPY } from "../../lib/labels";
 import { useNow } from "../../state/clock";
+import { PREVIEW_FIGHT_HINT } from "./placeholders";
 import styles from "./FightCard.module.css";
 
 // ---------------------------------------------------------------------------
@@ -160,6 +171,14 @@ function AgentRow({ agent, visual, outcome, live, checkpointCount }: {
       {blocked && <span className={styles.blocked} title={RUN_STATUS_LABEL.bad} role="img" aria-label={RUN_STATUS_LABEL.bad} />}
       {outcome === "void" ? (
         <span className={cx("label", styles.chipVoid)}>Void</span>
+      ) : outcome ? (
+        // Settled: the last traded price would read as a live chance.
+        <span
+          className={cx("num", styles.agentChance)}
+          title={`Each YES share paid ${formatMoney(outcome === "winner" ? 1 : 0)}. Last price before settlement: ${formatChance(agent.yes)}.`}
+        >
+          {formatMoney(outcome === "winner" ? 1 : 0)}
+        </span>
       ) : (
         <span className={cx("num", styles.agentChance)}>{formatChance(agent.yes)}</span>
       )}
@@ -172,7 +191,7 @@ function AgentStrip({ fight }: { fight: FightSummary }) {
   const visuals = rosterVisuals(fight.agents.map((a) => a.agent));
   const live = fight.status === "live";
   return (
-    <ul className={styles.strip} aria-label="Agents and win chance">
+    <ul className={styles.strip} aria-label={fight.status === "resolved" ? "Agents and settlement" : "Agents and win chance"}>
       {fight.agents.map((agent, i) => (
         <AgentRow
           key={agent.racerId}
@@ -260,7 +279,7 @@ export function Resolution({ fight }: { fight: FightSummary }) {
 export type FightCardProps = {
   fight: FightSummary;
   className?: string;
-  /** A hardcoded demo card (./placeholders): looks real, but View does nothing. */
+  /** A sample card (./placeholders): tagged Preview, with a disabled View. */
   preview?: boolean;
 };
 
@@ -269,12 +288,22 @@ export function FightCard({ fight, className, preview = false }: FightCardProps)
   const number = formatFightNumber(fight.number);
   return (
     <article className={cx(styles.container, className)} aria-labelledby={titleId}>
-      <div className={styles.card}>
+      <div className={cx(styles.card, preview && styles.cardPreview)}>
         <div className={styles.head}>
           <span className={cx("label", styles.number)}>
             Fight <span className="num">{number}</span>
           </span>
           <StatusPill status={fightPillStatus(fight)} size="sm" />
+          {fight.status === "live" && fight.marketStatus === "frozen" && (
+            <Tag tone="neutral" title="Trading is frozen for the rest of this fight">
+              Trading frozen
+            </Tag>
+          )}
+          {preview && (
+            <Tag tone="edge" title={PREVIEW_FIGHT_HINT}>
+              Preview
+            </Tag>
+          )}
           <CardClock fight={fight} />
         </div>
 
@@ -290,13 +319,16 @@ export function FightCard({ fight, className, preview = false }: FightCardProps)
           <div className={styles.footerEnd}>
             <Resolution fight={fight} />
             {preview ? (
+              // aria-disabled rather than disabled: the button stays hoverable
+              // and focusable, so the reason is reachable as its tooltip.
               <Button
                 variant="subtle"
                 size="sm"
                 className={cx(styles.view, styles.viewPreview)}
                 aria-disabled="true"
-                title="Preview only: this demo runs the featured fight"
-                aria-label={`Fight ${number} is a preview`}
+                title={PREVIEW_FIGHT_HINT}
+                aria-label={`View fight ${number} (preview, unavailable)`}
+                onClick={(event) => event.preventDefault()}
               >
                 View
               </Button>

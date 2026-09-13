@@ -542,7 +542,12 @@ test("a failed racer collapses to the price floor", async () => {
   assert.equal(coordinator.engine.racers.get("racer-3")?.status, "failed");
   assert.equal(coordinator.market.isCollapsed("racer-3"), true);
   assert.equal(coordinator.runStatus("racer-3"), "bad");
-  assert.match(coordinator.telemetry.racer("racer-3").log.at(-1)?.text ?? "", /model crashed/);
+  // The log reads as a cause; the event keeps the raw reason for diagnostics.
+  assert.equal(coordinator.telemetry.racer("racer-3").log.at(-1)?.text, "Failed: stopped after its model provider failed");
+  assert.equal(
+    coordinator.engine.events.find((event) => event.type === "racer_failed")?.metadata?.reason,
+    "model crashed",
+  );
   await coordinator.shutdown();
 });
 

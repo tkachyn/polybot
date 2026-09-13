@@ -3,14 +3,14 @@
  * full action trace with the model's reasoning for each step. Tables render
  * only while open, and scroll in their own container.
  */
-import { useMemo, useState, type ReactNode, type SyntheticEvent } from "react";
-import type { AgentEvaluation, SteelTraceEntry, TraceEntry } from "@contract";
+import { useLayoutEffect, useMemo, useRef, useState, type ReactNode, type SyntheticEvent } from "react";
+import type { AgentEvaluation, SabotageReaction, SteelTraceEntry, TraceEntry } from "@contract";
 import { IconChevronRight, SabotageTag, Tag, tableStyles } from "../../components";
 import { cx } from "../../lib/cx";
 import { EMPTY, formatNumber } from "../../lib/format";
-import { BLOCKED_BY_DESCRIPTION, BLOCKED_BY_LABEL, HAZARD_LABEL } from "../../lib/labels";
-import { formatFightTime, formatOffset } from "./format";
-import { STEEL_EXCERPT_RADIUS_MS, interleaveHits, steelTraceAround, traceReasoning, traceTotals } from "./trace";
+import { BLOCKED_BY_DESCRIPTION, BLOCKED_BY_LABEL } from "../../lib/labels";
+import { formatFightTime, formatOffset, sabotageStepTitle } from "./format";
+import { STEEL_EXCERPT_RADIUS_MS, interleaveHits, isTraceStep, steelTraceAround, traceReasoning, traceTotals } from "./trace";
 import styles from "./Trace.module.css";
 
 function plural(n: number, one: string, many: string): string {
@@ -134,7 +134,7 @@ export type FullTraceProps = {
 
 export function FullTrace({ agent, startedAt }: FullTraceProps) {
   const totals = useMemo(() => traceTotals(agent.trace), [agent.trace]);
-  if (totals.steps === 0) return <p className={styles.empty}>No steps recorded.</p>;
+  if (agent.trace.length === 0) return <p className={styles.empty}>No steps recorded.</p>;
   return (
     <Disclosure
       summary={
@@ -163,13 +163,47 @@ function TargetCell({ entry }: { entry: TraceEntry }) {
   );
 }
 
-/** The model's stated reason: two lines, with the full text in the title. */
+/**
+ * The model's stated reason, clamped to two lines. When the clamp hides text,
+ * a click or tap on it opens the whole reason (and closes it again), and a
+ * "Show more" button does the same from the keyboard.
+ */
 function ReasoningCell({ entry }: { entry: TraceEntry }) {
   const reasoning = traceReasoning(entry);
+  const textRef = useRef<HTMLSpanElement>(null);
+  const [expanded, setExpanded] = useState(false);
+  const [clamped, setClamped] = useState(false);
+
+  // Measured while closed, and again whenever the column's width changes.
+  useLayoutEffect(() => {
+    const el = textRef.current;
+    if (!el || expanded) return undefined;
+    const measure = () => setClamped(el.scrollHeight > el.clientHeight + 1);
+    measure();
+    if (typeof ResizeObserver === "undefined") return undefined;
+    const observer = new ResizeObserver(measure);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [reasoning, expanded]);
+
   if (reasoning === null) return <span className={styles.none}>{EMPTY}</span>;
+  const toggleable = clamped || expanded;
+  const toggle = () => setExpanded((open) => !open);
   return (
-    <span className={cx("clamp-2", styles.reasoning)} title={reasoning}>
-      {reasoning}
+    <span className={styles.reasoningCell}>
+      <span
+        ref={textRef}
+        className={cx(!expanded && "clamp-2", styles.reasoning, toggleable && styles.reasoningToggle)}
+        // Selecting text to copy it is not a toggle.
+        onClick={toggleable ? () => !window.getSelection()?.toString() && toggle() : undefined}
+      >
+        {reasoning}
+      </span>
+      {toggleable && (
+        <button type="button" className={styles.reasoningMore} aria-expanded={expanded} onClick={toggle}>
+          {expanded ? "Show less" : "Show more"}
+        </button>
+      )}
     </span>
   );
 }
@@ -201,6 +235,12 @@ function ResultCell({ entry }: { entry: TraceEntry }) {
 /** Columns in the full trace; the sabotage marker rows span all of them. */
 const TRACE_COLUMNS = 6;
 
+/** "Plant a decoy control · Decoy control", or just "Insert decoy" when the step is named after its hazard. */
+function hitText(reaction: SabotageReaction): string {
+  const { title, hazard } = sabotageStepTitle(reaction);
+  return hazard ? `${title} · ${hazard}` : title;
+}
+
 function FullTraceTable({ agent, startedAt }: FullTraceProps) {
   const rows = useMemo(() => interleaveHits(agent.trace, agent.sabotage), [agent.trace, agent.sabotage]);
   return (
@@ -231,9 +271,7 @@ function FullTraceTable({ agent, startedAt }: FullTraceProps) {
                 <td colSpan={TRACE_COLUMNS}>
                   <span className={styles.hitMarker}>
                     <SabotageTag>Sabotage {row.reaction.stepIndex}</SabotageTag>
-                    <span className={styles.hitText}>
-                      {row.reaction.label} · {HAZARD_LABEL[row.reaction.hazardType]}
-                    </span>
+                    <span className={styles.hitText}>{hitText(row.reaction)}</span>
                     <span className={cx("num", styles.hitTime)}>hit at {formatFightTime(row.reaction.appliedAt, startedAt)}</span>
                   </span>
                 </td>
@@ -243,7 +281,8 @@ function FullTraceTable({ agent, startedAt }: FullTraceProps) {
                 key={`step-${row.entry.step}-${index}`}
                 className={cx(tableStyles.row, row.entry.kind === "error" && styles.errorRow, row.entry.clearedSabotage && styles.clearedRow)}
               >
-                <td className={tableStyles.num}>{formatNumber(row.entry.step)}</td>
+                {/* A note is not a step, so it takes no step number (see isTraceStep). */}
+                <td className={tableStyles.num}>{isTraceStep(row.entry) ? formatNumber(row.entry.step) : <span className={styles.none}>{EMPTY}</span>}</td>
                 <td className={cx(tableStyles.num, styles.time)}>{formatFightTime(row.entry.at, startedAt)}</td>
                 <td className={styles.actionCell} title={row.entry.url ?? undefined}>
                   <span className={cx(row.entry.kind === "error" && styles.errorText, row.entry.kind === "note" && styles.noteText)}>

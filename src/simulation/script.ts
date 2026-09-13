@@ -10,19 +10,22 @@
  * race events, exactly as for a live fight.
  */
 import type { BlockedBy, DatasetAction, HazardType, StepObservation } from "../api/dto.js";
-import { REDACTED_TEXT } from "../agents/competitor-decision.js";
+import { REDACTED_TEXT, parseDecision, withoutReasoning } from "../agents/competitor-decision.js";
 import type { ActionEvidence, AgentActionReport } from "../application/contracts.js";
 import { effectLabelFor, type SimPage, type SimTemplate } from "./catalogue.js";
 import { STEP_DELAY_MAX_MS, STEP_DELAY_MIN_MS, type RacerPlan } from "./plan.js";
 import { Rng } from "./rng.js";
 
 /**
- * How a scripted agent meets one sabotage hit:
- * - `careful` reads the page before acting and handles the hazard cleanly.
+ * How a scripted agent meets one sabotage hit. Sabotage persists until the
+ * agent clears it, so every response ends with the step that gets past the
+ * hazard (and clears it) before the page's checkpoint can be claimed:
+ * - `careful` reads the page before acting and handles the hazard cleanly,
+ *   at the latest when it reaches the page's main control.
  * - `adaptive` acts first, is blocked once, then works around the hazard.
  * - `hasty` repeats the blocked (or decoy) click before working around it.
- * - `stubborn` hammers the blocked control until the hazard reverts, then
- *   loses the thread for a while.
+ * - `stubborn` hammers the blocked control for a while, finally gets past
+ *   the hazard, then loses the thread for a while.
  */
 export type HazardResponse = "careful" | "adaptive" | "hasty" | "stubborn";
 
@@ -64,7 +67,6 @@ export type ScriptStep = {
   kind: "action" | "error";
   text: string;
   error?: string;
-  signature?: string;
   /** The scripted agent's one-sentence reason for the step. */
   reasoning?: string;
   /** The step actively cleared the persistent hazard. */
@@ -89,9 +91,9 @@ type HitState = {
   stepsAtHit: number;
   /** Hazard steps taken so far. */
   attempts: number;
-  /** Past the hazard before it reverted: dismissed, revealed or identified. */
+  /** Past the hazard (dismissed, revealed or identified), which cleared it. */
   workedAround: boolean;
-  /** The hazard reverted. */
+  /** The hazard is gone from the page. */
   settled: boolean;
 };
 
@@ -182,7 +184,7 @@ export function actionReport(
     url: page.url,
     step,
     maxSteps,
-    signature: entry.signature ?? entry.text,
+    signature: simSignature(action),
     observation: simObservation(entry, page, context.brand, action),
     action,
     observedAt: context.observedAt,
@@ -197,6 +199,22 @@ export function actionReport(
   if (entry.evidence) report.evidence = structuredClone(entry.evidence);
   if (entry.recovered) report.evidence = { ...report.evidence, clearedSabotage: true };
   return report;
+}
+
+/**
+ * The loop signature a live runner reports for a step: the JSON of its tool
+ * call as parsed, without reasoning (and without the dataset-only
+ * `textLength`). Steps that make the same tool call share it, whatever their
+ * text, so repeats count as loops and as wasted steps exactly as for a model.
+ */
+export function simSignature(action: DatasetAction): string {
+  try {
+    return JSON.stringify(withoutReasoning(parseDecision(action)));
+  } catch {
+    // A scripted step can stand for a call no model could make (typing without text).
+    const { textLength: _textLength, ...call } = action;
+    return JSON.stringify(call);
+  }
 }
 
 const TYPE_VERBS: ReadonlySet<string> = new Set(["type", "fill", "clear"]);
@@ -472,14 +490,19 @@ export class SimRacerScript {
       if (move) {
         const shown = this.shown(hit, active);
         hit.attempts += 1;
-        if (move.resolves) hit.workedAround = true;
+        if (move.resolves) {
+          hit.workedAround = true;
+          // Finally past the hazard, a stubborn agent loses the thread for a while.
+          if (hit.response === "stubborn") this.loseThread(hit);
+        }
         return this.toStep(move, shown);
       }
     } else if (hit && !hit.settled) {
       hit.settled = true;
+      // Only a hazard cleared outside the script disappears before the agent got past it.
       if (hit.response !== "careful" && !hit.workedAround) {
-        this.recoverySteps = Math.max(0, hit.intensity - 1);
-        if (hit.response === "stubborn") this.stallLeft = this.stallBudget(hit);
+        if (hit.response === "stubborn") this.loseThread(hit);
+        else this.recoverySteps = Math.max(0, hit.intensity - 1);
         return {
           kind: "action",
           text: `resume: "${page.target}" is usable again`,
@@ -513,10 +536,16 @@ export class SimRacerScript {
   private stallBudget(hit: HitState): number {
     const pace = median(this.cleanPageSteps) || this.typicalPageSteps;
     const target = Math.ceil(STALL_PACE_FACTOR * pace);
-    // Includes the resume step being taken now.
+    // Includes the step being taken now.
     const used = this.stepCount - hit.stepsAtHit;
     const planned = this.recoverySteps + Math.max(0, this.remaining);
     return Math.max(STALL_MIN_STEPS, target - used - planned);
+  }
+
+  /** A stubborn agent re-checks the page, then re-orients (see stallBudget). */
+  private loseThread(hit: HitState): void {
+    this.recoverySteps = Math.max(0, hit.intensity - 1);
+    this.stallLeft = this.stallBudget(hit);
   }
 
   private enterStage(stage: number): void {
@@ -542,7 +571,6 @@ export class SimRacerScript {
   private toStep(move: Move, disruption: ScriptStep["disruption"]): ScriptStep {
     const step: ScriptStep = { kind: move.kind, text: move.text, disruption };
     if (move.error) step.error = move.error;
-    if (move.signature) step.signature = move.signature;
     if (move.reasoning) step.reasoning = move.reasoning;
     if (move.evidence) step.evidence = move.evidence;
     if (move.resolves) step.recovered = true;
@@ -568,13 +596,15 @@ export class SimRacerScript {
 
     const text = page.actions[this.actionIndex % page.actions.length] ?? `click "${page.target}"`;
     const targeted = text.includes(`"${page.target}"`);
-    if (targeted && hit && hazard) {
-      const control = this.controlMove(hit, hazard, page);
-      if (control) {
-        if (control.resolves) hit.workedAround = true;
-        if (!control.productive) return this.toStep(control, shown);
-        return this.productive(control, page, shown, true);
-      }
+    // The page is left through its main control, so an agent still facing the
+    // hazard meets it there: when it reaches the control, and at the latest
+    // on the page's last step. Getting past it clears it before the page's
+    // checkpoint is claimed.
+    if (hit && hazard && !hit.workedAround && (targeted || this.remaining <= 1)) {
+      const control = this.controlMove(hazard, page);
+      hit.workedAround = true;
+      if (!control.productive) return this.toStep(control, shown);
+      return this.productive(control, page, shown, true);
     }
 
     const reasoning = pageReasoning(text, page);
@@ -610,19 +640,17 @@ export class SimRacerScript {
     return {
       kind: "action",
       text: `click "${page.target}" (no visible change)`,
-      signature: `loop:${page.targetRole}`,
       reasoning: `The page did not seem to change, so I click "${page.target}" again.`,
       evidence: { target: primaryTarget(page.target) },
       disruption: null,
     };
   }
 
-  /** A stubborn agent re-orienting after the hazard reverted. */
+  /** A stubborn agent re-orienting once it got past the hazard. */
   private stallStep(page: SimPage): ScriptStep {
     const recheck: Move = {
       kind: "action",
       text: `re-check "${page.heading}" after the disruption`,
-      signature: "stall:recheck",
       reasoning: `I am not sure the page is back to normal, so I check "${page.heading}" again.`,
     };
     const moves: Move[] = [
@@ -664,48 +692,40 @@ export class SimRacerScript {
 
   /**
    * The page's main control while its hazard is still on, for an agent that
-   * reads the page (careful) or already worked the hazard out. Null when the
-   * control can be used normally.
+   * reads the page (careful): the move that gets past the hazard, which
+   * clears it. Productive when it also does the page's work (the real or the
+   * relabelled control); otherwise the page's own step follows.
    */
-  private controlMove(
-    hit: HitState,
-    hazard: ScriptHazard,
-    page: SimPage,
-  ): (Move & { productive: boolean }) | null {
+  private controlMove(hazard: ScriptHazard, page: SimPage): Move & { productive: boolean } {
     const target = page.target;
-    if (hit.workedAround) return null;
     const effect = hazard.effectLabel;
     switch (hazard.hazardType) {
+      case "blocking_modal":
+        return { ...modalRecovery(effect), productive: false };
       case "temporary_disable":
-        return {
-          kind: "action",
-          text: `wait for "${target}" to become enabled`,
-          signature: `wait:${target}`,
-          reasoning: `"${target}" is greyed out, so I wait for it to become enabled.`,
-          evidence: { target: primaryTarget(target) },
-          productive: false,
-        };
-      case "move_primary_action":
-        return hit.workedAround ? null : { ...openMoreOptions(target), productive: false };
+        return { ...fillWhileDisabled(page), productive: false };
       case "rename_control":
         return {
           kind: "action",
           text: `click "${effect}" (the relabelled "${target}")`,
           reasoning: `The button where "${target}" used to be now reads "${effect}", so I click it.`,
           evidence: { target: { role: PRIMARY_ACTION_ROLE, text: effect, decoy: false } },
+          resolves: true,
           productive: true,
         };
       case "insert_decoy":
+        // Clicking the real control gets past the look-alike and clears the trap.
         return {
           kind: "action",
           text: `click "${target}", not the look-alike "${effect}"`,
           reasoning: `"${target}" is the control the task needs and "${effect}" only looks like it, so I click "${target}".`,
           evidence: { target: primaryTarget(target) },
+          resolves: true,
           productive: true,
         };
+      case "move_primary_action":
       default:
-        // The modal was dismissed before the agent reached the control.
-        return null;
+        return { ...openMoreOptions(target), productive: false };
     }
   }
 
@@ -733,12 +753,7 @@ export class SimRacerScript {
           text: `inspect the "${effect}" overlay and its DOM`,
           reasoning: "An overlay with no close control covers the page, so I inspect it before repairing the DOM.",
         };
-        const recover: Move = {
-          kind: "action",
-          text: "evaluate a bounded same-page DOM recovery helper",
-          reasoning: `The "${effect}" overlay blocks the page and waiting will not clear it, so I run the DOM recovery helper.`,
-          resolves: true,
-        };
+        const recover = modalRecovery(effect);
         switch (response) {
           case "careful":
             return recover;
@@ -751,7 +766,7 @@ export class SimRacerScript {
             if (n === 2) return look;
             return recover;
           default:
-            return [blocked, blocked, look, recover][n % 4];
+            return stubbornMove(n, [blocked, blocked, look], recover);
         }
       }
       case "insert_decoy": {
@@ -793,7 +808,7 @@ export class SimRacerScript {
           case "hasty":
             return n === 0 ? decoyClick : n === 1 ? noChange : realClick;
           default:
-            return [decoyClick, noChange, reload, decoyClick][n % 4];
+            return stubbornMove(n, [decoyClick, noChange, reload, decoyClick], realClick);
         }
       }
       case "temporary_disable": {
@@ -807,16 +822,10 @@ export class SimRacerScript {
         const wait: Move = {
           kind: "action",
           text: `wait for "${target}" to become enabled`,
-          signature: `wait:${target}`,
           reasoning: `"${target}" is greyed out, so I wait for it to become enabled.`,
           evidence: { target: primaryTarget(target) },
         };
-        const fillFirst: Move = {
-          kind: "action",
-          text: `fill in the rest of "${page.heading}" while "${target}" is disabled`,
-          reasoning: `"${target}" is disabled, so I complete the rest of the form first.`,
-          resolves: true,
-        };
+        const fillFirst = fillWhileDisabled(page);
         const recheck: Move = {
           kind: "action",
           text: "re-check the form for validation errors",
@@ -830,7 +839,7 @@ export class SimRacerScript {
           case "hasty":
             return n < 2 ? disabledClick : fillFirst;
           default:
-            return [disabledClick, wait, wait, recheck][n % 4];
+            return stubbornMove(n, [disabledClick, wait, wait, recheck], fillFirst);
         }
       }
       case "rename_control": {
@@ -866,7 +875,7 @@ export class SimRacerScript {
           case "hasty":
             return n < 2 ? missingClick : renamedClick;
           default:
-            return [search, missingClick, readCopy, missingClick][n % 4];
+            return stubbornMove(n, [search, missingClick, readCopy, missingClick], renamedClick);
         }
       }
       case "move_primary_action":
@@ -901,7 +910,7 @@ export class SimRacerScript {
           case "hasty":
             return n < 2 ? hiddenClick : openMoreOptions(target);
           default:
-            return [hiddenClick, scroll, footer, snapshot][n % 4];
+            return stubbornMove(n, [hiddenClick, scroll, footer, snapshot], openMoreOptions(target));
         }
       }
     }
@@ -916,6 +925,34 @@ function openMoreOptions(target: string): Move {
     evidence: { target: { role: MORE_ACTIONS_ROLE, text: MORE_ACTIONS_LABEL, decoy: false } },
     resolves: true,
   };
+}
+
+/** The bounded DOM repair that clears a blocking overlay, which has no Close control. */
+function modalRecovery(effect: string): Move {
+  return {
+    kind: "action",
+    text: "evaluate a bounded same-page DOM recovery helper",
+    reasoning: `The "${effect}" overlay blocks the page and waiting will not clear it, so I run the DOM recovery helper.`,
+    resolves: true,
+  };
+}
+
+/** Completing the rest of the form re-enables the disabled main control. */
+function fillWhileDisabled(page: SimPage): Move {
+  return {
+    kind: "action",
+    text: `fill in the rest of "${page.heading}" while "${page.target}" is disabled`,
+    reasoning: `"${page.target}" is disabled, so I complete the rest of the form first.`,
+    resolves: true,
+  };
+}
+
+/**
+ * A stubborn agent's attempt `n`: its misses first, then, because sabotage
+ * never reverts on its own, the move that gets past the hazard.
+ */
+function stubbornMove(n: number, misses: readonly Move[], fix: Move): Move {
+  return n < misses.length ? misses[n] : fix;
 }
 
 // ---------------------------------------------------------------------------
@@ -989,7 +1026,8 @@ export function runScriptOffline(options: OfflineRunOptions): OfflineRun {
 
   events.push({ t: 0, kind: "note", step: 0, text: `open ${script.page.url}`, idle: false, ...pageRef() });
   for (;;) {
-    if (script.pageDone) {
+    // As live, progress is claimed only once the page's hazard is cleared.
+    if (script.pageDone && hazard === null) {
       const at = t + verifyMs;
       if (at >= horizonMs) return result(null, null);
       if (script.onFinishPage) {
@@ -1065,18 +1103,23 @@ function fastestFinish(runs: readonly OfflineRun[]): number | null {
   return finishes.length > 0 ? Math.min(...finishes) : null;
 }
 
+/** Each round, a void fight's pages after the sabotage take this much longer. */
+const VOID_BOG_FACTOR = 1.8;
+
 /**
  * Offline runs for a seeded history fight, racer order. A normal fight is
  * sped up until its fastest agent finishes well before the cap (and, when
- * nobody finishes, the first agent's crash is dropped); a void fight is
- * slowed until nobody finishes before the cap. Step pace changes by
+ * nobody finishes, the first agent's crash is dropped). A void fight keeps
+ * its plan's pace up to the sabotage, which fires and is judged as usual,
+ * then the pages from the sabotaged one on bog every agent down until nobody
+ * finishes before the cap. (Slowing the whole fight instead would let agents
+ * reach the sabotage checkpoint after hazards froze, unhit.) Pace changes by
  * re-running the script: hazard durations are never rescaled, so scripted
  * hazard windows always match the engine's recovery.
  */
 export function scriptHistoryRuns(options: HistoryScriptOptions): OfflineRun[] {
   const horizonMs = options.capMs + 60_000;
-  let plans = [...options.plans];
-  const runAll = (): OfflineRun[] => plans.map((plan, index) => runScriptOffline({
+  const runAll = (plans: readonly RacerPlan[]): OfflineRun[] => plans.map((plan, index) => runScriptOffline({
     plan,
     template: options.template,
     seed: options.seeds[index] ?? `racer-${index + 1}`,
@@ -1085,22 +1128,41 @@ export function scriptHistoryRuns(options: HistoryScriptOptions): OfflineRun[] {
     horizonMs,
     maxSteps: options.maxSteps,
   }));
-  let runs = runAll();
-  if (!options.voided && runs.every((run) => run.finishAt === null)) {
+
+  if (options.voided) {
+    // The sabotage hits on the page after its checkpoint (stage index = checkpoint).
+    const bogFrom = options.sabotage[0]?.checkpoint ?? 0;
+    let runs = runAll(options.plans);
+    let factor = 1;
+    for (let attempt = 0; attempt < 8; attempt += 1) {
+      const fastest = fastestFinish(runs);
+      if (fastest === null || fastest >= options.capMs + 20_000) break;
+      factor *= VOID_BOG_FACTOR;
+      runs = runAll(options.plans.map((plan) => bogDown(plan, bogFrom, factor)));
+    }
+    return runs;
+  }
+
+  let plans = [...options.plans];
+  let runs = runAll(plans);
+  if (runs.every((run) => run.finishAt === null)) {
     plans = plans.map((plan, index) => (index === 0 ? { ...plan, failAtStep: null } : plan));
-    runs = runAll();
+    runs = runAll(plans);
   }
   for (let attempt = 0; attempt < 4; attempt += 1) {
     const fastest = fastestFinish(runs);
-    let factor = 1;
-    if (!options.voided && fastest !== null && fastest > options.capMs - 20_000) {
-      factor = (options.capMs - 50_000) / fastest;
-    } else if (options.voided && fastest !== null && fastest < options.capMs + 20_000) {
-      factor = (options.capMs + 30_000) / fastest;
-    }
-    if (factor === 1) break;
+    if (fastest === null || fastest <= options.capMs - 20_000) break;
+    const factor = (options.capMs - 50_000) / fastest;
     plans = plans.map((plan) => ({ ...plan, speed: plan.speed * factor }));
-    runs = runAll();
+    runs = runAll(plans);
   }
   return runs;
+}
+
+/** The plan with every page from `stage` on (the finish page included) `factor` times longer. */
+function bogDown(plan: RacerPlan, stage: number, factor: number): RacerPlan {
+  return {
+    ...plan,
+    stepsPerStage: plan.stepsPerStage.map((steps, index) => (index >= stage ? Math.ceil(steps * factor) : steps)),
+  };
 }
