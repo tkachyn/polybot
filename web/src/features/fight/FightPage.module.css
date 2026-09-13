@@ -106,8 +106,10 @@
     grid-row: 2;
   }
 
+  /* `auto`, not the desktop 0: the rail's row must take its content's height. */
   .rail {
     grid-row: 1;
+    min-height: auto;
     overflow: visible;
   }
 }

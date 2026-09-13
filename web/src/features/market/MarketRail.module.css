@@ -76,3 +76,11 @@
   color: var(--color-text);
   font-weight: var(--fw-semibold);
 }
+
+/* Phones: the rail stacks in the scrolling screen and takes its content's height. */
+@media (max-width: 759px) {
+  .rail {
+    height: auto;
+    overflow: visible;
+  }
+}
