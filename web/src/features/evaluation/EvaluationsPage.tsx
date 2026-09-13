@@ -189,11 +189,6 @@ export function EvaluationsPage() {
           ) : current || !error ? (
             <>
               <RobustnessMatrix rows={current ? current.rows : null} hazards={current ? current.hazards : []} />
-              <p className={styles.caption}>
-                The large number is the mean reaction score (0–100) over scored hits. The small line is survival (the share of scored hits after
-                which the agent progressed again: immune, recovered or deceived) and the number of scored hits; hover a cell for the counts. Cut-short
-                hits are not scored. A hazard gets a column once it has a scored hit. Rows are ordered by mean robustness, then success rate.
-              </p>
               <MethodNote />
             </>
           ) : (
