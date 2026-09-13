@@ -11,6 +11,8 @@ export type UserRecord = {
   userId: string;
   displayName: string;
   createdAt: number;
+  /** Internal market-liquidity bot, excluded from judge standings. */
+  automated: boolean;
 };
 
 export type UserChangeListener = (userIds: string[]) => void;
@@ -52,6 +54,7 @@ export class UserDirectory {
   ensure(
     request: EnsureUserRequest = {},
     now = Date.now(),
+    options: { automated?: boolean } = {},
   ): { user: UserRecord; created: boolean } {
     const { userId, displayName } = request ?? {};
     if (userId !== undefined && (typeof userId !== "string" || !USER_ID_PATTERN.test(userId))) {
@@ -74,6 +77,7 @@ export class UserDirectory {
       userId: id,
       displayName: name ?? defaultDisplayName(id),
       createdAt: now,
+      automated: options.automated ?? false,
     };
     this.users.set(id, user);
     if (this.options.startingBalance > 0) {

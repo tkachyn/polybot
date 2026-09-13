@@ -109,6 +109,7 @@ test("demo mode locks equal bankrolls and ranks judges in one fight", async () =
     const created = await app.inject({ method: "POST", url: "/api/users", payload: { userId, displayName } });
     assert.equal(created.json().account.balance, 100);
   }
+  app.registry.users.ensure({ userId: "market-bot", displayName: "Bot" }, Date.now(), { automated: true });
 
   const locked = await app.inject({
     method: "POST", url: "/api/users/judge-01/deposit", payload: { amount: 10, method: "virtual" },
@@ -118,6 +119,10 @@ test("demo mode locks equal bankrolls and ranks judges in one fight", async () =
   await app.inject({
     method: "POST", url: "/api/fights/race-demo/orders",
     payload: { userId: "judge-01", racerId: "racer-1", side: "yes", action: "buy", quantity: 8 },
+  });
+  await app.inject({
+    method: "POST", url: "/api/fights/race-demo/orders",
+    payload: { userId: "market-bot", racerId: "racer-3", side: "yes", action: "buy", quantity: 2 },
   });
   await app.inject({
     method: "POST", url: "/api/fights/race-demo/orders",

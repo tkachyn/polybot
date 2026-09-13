@@ -604,7 +604,7 @@ export function presentTraderLeaderboard(
   const byId = new Map(users.map((user) => [user.userId, user]));
   const rows = coordinator.market.traderUserIds().flatMap((userId) => {
     const user = byId.get(userId);
-    if (!user) return [];
+    if (!user || user.automated) return [];
     const entries = ledger.entries(userId).filter((entry) => entry.raceId === coordinator.raceId);
     const cost = entries.reduce((sum, entry) => entry.type === "buy" ? sum - entry.amount : sum, 0);
     const returned = entries.reduce((sum, entry) =>
