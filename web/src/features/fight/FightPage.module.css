@@ -95,7 +95,8 @@
   }
 }
 
-@media (max-width: 759px) {
+/* Below a viable two-column width, give both the market and arena the full viewport. */
+@media (max-width: 899px) {
   .screen {
     grid-template-rows: auto auto auto;
     overflow-y: auto;
