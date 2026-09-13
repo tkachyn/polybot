@@ -8,6 +8,7 @@
  */
 import { useEffect, useState, type ReactNode } from "react";
 import type {
+  AgentIdentity,
   FightAgentDetail,
   FightDetail,
   FightEvaluationPointer,
@@ -35,6 +36,7 @@ import {
   Tag,
   fightPillStatus,
   tableStyles,
+  type PillStatus,
 } from "../../components";
 import { cx } from "../../lib/cx";
 import { formatDateTime, formatDuration, formatFightNumber, formatLogTime, formatMoney, formatNumber, formatShares } from "../../lib/format";
@@ -105,34 +107,77 @@ function SettledHeader({ fight }: { fight: FightDetail }) {
   const duration = fight.startedAt !== null && fight.finishedAt !== null ? fight.finishedAt - fight.startedAt : null;
 
   return (
+    <ResultHeader
+      number={fight.number}
+      title={fight.title}
+      status={fightPillStatus(fight)}
+      pillLabel={fight.voided ? "Void" : undefined}
+      result={
+        fight.voided ? (
+          <ResultNote>Voided — no agent finished; positions refunded</ResultNote>
+        ) : winner ? (
+          <WinnerLine agent={winner.agent} />
+        ) : (
+          <ResultNote>Winner pending verification</ResultNote>
+        )
+      }
+      meta={[
+        { label: "Started", value: formatDateTime(fight.startedAt) },
+        { label: "Finished", value: formatDateTime(fight.finishedAt) },
+        { label: "Duration", value: formatDuration(duration) },
+        { label: "Volume", value: formatMoney(fight.volume, { decimals: 0 }) },
+        { label: "Traders", value: formatNumber(fight.traders) },
+      ]}
+    />
+  );
+}
+
+export type ResultHeaderProps = {
+  number: number;
+  title: string;
+  status: PillStatus;
+  /** Replaces the pill's text ("Void"). */
+  pillLabel?: string;
+  /** The winner (WinnerLine), or why there is none (ResultNote). */
+  result: ReactNode;
+  /** Figures under a rule, already formatted. */
+  meta: ReadonlyArray<{ label: string; value: string }>;
+};
+
+/** A finished fight's header: number and status, title, result, figures. Shared with ArchivedFight. */
+export function ResultHeader({ number, title, status, pillLabel, result, meta }: ResultHeaderProps) {
+  return (
     <header className={styles.header}>
       <div className={styles.headerTop}>
-        <span className={cx("label", "label-lg", "num")}>FIGHT {formatFightNumber(fight.number)}</span>
-        <StatusPill status={fightPillStatus(fight)} label={fight.voided ? "Void" : undefined} />
+        <span className={cx("label", "label-lg", "num")}>FIGHT {formatFightNumber(number)}</span>
+        <StatusPill status={status} label={pillLabel} />
       </div>
-      <h1 className={cx(styles.title, "clamp-2")} title={fight.title}>
-        {fight.title}
+      <h1 className={cx(styles.title, "clamp-2")} title={title}>
+        {title}
       </h1>
-      {fight.voided ? (
-        <p className={styles.voidLine}>Voided — no agent finished; positions refunded</p>
-      ) : winner ? (
-        <p className={styles.winner}>
-          <span className="label">Winner</span>
-          <AgentMonogram agent={winner.agent} size="sm" />
-          <span className={styles.winnerName}>{winner.agent.name}</span>
-        </p>
-      ) : (
-        <p className={styles.voidLine}>Winner pending verification</p>
-      )}
+      {result}
       <dl className={styles.meta}>
-        <MetaItem label="Started" value={formatDateTime(fight.startedAt)} />
-        <MetaItem label="Finished" value={formatDateTime(fight.finishedAt)} />
-        <MetaItem label="Duration" value={formatDuration(duration)} />
-        <MetaItem label="Volume" value={formatMoney(fight.volume, { decimals: 0 })} />
-        <MetaItem label="Traders" value={formatNumber(fight.traders)} />
+        {meta.map(({ label, value }) => (
+          <MetaItem key={label} label={label} value={value} />
+        ))}
       </dl>
     </header>
   );
+}
+
+export function WinnerLine({ agent }: { agent: AgentIdentity }) {
+  return (
+    <p className={styles.winner}>
+      <span className="label">Winner</span>
+      <AgentMonogram agent={agent} size="sm" />
+      <span className={styles.winnerName}>{agent.name}</span>
+    </p>
+  );
+}
+
+/** The result line when there is no winner to show. */
+export function ResultNote({ children }: { children: ReactNode }) {
+  return <p className={styles.voidLine}>{children}</p>;
 }
 
 function MetaItem({ label, value }: { label: string; value: string }) {

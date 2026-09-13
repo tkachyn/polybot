@@ -3,8 +3,9 @@
  * reacted to each sabotage hit (GET /api/fights/:raceId/evaluation, refetched
  * when the fight's evaluation pointer changes).
  *
- * Rendered near the top of the resolved-fight screen (features/settled). It
- * renders no Page of its own.
+ * Rendered near the top of the resolved-fight screen (features/settled), and
+ * as EvaluationReportView by the screen for a fight that has left the lobby,
+ * which loads the evaluation itself. It renders no Page of its own.
  */
 import { useId, useMemo, type MouseEvent, type ReactNode } from "react";
 import type { AgentEvaluation, EvaluatedSabotageStep, FightEvaluation, FightEvaluationPointer, ReactionLabel } from "@contract";
@@ -18,7 +19,7 @@ import { EvaluationStatusChip, OutcomeChip, ReactionChip } from "./Chip";
 import { evaluationDisplayStatus, robustnessView, sabotageStepMeta, sabotageStepTitle } from "./format";
 import { REACTION_TONE } from "./tones";
 import { Disclosure } from "./TraceTables";
-import { useFightEvaluation } from "./useFightEvaluation";
+import { useFightEvaluation, type FightEvaluationState } from "./useFightEvaluation";
 import styles from "./EvaluationReport.module.css";
 
 /** The contract caps findings at six; the UI enforces it too. */
@@ -34,14 +35,39 @@ export type EvaluationReportProps = {
 };
 
 export function EvaluationReport({ raceId, pointer, resolved = false, className }: EvaluationReportProps) {
-  const { evaluation, status, error, updating, reload } = useFightEvaluation(raceId, pointer);
+  const state = useFightEvaluation(raceId, pointer);
+  return <EvaluationReportView state={state} resolved={resolved} className={className} />;
+}
+
+export type EvaluationReportViewProps = {
+  /** The evaluation and its load state, from useFightEvaluation. */
+  state: FightEvaluationState;
+  /** The fight has resolved: a provisional evaluation then reads "Finalizing", never "Provisional". */
+  resolved?: boolean;
+  /** The fight has left the lobby: its keyframes and replay are no longer served. */
+  archived?: boolean;
+  className?: string;
+};
+
+/** The report for an evaluation the caller loads (see useFightEvaluation). */
+export function EvaluationReportView({ state, resolved = false, archived = false, className }: EvaluationReportViewProps) {
+  const { evaluation, status, error, updating, reload } = state;
   const baseId = useId().replace(/:/g, "");
   const headingId = `${baseId}-title`;
 
   let body;
   if (status === "ready" && evaluation) {
     body = (
-      <ReportBody evaluation={evaluation} baseId={baseId} headingId={headingId} updating={updating} error={error} onRetry={reload} resolved={resolved} />
+      <ReportBody
+        evaluation={evaluation}
+        baseId={baseId}
+        headingId={headingId}
+        updating={updating}
+        error={error}
+        onRetry={reload}
+        resolved={resolved}
+        archived={archived}
+      />
     );
   } else if (status === "not_found") {
     body = (
@@ -135,9 +161,10 @@ type ReportBodyProps = {
   error: unknown;
   onRetry: () => void;
   resolved: boolean;
+  archived: boolean;
 };
 
-function ReportBody({ evaluation, baseId, headingId, updating, error, onRetry, resolved }: ReportBodyProps) {
+function ReportBody({ evaluation, baseId, headingId, updating, error, onRetry, resolved, archived }: ReportBodyProps) {
   const visuals = useMemo(() => rosterVisuals(evaluation.agents.map((a) => a.agent)), [evaluation.agents]);
   const sectionIds = evaluation.agents.map((_, i) => `${baseId}-agent-${i + 1}`);
   const simulated = evaluation.mode === "simulated";
@@ -192,6 +219,7 @@ function ReportBody({ evaluation, baseId, headingId, updating, error, onRetry, r
               visual={visuals[i] ?? rosterVisuals([agent.agent])[0]!}
               startedAt={evaluation.startedAt}
               mode={evaluation.mode}
+              archived={archived}
               id={sectionIds[i] ?? `${baseId}-agent-${i + 1}`}
             />
           ))}

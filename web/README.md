@@ -39,7 +39,7 @@ Routes:
 | --- | --- |
 | `/` | `features/home/HomePage` (`HomePage`) |
 | `/resolved` | `features/resolved/ResolvedPage` (`ResolvedPage`) |
-| `/fights/:raceId` | `features/fight/FightRoute` (`FightRoute`), renders `features/settled/SettledFight` (with `features/evaluation/EvaluationReport`) for resolved fights and `features/market/MarketRail` in the rail |
+| `/fights/:raceId` | `features/fight/FightRoute` (`FightRoute`), renders `features/settled/SettledFight` (with `features/evaluation/EvaluationReport`) for resolved fights and `features/market/MarketRail` in the rail. A fight no longer in the lobby (pruned, or lost to a restart) falls back to `features/settled/ArchivedFight`: its stored final evaluation, read-only (`features/fight/route.ts`) |
 | `/portfolio` | `features/portfolio/PortfolioPage` (`PortfolioPage`) |
 | `/wallet` | `features/wallet/WalletPage` (`WalletPage`), `?tab=deposit\|withdraw` |
 | `/leaderboard` | `features/leaderboard/LeaderboardPage` (`LeaderboardPage`) |
