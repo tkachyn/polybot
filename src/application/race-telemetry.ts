@@ -133,7 +133,7 @@ export type StepRecord = {
   /** When the prompt was sent (after any rate-limit pause); null in older records. */
   promptedAt: number | null;
   decidedAt: number | null;
-  /** Rate-limit pause before the prompt was sent; 0 when none. */
+  /** Rate-limit pause before the prompt was sent, any wait to retry a provider error included; 0 when none. */
   rateLimitWaitMs: number;
   url: string | null;
   /** Human description, already redacted. */

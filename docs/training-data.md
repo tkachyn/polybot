@@ -46,12 +46,12 @@ Each `steps.jsonl` line contains:
 - **What the model saw:** `observation` holds the URL, title, page text (up to 8,000 characters) and every control with its label, visibility and disabled state. `screenshot` is the bundle path of the image.
 - **What it did:** `action`, the exact tool call. It is one of inspect, click, type, evaluate (its own DOM repair script), navigate, wait, checkpoint or finish, with the target role, the label and the typed text.
 - **Why:** `reasoning`, the model's one-sentence reason.
-- **How the call went:** `decisionIssue` is null when the model gave one valid tool call on the first try. Otherwise `malformedAttempts` counts its malformed payloads (the provider is asked once more after the first), and `fallback: true` marks a step where it never gave a usable call and the runner inspected the page instead. That action is the runner's, not the model's.
+- **How the call went:** `decisionIssue` is null when the model gave one valid tool call on the first try. Otherwise `malformedAttempts` counts its malformed payloads and replies without the tool call (the provider is asked once more after the first), and `fallback: true` marks a step where it never gave a usable call and the runner inspected the page instead. That action is the runner's, not the model's.
 - **What happened:** `result` records whether the action succeeded; whether it was blocked by a modal, a disabled, hidden or missing control, or a timeout; whether it clicked a decoy; whether it navigated; whether it cleared a sabotage; whether verified progress or the finish followed; the element it hit; and the cursor position.
 - **Context:**
   - `hazard`: the sabotage in effect, which the agent could not see
   - `progress`: checkpoints cleared so far, and the next checkpoint's label
-  - `timing`: when the step was observed, prompted (after any rate-limit pause), decided and acted; the rate-limit pause; and the model's latency, from prompt to answer
+  - `timing`: when the step was observed, prompted (after any rate-limit pause), decided and acted; the rate-limit pause, including any wait to retry a provider error; and the model's latency, from prompt to answer
 - **Steel:** the browser events between this step's decision and the next.
 - **Labels:** `quality` is one of progress, neutral, wasted or harmful. `reaction` is the sabotage reaction, when the step fell inside a sabotage window.
 
@@ -88,7 +88,7 @@ Every rule is deterministic, and all times are epoch ms.
   | neutral | Anything else |
 
 - **Steel slice:** Steel events between this step's decision and the next step's decision.
-- **SFT:** steps from won or finished episodes, with quality progress or neutral, that have both an observation and an action and whose tool call was the model's own first try (no `decisionIssue`). Steps that typed into a password field are left out. The user message is exactly what the model received at runtime.
+- **SFT:** steps from won or finished episodes, with quality progress or neutral, that have both an observation and an action and whose tool call was the model's own first try (no `decisionIssue`). Steps that typed into a password field are left out. The user message is exactly what the model received at runtime, including the errors and runner feedback in its history, such as the note after three inspects in a row of an unchanged page.
 - **Preferences:**
   - *Self-correction:* inside one racer's sabotage window, its first harmful step against its first later step that progressed or cleared the trap.
   - *Cross-agent:* on the same trap, each racer's first decisive step. Racers that got it right are paired with racers that got it wrong, and the prompt is the failing racer's view.

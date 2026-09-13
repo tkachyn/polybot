@@ -105,13 +105,20 @@ racer-4: google/gemini-3.7-flash
 
 `RACE_LLM_BUDGET_USD` is a shared software stop for all model calls in one race; `GET /races/:raceId` reports it as `llmUsage` and the per-racer models as `competitors`. Keep a separate hard credit limit on the OpenRouter API key because a few concurrent in-flight calls can finish after the software limit is reached.
 
-Competitor calls use a bounded retry policy for provider rate limits, 5xx
-responses and transport timeouts. `OPENROUTER_MODEL_MAX_CALLS_PER_MINUTE`
-(default `20`) and `OPENROUTER_MODEL_RATE_WINDOW_MS` (default `60000`) are
-applied independently to every configured model. `COMPETITOR_LLM_MAX_OUTPUT_TOKENS`
-(default `512`) gives reasoning models enough room to produce the required
-browser-action tool call. A provider retry or rate-limit pause does not consume
-a browser action; the live log reports it as a model-provider pause.
+Competitor calls retry transient provider failures: a rate limit (429), a 408 or
+5xx response, or a dropped or timed-out connection. Each retry waits at least the
+provider's `Retry-After` or rate-limit reset time, and otherwise backs off from
+1 s, with at most 30 s of back-off before the provider answers again. Auth and
+credit errors and a spent budget get no paced retry: they count as ordinary
+decision failures, and three in a row end the racer. A reply without the required
+tool call is asked for once more with `tool_choice: "required"`; if it still has
+none, the racer inspects the page that turn instead of stopping.
+`OPENROUTER_MODEL_MAX_CALLS_PER_MINUTE` (default `20`) and
+`OPENROUTER_MODEL_RATE_WINDOW_MS` (default `60000`) are applied independently to
+every configured model. `COMPETITOR_LLM_MAX_OUTPUT_TOKENS` (default `512`) gives
+reasoning models enough room to produce the required browser-action tool call. A
+provider retry or rate-limit pause does not consume a browser action; the live log
+reports it as a model-provider pause.
 
 `STEEL_API_KEYS` accepts a comma-separated list. New sessions rotate to the next key when Steel rejects the current key for authentication, credits, quota or rate limits. Live sessions retain the key that created them.
 

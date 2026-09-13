@@ -873,7 +873,7 @@ export type DatasetStep = {
     promptedAt: number | null;
     decidedAt: number | null;
     actedAt: number;
-    /** Rate-limit pause before the prompt was sent; 0 when none. */
+    /** Rate-limit pause before the prompt was sent, any wait to retry a provider error included; 0 when none. */
     rateLimitWaitMs: number;
     /** decidedAt - promptedAt (decidedAt - observedAt in records without promptedAt). */
     modelLatencyMs: number | null;

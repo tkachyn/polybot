@@ -93,7 +93,7 @@ export type AgentActionReport = {
   decidedAt?: number;
   /** When the prompt was sent: after the screenshot and any rate-limit pause. */
   promptedAt?: number;
-  /** How long the provider's rate limit held the prompt back. */
+  /** How long rate limits, and waits to retry a provider error, held the prompt back. */
   rateLimitWaitMs?: number;
   /** Set when the decision was not one valid tool call on the first try. */
   decisionIssue?: DecisionIssue;

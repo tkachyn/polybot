@@ -98,12 +98,24 @@ a registry-backed recovery helper. CDP commands for one racer are serialized thr
 default 20). The model returns one `AgentDecision` at a time via a forced tool call; parsing
 goes through `parseAgentDecision`. Actions are deliberately narrow: clicks and typing resolve
 only through `data-arena-role`, navigation is same-origin-only, and waits are rejected while
-a disruption is active. OpenRouter tool JSON gets one bounded repair retry, then malformed
-competitor output becomes a safe `inspect` turn. The shared default sliding-window limit is
-20 calls per 60 seconds for `openai/gpt-5.6-luna`; models without a configured entry remain
-unlimited. The runner reports a visible pause note and resumes when capacity opens. All four
-racers share one `OpenRouterUsageBudget` (`RACE_LLM_BUDGET_USD`) that is a soft stop —
-in-flight calls can overshoot it, so keep a hard limit on the OpenRouter key too.
+a disruption is active. OpenRouter tool JSON gets one bounded repair retry, and a reply
+without the tool call is asked for once more with `tool_choice: "required"`; after that the
+turn becomes a safe `inspect` marked `decisionIssue.fallback`. From the third `inspect` in a
+row of an unchanged page, that step's history entry (and its `modelError`) tells the model to
+act; the step stays an action.
+
+Every configured competitor model gets its own sliding window
+(`OPENROUTER_MODEL_MAX_CALLS_PER_MINUTE`, default 20 per 60 s); the limiter's own defaults
+cover `openai/gpt-5.6-luna` and `anthropic/claude-haiku-4.5`, keyed by the configured id in
+any case. A 429, 408, 5xx or dropped connection becomes a `DecisionRetryError`:
+`prepareForCall` waits out the Retry-After or reset hint, else backs off from 1 s, for at
+most 30 s before the provider answers again. The runner notes each pause and adds it to the
+step's `rateLimitWaitMs`; paced retries never count against its decision-failure limits (3 in
+a row, 6 per run). Auth errors, a spent budget and aborts get no paced retry (the first two
+end the racer through those limits), and the SDK's own silent retries are off for
+competitor calls. All four racers share one
+`OpenRouterUsageBudget` (`RACE_LLM_BUDGET_USD`) that is a soft stop — in-flight calls can
+overshoot it, so keep a hard limit on the OpenRouter key too.
 `src/agents/anthropic-models.ts` is a retained direct-provider alternative to the OpenRouter
 adapters and is not wired into the production factory.
 
