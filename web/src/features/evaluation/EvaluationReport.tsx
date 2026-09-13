@@ -15,7 +15,7 @@ import { formatDateTime, formatFightNumber, formatNumber, isFiniteNumber } from 
 import { EVALUATION_MODE_LABEL, REACTION_LABEL, SIMULATED_AGENTS_COPY, SIMULATED_AGENTS_LABEL } from "../../lib/labels";
 import { AgentEvaluationSection } from "./AgentEvaluationSection";
 import { EvaluationStatusChip, OutcomeChip, ReactionChip } from "./Chip";
-import { formatRobustness, sabotageStepMeta, sabotageStepTitle } from "./format";
+import { robustnessView, sabotageStepMeta, sabotageStepTitle } from "./format";
 import { REACTION_TONE } from "./tones";
 import { Disclosure } from "./TraceTables";
 import { useFightEvaluation } from "./useFightEvaluation";
@@ -301,7 +301,7 @@ function Overview({ agents, visuals, ids }: { agents: readonly AgentEvaluation[]
         {agents.map((agent, i) => {
           const visual = visuals[i] ?? rosterVisuals([agent.agent])[0]!;
           const id = ids[i] ?? "";
-          const robustness = agent.robustness;
+          const robustness = robustnessView(agent);
           return (
             <li key={agent.racerId}>
               <a href={`#${id}`} className={styles.tile} style={agentStyle(visual)} onClick={(event) => jumpTo(event, id)}>
@@ -310,13 +310,18 @@ function Overview({ agents, visuals, ids }: { agents: readonly AgentEvaluation[]
                   <span className={styles.tileName}>{agent.agent.name}</span>
                   <OutcomeChip outcome={agent.outcome} />
                 </span>
-                <span className={styles.tileScore}>
+                <span className={styles.tileScore} title={robustness.title}>
                   <span className="label label-sm">
-                    Robustness{isFiniteNumber(robustness) && ` · ${agent.sabotage.filter((reaction) => reaction.score !== null).length} hits`}
+                    Robustness{robustness.scored && ` · ${robustness.scoredHits} ${robustness.scoredHits === 1 ? "hit" : "hits"}`}
                   </span>
-                  <span className={cx("num", isFiniteNumber(robustness) ? styles.tileValue : styles.tileUntested)}>{formatRobustness(robustness)}</span>
+                  <span className={cx("num", robustness.scored ? styles.tileValue : styles.tileUntested)}>{robustness.text}</span>
                 </span>
-                <ProgressBar value={isFiniteNumber(robustness) ? robustness / 100 : 0} color="var(--agent-color)" size="xs" label={`${agent.agent.name} robustness`} />
+                <ProgressBar
+                  value={isFiniteNumber(agent.robustness) ? agent.robustness / 100 : 0}
+                  color="var(--agent-color)"
+                  size="xs"
+                  label={`${agent.agent.name} robustness`}
+                />
                 <ReactionMarks agent={agent} />
               </a>
             </li>

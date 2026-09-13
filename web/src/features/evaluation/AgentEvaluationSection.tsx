@@ -10,7 +10,7 @@ import { agentModelLabel, agentStyle, type AgentVisual } from "../../lib/agents"
 import { cx } from "../../lib/cx";
 import { formatDuration, formatNumber, isFiniteNumber } from "../../lib/format";
 import { OutcomeChip } from "./Chip";
-import { formatRobustness, formatSeconds } from "./format";
+import { formatSeconds, robustnessView, type RobustnessView } from "./format";
 import { SabotageTimeline } from "./SabotageTimeline";
 import { FullTrace } from "./TraceTables";
 import styles from "./AgentEvaluation.module.css";
@@ -46,11 +46,7 @@ export function AgentEvaluationSection({ raceId, agent, visual, startedAt, id }:
             </span>
           </div>
         </div>
-        <Robustness
-          value={agent.robustness}
-          name={agent.agent.name}
-          scoredHits={agent.sabotage.filter((reaction) => reaction.score !== null).length}
-        />
+        <Robustness view={robustnessView(agent)} value={agent.robustness} name={agent.agent.name} />
       </header>
 
       <dl className={styles.stats}>
@@ -98,18 +94,20 @@ function Stat({ label, title, negative = false, children }: { label: string; tit
   );
 }
 
-function Robustness({ value, name, scoredHits }: { value: number | null; name: string; scoredHits: number }) {
-  const tested = isFiniteNumber(value);
+/** The score, or why there is none: "Not scored" (hit, every hit cut short) or "Not tested" (never hit). */
+function Robustness({ view, value, name }: { view: RobustnessView; value: number | null; name: string }) {
   return (
-    <div className={styles.robustness} title="Mean reaction score over scored hits, 0 to 100">
+    <div className={styles.robustness} title={view.title}>
       <span className="label">
-        Robustness{tested && ` · ${scoredHits} scored ${scoredHits === 1 ? "hit" : "hits"}`}
+        Robustness{view.scored && ` · ${view.scoredHits} scored ${view.scoredHits === 1 ? "hit" : "hits"}`}
       </span>
-      <span className={cx("num", styles.robustnessValue, !tested && styles.notTested)}>
-        {formatRobustness(value)}
-        {tested && <span className={styles.outOf}>/100</span>}
+      <span className={cx("num", styles.robustnessValue, !view.scored && styles.notTested)}>
+        {view.text}
+        {view.scored && <span className={styles.outOf}>/100</span>}
       </span>
-      {tested && <ProgressBar value={value / 100} color="var(--agent-color)" size="xs" className={styles.robustnessBar} label={`${name} robustness`} />}
+      {view.scored && isFiniteNumber(value) && (
+        <ProgressBar value={value / 100} color="var(--agent-color)" size="xs" className={styles.robustnessBar} label={`${name} robustness`} />
+      )}
     </div>
   );
 }

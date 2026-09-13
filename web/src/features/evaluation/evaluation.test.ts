@@ -17,6 +17,7 @@ import {
   formatSeconds,
   formatSurvival,
   matrixCellView,
+  robustnessView,
   sabotageStepMeta,
   sabotageStepTitle,
 } from "./format";
@@ -146,9 +147,35 @@ describe("scores and survival", () => {
     expect(formatScore(Number.NaN)).toBe(EMPTY);
   });
 
-  it("reads a null robustness as not tested", () => {
+  it("reads a null robustness as not scored when the agent was hit, not tested when it never was", () => {
     expect(formatRobustness(null)).toBe("Not tested");
+    expect(formatRobustness(null, 1)).toBe("Not scored");
     expect(formatRobustness(62.6)).toBe("63");
+    expect(formatRobustness(62.6, 2)).toBe("63");
+  });
+
+  it("explains a missing robustness: cut-short hits are not scored, an unhit agent is not tested", () => {
+    const cut = { ...hit(1, 100, "cut_short"), score: null };
+    expect(robustnessView({ robustness: null, sabotage: [cut] })).toEqual({
+      text: "Not scored",
+      scored: false,
+      scoredHits: 0,
+      title: "Hit, but cut short: the fight ended too soon after the hit to judge it, so it wasn’t scored.",
+    });
+    expect(robustnessView({ robustness: null, sabotage: [cut, { ...cut, stepId: "step-2" }] }).title).toMatch(/^Hit 2 times, all cut short/);
+    expect(robustnessView({ robustness: null, sabotage: [] })).toEqual({
+      text: "Not tested",
+      scored: false,
+      scoredHits: 0,
+      title: "Never hit by sabotage, so robustness was not tested.",
+    });
+    // A cut-short hit beside a scored one: scored, over the one scored hit.
+    expect(robustnessView({ robustness: 80, sabotage: [hit(1, 100), cut] })).toEqual({
+      text: "80",
+      scored: true,
+      scoredHits: 1,
+      title: "Mean reaction score over 1 scored hit, 0 to 100.",
+    });
   });
 
   it("formats survival as a whole percent", () => {

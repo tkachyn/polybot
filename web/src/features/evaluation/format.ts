@@ -2,9 +2,9 @@
  * Pure formatters for the evaluation report and the robustness matrix. Like
  * lib/format, every function accepts null/undefined/NaN and returns "—".
  */
-import type { EvaluatedSabotageStep, RobustnessCell } from "@contract";
+import type { AgentEvaluation, EvaluatedSabotageStep, RobustnessCell } from "@contract";
 import { EMPTY, MINUS, formatClock, formatDuration, formatLogTime, formatNumber, formatPercent, isFiniteNumber, roundTo, type Numeric } from "../../lib/format";
-import { HAZARD_LABEL, REACTION_LABEL, ROBUSTNESS_NOT_TESTED, SABOTAGE_TIER_LABEL } from "../../lib/labels";
+import { HAZARD_LABEL, REACTION_LABEL, ROBUSTNESS_NOT_SCORED, ROBUSTNESS_NOT_TESTED, SABOTAGE_TIER_LABEL } from "../../lib/labels";
 
 /** Reaction or robustness score (0–100), rounded to a whole number: 74.6 → "75". */
 export function formatScore(score: Numeric): string {
@@ -12,9 +12,43 @@ export function formatScore(score: Numeric): string {
   return String(Math.round(Math.min(100, Math.max(0, score))));
 }
 
-/** Robustness figure; "Not tested" when the agent was never hit (null). */
-export function formatRobustness(robustness: Numeric): string {
-  return isFiniteNumber(robustness) ? formatScore(robustness) : ROBUSTNESS_NOT_TESTED;
+/**
+ * Robustness figure. Without a score (null): "Not scored" when the agent was
+ * hit (`hits` > 0) but every hit was cut short, "Not tested" when it was
+ * never hit.
+ */
+export function formatRobustness(robustness: Numeric, hits = 0): string {
+  if (isFiniteNumber(robustness)) return formatScore(robustness);
+  return hits > 0 ? ROBUSTNESS_NOT_SCORED : ROBUSTNESS_NOT_TESTED;
+}
+
+export type RobustnessView = {
+  /** "74", "Not scored" or "Not tested". */
+  text: string;
+  /** A score exists. */
+  scored: boolean;
+  /** Hits that carry a score (cut-short hits don't). */
+  scoredHits: number;
+  /** Tooltip: what the figure rests on, or why there is none. */
+  title: string;
+};
+
+/** An agent's robustness: its score over scored hits, or why it has none. */
+export function robustnessView(agent: Pick<AgentEvaluation, "robustness" | "sabotage">): RobustnessView {
+  const hits = agent.sabotage.length;
+  const scoredHits = agent.sabotage.filter((reaction) => reaction.score !== null).length;
+  const text = formatRobustness(agent.robustness, hits);
+  if (isFiniteNumber(agent.robustness)) {
+    return { text, scored: true, scoredHits, title: `Mean reaction score over ${plural(scoredHits, "scored hit", "scored hits")}, 0 to 100.` };
+  }
+  if (hits > 0) {
+    const title =
+      hits === 1
+        ? "Hit, but cut short: the fight ended too soon after the hit to judge it, so it wasn’t scored."
+        : `Hit ${formatNumber(hits)} times, all cut short: the fight ended too soon after each hit to judge it, so none was scored.`;
+    return { text, scored: false, scoredHits: 0, title };
+  }
+  return { text, scored: false, scoredHits: 0, title: "Never hit by sabotage, so robustness was not tested." };
 }
 
 /** Survival rate as a whole percent: 0.8333 → "83%". */

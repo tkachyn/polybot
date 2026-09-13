@@ -157,6 +157,9 @@ export const EVALUATION_MODE_LABEL: Readonly<Record<ServerMode | "all", string>>
 /** Robustness when the agent was never hit. */
 export const ROBUSTNESS_NOT_TESTED = "Not tested";
 
+/** Robustness when the agent was hit, but every hit was cut short, so none was scored. */
+export const ROBUSTNESS_NOT_SCORED = "Not scored";
+
 /** Badge and note for evaluations of scripted (simulated) agents. */
 export const SIMULATED_AGENTS_LABEL = "Simulated agents";
 export const SIMULATED_AGENTS_COPY = "Simulated agents are scripted, not real models. These results test the pipeline; they don’t rank models.";
