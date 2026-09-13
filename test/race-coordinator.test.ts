@@ -183,6 +183,15 @@ test("ends and releases the race when every runner fails", async () => {
   assert.equal(coordinator.engine.race.status, "timed_out");
   assert.equal(coordinator.market.status, "unresolved");
   assert.equal(sessions.released, true);
+
+  // The event keeps the raw reason for diagnostics; the agent's log reads as a cause.
+  const failed = coordinator.engine.events.find((event) =>
+    event.type === "racer_failed" && event.racerId === "racer-1");
+  assert.equal(failed?.metadata?.reason, "runner exited");
+  const log = coordinator.racerTelemetry("racer-1").log.map((entry) => entry.text);
+  assert.ok(log.includes("Failed: stopped when its agent quit early"), log.join(" | "));
+  assert.ok(log.includes("Stopped: every agent failed"), log.join(" | "));
+  assert.ok(log.every((text) => !text.includes("runner exited") && !text.includes("all_racers_failed")));
 });
 
 test("freezes trading at three minutes but keeps racers active", async () => {

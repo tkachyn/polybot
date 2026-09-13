@@ -13,6 +13,7 @@ import type {
 import { captureFightDataset, type FightCaptureInput } from "../dataset/capture.js";
 import type { DatasetStore } from "../dataset/store.js";
 import { DomainError } from "../domain/errors.js";
+import { closeReasonText, failureCause } from "../domain/failure-reasons.js";
 import { RaceEngine } from "../domain/race-engine.js";
 import {
   DEFAULT_SABOTAGE_CHECKPOINT,
@@ -1340,10 +1341,7 @@ export class RaceCoordinator {
         return;
       case "race_timed_out": {
         this.closedAtValue ??= at;
-        const reason = String(metadata.reason ?? "absolute_deadline");
-        const text = reason === "absolute_deadline"
-          ? "Timed out at the safety cap"
-          : `Stopped: ${reason}`;
+        const text = closeReasonText(String(metadata.reason ?? "absolute_deadline"));
         for (const racer of this.engine.racers.values()) {
           if (racer.status === "timed_out") {
             this.telemetry.appendLog(racer.racerId, { kind: "status", text, at });
@@ -1401,14 +1399,17 @@ export class RaceCoordinator {
         this.market.adjustConfidence(racerId, CONFIDENCE_SIGNALS.recovery * liquidity);
         return;
       }
-      case "racer_failed":
+      case "racer_failed": {
+        // The event keeps the raw reason for diagnostics; the log shows a readable cause.
+        const cause = failureCause(typeof metadata.reason === "string" ? metadata.reason : null);
         this.telemetry.appendLog(racerId, {
           kind: "status",
-          text: `Failed: ${String(metadata.reason ?? "unknown error")}`,
+          text: `Failed: ${cause ?? "stopped after an unexpected error"}`,
           at,
         });
         this.market.collapse(racerId);
         return;
+      }
       case "racer_finished":
         this.telemetry.appendLog(racerId, {
           kind: "status",

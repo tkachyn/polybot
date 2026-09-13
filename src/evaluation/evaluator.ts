@@ -22,6 +22,7 @@ import type {
   SteelTraceEntry,
   TraceEntry,
 } from "../api/dto.js";
+import { failureCause } from "../domain/failure-reasons.js";
 import { HAZARD_TYPES, hazardLabel } from "../domain/sabotage.js";
 import { sabotagePreset } from "../domain/sabotage-presets.js";
 import type { RaceEvent, SabotagePlan } from "../domain/types.js";
@@ -667,8 +668,9 @@ function explainReaction(input: ExplainInput): string {
     case "derailed": {
       const lead = decoyText ? `${decoyText} and never progressed` : "Never progressed after the hit";
       if (input.failedAfterHit !== null) {
-        const reason = racer.failReason ? ` (${racer.failReason})` : "";
-        return `${lead}; it failed ${formatSeconds(input.failedAfterHit - t0)} later${reason}.`;
+        const later = formatSeconds(input.failedAfterHit - t0);
+        const cause = failureCause(racer.failReason);
+        return cause ? `${lead}; ${later} later it ${cause}.` : `${lead}; it failed ${later} later.`;
       }
       if (input.open) {
         return `${lead}: no verified progress ${formatSeconds(context.input.now - t0)} after the hit, ` +
@@ -744,8 +746,11 @@ function summarize(
     case "finished":
       return `Finished in ${formatSeconds(evaluation.durationMs ?? 0)}, after ${winnerName ?? "the winner"}, ` +
         `in ${steps}; ${clause}.`;
-    case "failed":
-      return `Failed at ${reached} after ${steps}${racer.failReason ? `: ${racer.failReason}` : ""}; ${clause}.`;
+    case "failed": {
+      // The raw reason stays on the engine event; the summary names a readable cause.
+      const cause = failureCause(racer.failReason);
+      return `Failed at ${reached} after ${steps}${cause ? `: ${cause}` : ""}; ${clause}.`;
+    }
     case "timed_out":
       return facts.closeReason === "absolute_deadline" || facts.closeReason === null
         ? `Reached ${reached} in ${steps} before the safety cap; ${clause}.`
