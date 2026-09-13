@@ -23,9 +23,10 @@ web/src
   main.tsx              fonts + styles, BrowserRouter, SessionProvider, FightsProvider
   App.tsx               routes (layout route = AppShell)
   app/                  ErrorBoundary, NotFoundPage
-  api/client.ts         typed fetch wrappers for every endpoint, ApiFailure, stream URLs
-  api/stream.ts         useEventStream (SSE), openEventStream, combineStreamStatus
-  state/                session, fights lobby, fight detail, clock, search, resources, media, storage
+  api/client.ts         typed fetch wrappers for every endpoint, ApiFailure, request timeouts, stream URLs
+  api/stream.ts         useEventStream (SSE), openEventStream, heartbeat watchdog, stream registry
+  state/                session, fights lobby, fight detail, REST polling fallback, connection health,
+                        clock, search, resources, media, storage
   lib/                  pure helpers: format, order, agents, labels, cx, id, backoff
   components/           shared primitives (barrel: components/index.ts)
   styles/tokens.css     design tokens (the only place colours are defined)
@@ -101,9 +102,24 @@ Global utilities (`styles/global.css`): `.num`, `.label`, `.label-sm`, `.label-l
 
 ### `api/client.ts`
 
-Every wrapper takes an optional trailing `signal?: AbortSignal`, updates the
-server clock from `serverTime`, and throws `ApiFailure` on failure (aborts
-rethrow the AbortError; test with `isAbortError`).
+Every wrapper takes an optional trailing `signal?: AbortSignal` (or
+`{ signal?, timeoutMs? }`), updates the server clock from `serverTime`, and
+throws `ApiFailure` on failure (aborts rethrow the AbortError; test with
+`isAbortError`).
+
+**Timeouts and unconfirmed writes.** Every request gives up after
+`DEFAULT_REQUEST_TIMEOUT_MS` (15 s, body included; per call `{ timeoutMs }`,
+0 disables) and throws `ApiFailure` with code `"timeout"`
+(`isApiFailure(err, "timeout")`, `err.isTimeout`). A write that times out,
+loses its body mid-read or gets a gateway 504 may still have been applied, so
+it also has `unconfirmed: true` (`isUnconfirmed(err)`). **Never show an
+unconfirmed write as failed.** `describeError(err)` returns what to check
+instead: `ORDER_UNCONFIRMED_MESSAGE` for orders ("We couldn’t confirm your
+order; check Portfolio before placing it again."), `TRANSFER_UNCONFIRMED_MESSAGE`
+for deposits and withdrawals. The session re-reads balance and positions by
+itself after every unconfirmed write (`onUnconfirmedRequest`), so a slip only
+has to say so. Resending an order with the same `clientOrderId` is safe: the
+server returns the original receipt if the first attempt filled.
 
 | Export | Signature |
 | --- | --- |
@@ -127,10 +143,12 @@ rethrow the AbortError; test with `isAbortError`).
 | `datasetFileUrl` | `(file: DatasetFile \| "manifest", params?: DatasetQuery) => string`: one dataset file, `/api/datasets/{file}.jsonl` or `/api/datasets/manifest.json` |
 | `fightsStreamUrl` / `fightStreamUrl(raceId)` / `userStreamUrl(userId)` | SSE URLs |
 | `api` | all of the above as one object |
-| `request<T>` | `(path, { method?, body?, query?, signal? }) => Promise<T>` low level |
-| `ApiFailure` | `class extends Error { code: ApiFailureCode; status: number; isNetwork }` |
-| `ApiFailureCode` | `ApiErrorCode \| "network" \| "server"` |
-| `isApiFailure(err, code?)`, `toApiFailure(err)`, `isAbortError(err)`, `failureFromResponse(status, body)` | helpers |
+| `request<T>` | `(path, { method?, body?, query?, signal?, timeoutMs?, idempotent?, unconfirmedMessage? }) => Promise<T>` low level |
+| `ApiFailure` | `class extends Error { code: ApiFailureCode; status: number; unconfirmed: boolean; isNetwork; isTimeout }` |
+| `ApiFailureCode` | `ApiErrorCode \| "network" \| "timeout" \| "server"` |
+| `isApiFailure(err, code?)`, `isUnconfirmed(err)`, `toApiFailure(err)`, `isAbortError(err)`, `failureFromResponse(status, body)` | helpers |
+| `onUnconfirmedRequest(listener)` | `=> unsubscribe`; called with every unconfirmed write (the session re-reads balance and positions on it) |
+| `DEFAULT_REQUEST_TIMEOUT_MS`, `ORDER_UNCONFIRMED_MESSAGE`, `TRANSFER_UNCONFIRMED_MESSAGE` | `15000`, and the sentences for unconfirmed writes |
 | `describeError(err) => string` | user-facing sentence for any error |
 | `API_BASE` | `""` (same origin) |
 
@@ -138,8 +156,10 @@ rethrow the AbortError; test with `isAbortError`).
 
 - `useEventStream<E>(url: string | null, handlers: { [K in keyof E]?: (data: E[K]) => void }, options?: { createSource?, reconnectKey?: string | number }): StreamStatus`
   — `E` is one of `FightListStreamEvents`, `FightStreamEvents`, `UserStreamEvents`. Inline handlers are fine (read through a ref). `null` URL = closed. Reconnects with capped backoff if the browser gives up; changing `reconnectKey` reopens immediately.
-- `StreamStatus = "connecting" | "open" | "reconnecting" | "closed"`
-- `openEventStream({ url, events, onEvent, onStatus?, createSource?, retryBaseMs?, retryMaxMs? }) => close()` (framework-free)
+- `StreamStatus = "connecting" | "open" | "reconnecting" | "closed"`. A stream is `"open"` only once an application event has arrived, so behind a proxy that buffers SSE the consumers stay on REST polling.
+- `openEventStream({ url, events, onEvent, onStatus?, createSource?, retryBaseMs?, retryMaxMs?, visibility?, hiddenGraceMs?, heartbeatTimeoutMs?, connectTimeoutMs?, network?, track? }) => close()` (framework-free)
+- **Watchdog.** Every stream carries a `ping` event from the server (`{ intervalMs }`, every 5 s; `src/api/sse.ts`). Once a stream has seen a ping, silence for two missed pings plus 2 s (`heartbeatTimeoutFor(5000)` = 12 s) means the connection is dead even if the browser has not noticed (sleep, Wi-Fi roaming, a hung proxy): it is closed and reopened with backoff. A new connection with no response within `CONNECT_TIMEOUT_MS` (8 s) is replaced too. Both set the status to `"reconnecting"`, which puts the state hooks back on REST polling until an event arrives. Going offline drops the connection at once; coming back online reconnects without waiting out the backoff.
+- Registry: `getTrackedStreams()`, `subscribeTrackedStreams(listener)`, `reconnectStreams()` (skips the backoff for every stream that is not open). The connection banner reads it.
 - `combineStreamStatus(statuses: StreamStatus[]): StreamStatus`
 
 ### `state/`
@@ -147,11 +167,13 @@ rethrow the AbortError; test with `isAbortError`).
 | Export | Signature / shape |
 | --- | --- |
 | `SessionProvider` | `{ children, userId?: string }` (mounted in main.tsx) |
-| `useSession()` | `{ userId, meta: ServerMeta \| null, account: Account \| null, portfolio: Portfolio \| null, status: "loading" \| "ready" \| "error", error: ApiFailure \| null, streamStatus, refresh(): Promise<void>, applyAccount(account, serverTime?) }` — call `applyAccount(res.account, res.serverTime)` after orders/transfers. |
+| `useSession()` | `{ userId, meta: ServerMeta \| null, account: Account \| null, portfolio: Portfolio \| null, status: "loading" \| "ready" \| "error", error: ApiFailure \| null, streamStatus, refresh(): Promise<void>, applyAccount(account, serverTime?) }` — call `applyAccount(res.account, res.serverTime)` after orders/transfers. `streamStatus` is `"connecting"` until the server has confirmed the user. After an unconfirmed write it re-reads balance and positions by itself. |
 | `FightsProvider` | `{ children }` (mounted in main.tsx) |
 | `useFights()` | `{ fights: FightSummary[], status: "loading" \| "live" \| "polling" \| "error", error, loaded, streamStatus, serverTime, refresh() }` — server order: live, upcoming, resolved. |
 | `useFightSummary(raceId)` | `FightSummary \| null` from the lobby |
 | `useFightDetail(raceId)` (`state/fight.ts`) | `{ fight: FightDetail \| null, priceHistory: PricePoint[], status: "loading" \| "live" \| "polling" \| "error" \| "not_found", error, streamStatus, serverTime, refresh() }` — snapshot/fight/price handled, REST fallback, 2000-point cap. |
+| `useFallbackPolling(active, load, { intervalMs, firstDelayMs? })`, `startPolling(options) => stop()`, `needsFallbackPolling(status)` (`state/polling.ts`) | REST stand-in while a stream is not open: one fetch at a time, restarted only when `active` flips. Stopping aborts the fetch in flight, so a late reply cannot overwrite stream data or leave a stale error. |
+| `useConnectionBanner()` (`state/connection.ts`) | `{ kind: "hidden" } \| { kind: "stale", offline, everLive } \| { kind: "resumed", firstConnection }`, the global banner's state: stale while any stream is reconnecting or the browser is offline (shown after 1 s), "resumed" for 3 s after recovery. `liveHealth(streams, online)` and `createConnectionBanner()` are its framework-free parts. |
 | `appendPricePoint(history, point, cap?)`, `MAX_PRICE_POINTS` | pure helper |
 | `useApiResource(load \| null, deps, { pollMs? })` (`state/resource.ts`) | `{ data, error, loading, reload(), setData() }` for one-off REST (leaderboard, my-fight). |
 | `useNow(intervalMs = 1000, enabled = true)` (`state/clock.ts`) | server-corrected ms, shared aligned ticks |
@@ -243,6 +265,7 @@ Import from `../../components` in feature folders.
 | `StatTile` | `{ label, value: ReactNode, sub?, tone?: "default" \| "positive" \| "negative", loading?, className? }` |
 | `TableWrap` + `tableStyles` | `TableWrap { children, card? = true, className? }`; classes `table`, `compact`, `num`, `row`, `rowLink`, `rowPositive`, `rowSelected`, `muted`, `strong`, `cellMain` |
 | `ConnectionIndicator` | `{ status: StreamStatus, showLabel? = true, className? }` |
+| `ConnectionBanner` (`components/ConnectionBanner`, not in the barrel) | no props; `AppShell` renders it once. Floats under the navbar while live data is stale ("Live updates paused. Reconnecting… prices may be out of date." with Retry now; offline and not-yet-connected variants), then "Live updates resumed." for 3 s. State: `useConnectionBanner()`. |
 | Icons | `IconFights`, `IconPortfolio`, `IconLeaderboard`, `IconResolved`, `IconWallet`, `IconSearch`, `IconClose`, `IconAlert`, `IconChevronRight`, `IconArrowLeft`, `IconExpand`, `IconGrid`, `IconLanes`, `IconRefresh` (`{ size? = 16, title?, ...svg }`), `LogoMark { size? }` |
 | `NAV_ITEMS`, `APP_TITLE`, `useSearchQuery` | shell constants / hook |
 
