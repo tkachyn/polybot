@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { FightAgentSummary, FightStatus, FightSummary } from "@contract";
 import { ALL_VIEW_RESOLVED_LIMIT, buildLobby, buildRail } from "./lobby";
+import { buildPlaceholderFights } from "./placeholders";
 
 const NOW = 1_800_000_000_000;
 
@@ -45,6 +46,7 @@ function fight(number: number, status: FightStatus, overrides: Partial<FightSumm
 }
 
 const numbers = (fights: readonly FightSummary[]) => fights.map((f) => f.number);
+const isPreview = (f: FightSummary) => f.raceId.startsWith("preview-");
 
 describe("buildLobby", () => {
   const featured = fight(428, "live", { volume: 1_400 });
@@ -58,7 +60,7 @@ describe("buildLobby", () => {
     fight(434, "upcoming"),
     ...Array.from({ length: 7 }, (_, i) => fight(410 + i, "resolved")),
   ];
-  const base = { fights, featured, filter: "all" as const, query: "" };
+  const base = { fights, featured, filter: "all" as const, query: "", previews: [] };
 
   it("lists every live and frozen fight besides the featured one", () => {
     const lobby = buildLobby(base);
@@ -80,13 +82,6 @@ describe("buildLobby", () => {
     expect(resolved.fights[0]!.number).toBe(416);
   });
 
-  it("leaves the upcoming section empty when nothing is scheduled", () => {
-    const lobby = buildLobby({ ...base, fights: fights.filter((f) => f.status !== "upcoming") });
-    const upcoming = lobby.sections.find((s) => s.status === "upcoming")!;
-    expect(upcoming.fights).toEqual([]);
-    expect(upcoming.total).toBe(0);
-  });
-
   it("filters to one status", () => {
     const live = buildLobby({ ...base, filter: "live" });
     expect(live.hero?.number).toBe(428);
@@ -101,7 +96,7 @@ describe("buildLobby", () => {
     expect(resolved.sections[0]!.fights).toHaveLength(7);
   });
 
-  it("counts fights per filter", () => {
+  it("counts real fights per filter", () => {
     expect(buildLobby(base).counts).toEqual({ all: 13, live: 4, upcoming: 2, resolved: 7 });
   });
 
@@ -119,14 +114,46 @@ describe("buildLobby", () => {
     expect(lobby.hero).toBeNull();
     expect(numbers(lobby.sections[0]!.fights)).toContain(428);
   });
+
+  describe("previews", () => {
+    const previews = buildPlaceholderFights(NOW, [428]);
+    const noUpcoming = fights.filter((f) => f.status !== "upcoming");
+
+    it("stand in for upcoming fights only when there are none, marked as previews", () => {
+      const lobby = buildLobby({ ...base, fights: noUpcoming, previews });
+      const upcoming = lobby.sections.find((s) => s.status === "upcoming")!;
+      expect(upcoming.preview).toBe(true);
+      expect(upcoming.fights.length).toBeGreaterThan(0);
+      expect(upcoming.fights.every(isPreview)).toBe(true);
+      expect(upcoming.total).toBe(0);
+      expect(lobby.counts.upcoming).toBe(0);
+    });
+
+    it("never replace or join real upcoming fights", () => {
+      const upcoming = buildLobby({ ...base, previews }).sections.find((s) => s.status === "upcoming")!;
+      expect(upcoming.preview).toBe(false);
+      expect(numbers(upcoming.fights)).toEqual([433, 434]);
+    });
+
+    it("never appear in search results or in the live and resolved sections", () => {
+      const searched = buildLobby({ ...base, fights: noUpcoming, previews, query: "blender" });
+      expect(searched.sections.flatMap((s) => s.fights)).toEqual([]);
+      const all = buildLobby({ ...base, fights: noUpcoming, previews });
+      for (const section of all.sections.filter((s) => s.status !== "upcoming")) {
+        expect(section.fights.some(isPreview)).toBe(false);
+      }
+    });
+  });
 });
 
 describe("buildRail", () => {
+  const previews = buildPlaceholderFights(NOW, [5]);
+
   it("has nothing to show while the lobby loads", () => {
-    expect(buildRail({ fights: [], loaded: false })).toEqual({ upcoming: null, resolved: null });
+    expect(buildRail({ fights: [], loaded: false, previews })).toEqual({ upcoming: null, resolved: null });
   });
 
-  it("lists upcoming fights, and resolved ones newest first", () => {
+  it("uses real fights, newest resolution first", () => {
     const rail = buildRail({
       fights: [
         fight(9, "upcoming"),
@@ -134,12 +161,20 @@ describe("buildRail", () => {
         fight(4, "resolved", { finishedAt: NOW - 1_000 }),
       ],
       loaded: true,
+      previews,
     });
-    expect(numbers(rail.upcoming!)).toEqual([9]);
-    expect(numbers(rail.resolved!)).toEqual([4, 3]);
+    expect(numbers(rail.upcoming!.fights)).toEqual([9]);
+    expect(rail.upcoming!.preview).toBe(false);
+    expect(numbers(rail.resolved!.fights)).toEqual([4, 3]);
+    expect(rail.resolved!.preview).toBe(false);
   });
 
-  it("shows empty lists, not sample fights, when there is nothing of a kind", () => {
-    expect(buildRail({ fights: [fight(5, "live")], loaded: true })).toEqual({ upcoming: [], resolved: [] });
+  it("marks stand-in previews, and shows none when previews are not allowed", () => {
+    const withPreviews = buildRail({ fights: [fight(5, "live")], loaded: true, previews });
+    expect(withPreviews.upcoming!.preview).toBe(true);
+    expect(withPreviews.upcoming!.fights.every(isPreview)).toBe(true);
+    expect(withPreviews.resolved!.preview).toBe(true);
+    const without = buildRail({ fights: [fight(5, "live")], loaded: true, previews: [] });
+    expect(without).toEqual({ upcoming: { fights: [], preview: false }, resolved: { fights: [], preview: false } });
   });
 });
