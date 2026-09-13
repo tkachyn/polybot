@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { closeReasonText, failureCause } from "../src/domain/failure-reasons.js";
+import { closeReasonText, failureCause, failureProblem } from "../src/domain/failure-reasons.js";
 
 test("raw failure reasons map to short readable causes", () => {
   const cases: Array<[string, string]> = [
@@ -72,4 +72,19 @@ test("close reasons read as plain log lines", () => {
   assert.equal(closeReasonText("start_failed"), "Stopped: the fight could not start");
   assert.equal(closeReasonText("some_new_reason"), "Stopped early");
   assert.equal(closeReasonText(undefined), "Stopped early");
+});
+
+test("retry notes get a short problem phrase, never the raw error", () => {
+  assert.equal(
+    failureProblem("429 Rate limit exceeded: new-account-rpm/openai/gpt-5.6-luna-20260709. Rate limit reached"),
+    "the model provider rate-limited it",
+  );
+  assert.equal(failureProblem("OpenRouter race budget of $0.25 was exhausted"), "the fight's model budget ran out");
+  assert.equal(
+    failureProblem("OpenRouter model deepseek/deepseek-v4.1-flash did not call take_browser_action"),
+    "the model returned no usable action",
+  );
+  assert.equal(failureProblem("page.title: Target page, context or browser has been closed"), "the browser crashed");
+  assert.equal(failureProblem("something nobody anticipated"), "an unexpected error");
+  assert.equal(failureProblem("  "), null);
 });

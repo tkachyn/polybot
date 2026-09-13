@@ -23,6 +23,7 @@ import {
   REDACTED_TEXT,
   withoutReasoning,
 } from "./competitor-decision.js";
+import { failureProblem } from "../domain/failure-reasons.js";
 
 export type BrowserObservation = {
   url: string;
@@ -390,7 +391,7 @@ export class PlaywrightCompetitorRunner implements CompetitorAgentRunner {
             consecutiveDecisionFailures += 1;
             const reason = error instanceof Error ? error.message : String(error);
             this.reportNote(context, step, {
-              text: `Model provider pause (${consecutiveDecisionFailures}/${MAX_CONSECUTIVE_DECISION_FAILURES}, ${totalDecisionFailures}/${MAX_TOTAL_DECISION_FAILURES} total); no browser action used. Retrying: ${reason}`,
+              text: `Model provider pause (${consecutiveDecisionFailures}/${MAX_CONSECUTIVE_DECISION_FAILURES}, ${totalDecisionFailures}/${MAX_TOTAL_DECISION_FAILURES} total); no browser action used. Retrying after ${failureProblem(reason) ?? "an unexpected error"}.`,
               signature: `model-provider-retry:${totalDecisionFailures}`,
             });
             if (
