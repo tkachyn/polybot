@@ -2,7 +2,9 @@
 import { fileURLToPath } from "node:url";
 import type { IncomingMessage } from "node:http";
 import react from "@vitejs/plugin-react";
-import { defineConfig, loadEnv, type ProxyOptions } from "vite";
+import { defineConfig, loadEnv, searchForWorkspaceRoot, type ProxyOptions } from "vite";
+
+const PRICING_MODULE = fileURLToPath(new URL("../src/prediction/lmsr.ts", import.meta.url));
 
 const DEFAULT_API_TARGET = "http://127.0.0.1:3001";
 
@@ -55,11 +57,16 @@ export default defineConfig(({ mode }) => {
         // Types-only contract. `import type` erases it; the alias is a safety
         // net so a stray value import resolves to an empty module, not an error.
         "@contract": fileURLToPath(new URL("../src/api/dto.ts", import.meta.url)),
+        // The market's order pricing, shared with the server so a bet slip's
+        // quote is the same computation as the fill. Dependency-free.
+        "@pricing": PRICING_MODULE,
       },
     },
     server: {
       port: 5173,
       strictPort: true,
+      // The dev server may serve the shared pricing module from outside web/.
+      fs: { allow: [searchForWorkspaceRoot(process.cwd()), PRICING_MODULE] },
       proxy: { "/api": apiProxy(apiTarget) },
     },
     preview: {

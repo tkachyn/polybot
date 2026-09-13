@@ -1,67 +1,99 @@
 import { describe, expect, it } from "vitest";
-import { buildConfirmLabel, maxAmount, minAmountForOneShare, parseAmount, quoteOrder, round6, sidePrice, validateOrder } from "./order";
+import { quoteTrade, sharesForBudget, slippageLimit } from "@pricing";
+import { validateTransfer } from "../features/wallet/transfer";
+import {
+  AMOUNT_MESSAGES,
+  SLIPPAGE,
+  buildConfirmLabel,
+  formatCentsFine,
+  logOddsOf,
+  maxAmount,
+  minAmountForOneShare,
+  parseAmount,
+  priceMovedMessage,
+  quoteOrder,
+  readAmount,
+  sidePrice,
+  slipPricing,
+  type SlipPricing,
+} from "./order";
+
+/** An even four-way market: every YES at 25¢, depth 1000. */
+const EVEN: SlipPricing = { logOdds: Math.log(1 / 3), depth: 1_000 };
 
 describe("quoteOrder", () => {
-  it("computes shares, cost, payout and profit", () => {
-    const q = quoteOrder({ price: 0.27, amount: 50, balance: 1000 });
-    expect(q.shares).toBe(185);
-    expect(q.cost).toBe(49.95);
-    expect(q.payoutIfCorrect).toBe(185);
-    expect(q.profit).toBe(135.05);
+  it("quotes exactly what the market maker fills", () => {
+    const q = quoteOrder({ price: 0.25, pricing: EVEN, side: "yes", amount: 50, balance: 1_000 });
+    const shares = sharesForBudget(EVEN.logOdds, "yes", 50, EVEN.depth);
+    const fill = quoteTrade(EVEN.logOdds, "yes", "buy", shares, EVEN.depth);
     expect(q.error).toBeNull();
+    expect(q.shares).toBe(shares);
+    expect(q.cost).toBe(fill.total);
+    expect(q.avgPrice).toBe(fill.averagePrice);
+    expect(q.payoutIfCorrect).toBe(shares);
+    expect(q.profit).toBeCloseTo(shares - fill.total, 6);
   });
 
-  it("absorbs binary error when flooring", () => {
-    expect(quoteOrder({ price: 0.1, amount: 0.7, balance: 10 }).shares).toBe(7);
-    expect(quoteOrder({ price: 0.3, amount: 0.9, balance: 10 }).shares).toBe(3);
-    expect(quoteOrder({ price: 0.07, amount: 0.21, balance: 10 }).shares).toBe(3);
+  it("pays for its own price impact: the average is above the price, and the amount is never exceeded", () => {
+    for (const amount of [0.5, 25, 100, 999.97]) {
+      const q = quoteOrder({ price: 0.25, pricing: EVEN, side: "yes", amount, balance: 1_000 });
+      expect(q.avgPrice).toBeGreaterThan(0.25);
+      expect(q.cost).toBeLessThanOrEqual(amount);
+      expect(quoteTrade(EVEN.logOdds, "yes", "buy", q.shares + 1, EVEN.depth).total).toBeGreaterThan(amount);
+    }
+    // $999.97 at 25¢ buys far fewer than the 3,999 shares the old slip promised.
+    expect(quoteOrder({ price: 0.25, pricing: EVEN, side: "yes", amount: 999.97, balance: 1_000 }).shares).toBeLessThan(2_600);
   });
 
-  it("rounds cost to 6 decimals", () => {
-    const q = quoteOrder({ price: 0.333333, amount: 100, balance: 1000 });
-    expect(q.shares).toBe(300);
-    expect(q.cost).toBe(round6(300 * 0.333333));
-    expect(q.cost).toBe(99.9999);
+  it("quotes NO as the basket of the other three", () => {
+    const q = quoteOrder({ price: 0.75, pricing: EVEN, side: "no", amount: 75, balance: 1_000 });
+    expect(q.avgPrice).toBeGreaterThan(0.75);
+    expect(q.cost).toBe(quoteTrade(EVEN.logOdds, "no", "buy", q.shares, EVEN.depth).total);
   });
 
-  it("returns zero shares for untradable input", () => {
-    expect(quoteOrder({ price: 0, amount: 50, balance: 100 }).shares).toBe(0);
-    expect(quoteOrder({ price: 1, amount: 50, balance: 100 }).shares).toBe(0);
-    expect(quoteOrder({ price: 0.5, amount: Number.NaN, balance: 100 }).amount).toBe(0);
+  it("allows slippage on the average but never more than the balance covers", () => {
+    const q = quoteOrder({ price: 0.25, pricing: EVEN, side: "yes", amount: 100, balance: 1_000 });
+    expect(q.limitPrice).toBe(slippageLimit("buy", q.avgPrice));
+    expect(q.limitPrice).toBeCloseTo(q.avgPrice * (1 + SLIPPAGE), 5);
+    expect(q.maxCost).toBeLessThanOrEqual(1_000);
+
+    const max = quoteOrder({ price: 0.25, pricing: EVEN, side: "yes", amount: 1_000, balance: 1_000 });
+    expect(max.limitPrice).toBeGreaterThanOrEqual(max.avgPrice);
+    expect(max.shares * max.limitPrice).toBeLessThanOrEqual(1_000 + max.shares * 1e-6);
   });
 });
 
 describe("validation", () => {
-  it("checks amount first", () => {
-    expect(quoteOrder({ price: 0.27, amount: 0, balance: 100 }).error).toEqual({
-      code: "amount",
-      message: "Enter an amount greater than $0.",
-    });
-    expect(quoteOrder({ price: 0.27, amount: Number.NaN, balance: 100 }).error?.code).toBe("amount");
+  it("reads amounts the way the wallet does", () => {
+    for (const input of ["1e9", "abc", "12.3.4"]) {
+      const slip = quoteOrder({ price: 0.25, pricing: EVEN, side: "yes", amount: parseAmount(input), balance: 100 });
+      expect(slip.error).toEqual({ code: "amount", message: AMOUNT_MESSAGES.malformed });
+      expect(validateTransfer("deposit", input, 100).error).toBe(AMOUNT_MESSAGES.malformed);
+      expect(readAmount(input).error).toBe(AMOUNT_MESSAGES.malformed);
+    }
+    expect(quoteOrder({ price: 0.25, pricing: EVEN, side: "yes", amount: 0, balance: 100 }).error?.message).toBe(
+      AMOUNT_MESSAGES.notPositive,
+    );
+    expect(readAmount("-5").error).toBe(AMOUNT_MESSAGES.notPositive);
+    expect(readAmount(" ").error).toBe(AMOUNT_MESSAGES.empty);
   });
 
-  it("rejects untradable prices", () => {
-    expect(quoteOrder({ price: 1, amount: 10, balance: 100 }).error?.code).toBe("price");
-    expect(quoteOrder({ price: 0, amount: 10, balance: 100 }).error?.message).toBe("This outcome can’t be traded at the moment.");
+  it("caps the amount at the balance without quoting absurd figures", () => {
+    const q = quoteOrder({ price: 0.25, pricing: EVEN, side: "yes", amount: parseAmount("99999999999999999999"), balance: 1_000 });
+    expect(q.error).toEqual({ code: "balance", message: "Insufficient balance: you have $1,000.00 available." });
+    expect(q.shares).toBe(0);
+    expect(q.cost).toBe(0);
+    expect(quoteOrder({ price: 0.25, pricing: EVEN, side: "yes", amount: 49.95, balance: 49.95 }).error).toBeNull();
   });
 
-  it("rejects amounts below one share", () => {
-    expect(quoteOrder({ price: 0.27, amount: 0.1, balance: 100 }).error).toEqual({
+  it("rejects untradable prices and amounts below one share", () => {
+    expect(quoteOrder({ price: 1, pricing: EVEN, side: "yes", amount: 10, balance: 100 }).error?.code).toBe("price");
+    expect(quoteOrder({ price: 0.25, pricing: EVEN, side: "yes", amount: 0.1, balance: 100 }).error).toEqual({
       code: "shares",
-      message: "Too small for 1 share at 27¢. Enter at least $0.27.",
+      message: "Too small for 1 share at 25¢. Enter at least $0.26.",
     });
-  });
-
-  it("rejects orders above the balance", () => {
-    expect(quoteOrder({ price: 0.27, amount: 50, balance: 10 }).error).toEqual({
-      code: "balance",
-      message: "Insufficient balance. This order costs $49.95 and you have $10.00 available.",
-    });
-  });
-
-  it("allows spending exactly the balance", () => {
-    expect(quoteOrder({ price: 0.27, amount: 49.95, balance: 49.95 }).error).toBeNull();
-    expect(validateOrder({ price: 0.5, amount: 1, shares: 2, cost: 1 }, 1)).toBeNull();
+    expect(minAmountForOneShare(EVEN, "yes")).toBe(0.26);
+    expect(quoteOrder({ price: 0.25, pricing: EVEN, side: "yes", amount: 0.26, balance: 100 }).shares).toBe(1);
   });
 });
 
@@ -70,15 +102,6 @@ describe("helpers", () => {
     expect(maxAmount(123.456789)).toBe(123.456789);
     expect(maxAmount(-4)).toBe(0);
     expect(maxAmount(Number.NaN)).toBe(0);
-    const q = quoteOrder({ price: 0.27, amount: maxAmount(100), balance: 100 });
-    expect(q.shares).toBe(370);
-    expect(q.error).toBeNull();
-  });
-
-  it("finds the minimum amount for one share", () => {
-    expect(minAmountForOneShare(0.27)).toBe(0.27);
-    expect(minAmountForOneShare(0.004)).toBe(0.01);
-    expect(minAmountForOneShare(0.555)).toBe(0.56);
   });
 
   it("parses amount input", () => {
@@ -89,9 +112,24 @@ describe("helpers", () => {
     expect(parseAmount("abc")).toBeNaN();
   });
 
+  it("takes pricing from the fight, falling back to the price", () => {
+    const agent = { racerId: "racer-2", yes: 0.4 };
+    expect(slipPricing({ pricing: { depth: 500, logOdds: { "racer-2": 0.7 } } }, agent)).toEqual({ logOdds: 0.7, depth: 500 });
+    expect(slipPricing({ pricing: { depth: 500, logOdds: { "racer-2": 0.7 } } }, agent, 1.2).logOdds).toBe(1.2);
+    expect(slipPricing({ pricing: { depth: 500, logOdds: {} } }, agent).logOdds).toBeCloseTo(logOddsOf(0.4), 12);
+  });
+
   it("reads a side price", () => {
     expect(sidePrice({ yes: 0.27, no: 0.73 }, "yes")).toBe(0.27);
     expect(sidePrice({ yes: 0.27, no: 0.73 }, "no")).toBe(0.73);
+  });
+
+  it("describes a price move precisely enough to see it", () => {
+    expect(formatCentsFine(0.2435)).toBe("24.4¢");
+    expect(priceMovedMessage({ price: 0.2481, averagePrice: 0.2512, limitPrice: 0.2489, quantity: 212 })).toBe(
+      "Price moved to 24.8¢: 212 shares now average 25.1¢, over your 24.9¢ limit.",
+    );
+    expect(priceMovedMessage({ price: 0.61, averagePrice: 0.58, limitPrice: 0.59, quantity: 40 }, "sell")).toContain("under your 59.0¢ limit");
   });
 });
 

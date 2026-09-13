@@ -25,6 +25,7 @@ import type {
   OrderRequest,
   OrderResponse,
   PortfolioResponse,
+  PriceMovedDetails,
   RobustnessMatrixResponse,
   ServerMeta,
   ServerMode,
@@ -72,6 +73,8 @@ export type ApiFailureOptions = {
   cause?: unknown;
   /** See {@link ApiFailure.unconfirmed}. Default false. */
   unconfirmed?: boolean;
+  /** The ApiError body's `details` (price_moved: where the price is now). */
+  details?: PriceMovedDetails;
 };
 
 export class ApiFailure extends Error {
@@ -96,7 +99,11 @@ export class ApiFailure extends Error {
     this.code = code;
     this.status = status;
     this.unconfirmed = options.unconfirmed ?? false;
+    this.details = options.details;
   }
+
+  /** Present on price_moved: the price, average and log-odds now. */
+  readonly details: PriceMovedDetails | undefined;
 
   get isNetwork(): boolean {
     return this.code === "network";
@@ -150,7 +157,8 @@ export function isAbortError(error: unknown): boolean {
 export function failureFromResponse(status: number, body: unknown, statusText = ""): ApiFailure {
   if (isRecord(body) && isApiErrorCode(body.code)) {
     const message = typeof body.error === "string" && body.error ? body.error : statusText || `HTTP ${status}`;
-    return new ApiFailure(message, body.code, status);
+    const details = isRecord(body.details) ? (body.details as PriceMovedDetails) : undefined;
+    return new ApiFailure(message, body.code, status, details ? { details } : {});
   }
   const message = isRecord(body) && typeof body.error === "string" && body.error ? body.error : "";
   if (status === 404) return new ApiFailure(message || "Not found.", "not_found", status);

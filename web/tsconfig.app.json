@@ -22,8 +22,9 @@
     "noEmit": true,
 
     "paths": {
-      "@contract": ["../src/api/dto.ts"]
+      "@contract": ["../src/api/dto.ts"],
+      "@pricing": ["../src/prediction/lmsr.ts"]
     }
   },
-  "include": ["src", "../src/api/dto.ts"]
+  "include": ["src", "../src/api/dto.ts", "../src/prediction/lmsr.ts"]
 }

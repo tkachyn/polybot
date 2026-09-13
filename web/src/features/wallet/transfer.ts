@@ -5,7 +5,7 @@
  */
 import type { LedgerEntry } from "@contract";
 import { formatMoney, isFiniteNumber, roundTo } from "../../lib/format";
-import { QUICK_AMOUNTS, parseAmount, round6 } from "../../lib/order";
+import { AMOUNT_MESSAGES, QUICK_AMOUNTS, parseAmount, readAmount, round6 } from "../../lib/order";
 
 export type TransferKind = "deposit" | "withdraw";
 
@@ -56,11 +56,11 @@ export type TransferCheck = {
  * `balance` null means the account is not loaded yet: the balance check is skipped.
  */
 export function validateTransfer(kind: TransferKind, input: string, balance: number | null): TransferCheck {
-  if (input.trim() === "") return { amount: Number.NaN, error: "Enter an amount." };
-  const parsed = parseAmount(input);
-  if (!Number.isFinite(parsed)) return { amount: Number.NaN, error: "Enter a valid amount, e.g. 100 or 25.50." };
-  const amount = roundTo(parsed, 2);
-  if (amount <= 0) return { amount, error: "Enter an amount greater than $0." };
+  // The bet slip reads amounts with the same function and wording.
+  const read = readAmount(input);
+  if (!Number.isFinite(read.amount)) return { amount: Number.NaN, error: read.error };
+  const amount = roundTo(read.amount, 2);
+  if (amount <= 0) return { amount, error: AMOUNT_MESSAGES.notPositive };
   if (amount > TRANSFER_MAX) return { amount, error: `The limit is ${formatMoney(TRANSFER_MAX)} per transfer.` };
   if (kind === "withdraw" && balance !== null && amount > round6(Math.max(0, balance))) {
     const max = maxWithdrawable(balance);

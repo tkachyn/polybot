@@ -70,6 +70,7 @@ function fight(agents: FightAgentDetail[]): FightDetail {
     checkpoints: [{ index: 1, label: "Checkpoint 1", isSabotage: false }],
     sabotage: null,
     agents,
+    pricing: { depth: 1_000, logOdds: {} },
   };
 }
 
