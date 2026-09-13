@@ -120,6 +120,8 @@ const EVIDENCE_TEXT_MAX = 120;
 /** The observation keeps at most this much page text and this many controls. */
 const OBSERVATION_TEXT_MAX = 8_000;
 const OBSERVATION_CONTROLS_MAX = 100;
+/** Amazon pages expose hundreds of header, footer and carousel controls. */
+const EXTERNAL_OBSERVATION_CONTROLS_MAX = 48;
 /**
  * Typing into a control whose role or label names a secret is redacted even
  * when the target never resolved to a password input.
@@ -176,6 +178,13 @@ const EXTERNAL_PAYMENT_FIELD_PATTERN =
   /\b(?:card|credit|debit|cvv|cvc|security\s*code|expiration|expiry|payment|password|passcode|email|phone)\b/i;
 const EXTERNAL_AUTH_ACTION_PATTERN =
   /\b(?:sign\s*in|log\s*in|create\s+(?:an?\s+)?account|register)\b/i;
+const EXTERNAL_RECOVERY_CONTROL_PATTERN =
+  /\b(?:more\s+options|close|dismiss|no\s+thanks)\b/i;
+const EXTERNAL_HIGH_VALUE_CONTROL_PATTERN =
+  /\b(?:add\s+to\s+(?:cart|basket)|(?:proceed|go)\s+to\s+checkout|checkout|shopping\s+cart|see\s+all\s+buying\s+options|remove|delete)\b/i;
+const EXTERNAL_NAVIGATION_CONTROL_PATTERN =
+  /\b(?:search|sort|filter|next|previous|back\s+to\s+results)\b/i;
+const EXTERNAL_PRODUCT_PATH_PATTERN = /\/(?:dp|gp\/product)\//i;
 
 type CursorPoint = { x: number; y: number };
 type PageCursorApi = {
@@ -710,7 +719,7 @@ export class PlaywrightCompetitorRunner implements CompetitorAgentRunner {
       // user could act on, so they stay out of the model's view.
       .locator('a, button, input:not([type="hidden"]), select, textarea, [role]')
       .evaluateAll((elements, externalSite) =>
-        elements.slice(0, 100).map((element) => {
+        elements.map((element) => {
           const html = element as HTMLElement;
           const control = element as HTMLInputElement;
           const box = element.getBoundingClientRect();
@@ -752,14 +761,20 @@ export class PlaywrightCompetitorRunner implements CompetitorAgentRunner {
             // The label is a password field's value: the model sees it as
             // before, but it is redacted wherever the step is recorded.
             masked: control.type === "password" && !html.innerText && Boolean(control.value),
+            // Used only to compact external-site observations; never sent to
+            // the model or recorded in telemetry.
+            href: element instanceof HTMLAnchorElement ? element.href : "",
           };
         }),
         this.externalSite,
       )
       .catch(() => []);
+    const selected = this.externalSite
+      ? compactExternalControls(found)
+      : found.slice(0, OBSERVATION_CONTROLS_MAX);
     const controls: BrowserObservation["controls"] = [];
     const masked: boolean[] = [];
-    for (const { masked: isMasked, ...control } of found) {
+    for (const { masked: isMasked, href: _href, ...control } of selected) {
       controls.push(control);
       masked.push(isMasked === true);
     }
@@ -1113,6 +1128,57 @@ export class PlaywrightCompetitorRunner implements CompetitorAgentRunner {
       return false;
     }
   }
+}
+
+type ScannedControl = BrowserObservation["controls"][number] & {
+  masked: boolean;
+  href?: string;
+};
+
+/**
+ * Keeps the Amazon controls needed for this checkout race and removes the
+ * account, footer, carousel and advertising clutter that causes extra model
+ * turns. Ordering is stable inside each priority so labels still correspond
+ * to the page the spectator sees.
+ */
+function compactExternalControls<T extends ScannedControl>(controls: readonly T[]): T[] {
+  const ranked = controls.flatMap((control, index) => {
+    const label = control.text.replace(/\s+/g, " ").trim();
+    const target = `${control.arenaRole ?? ""} ${control.role ?? ""} ${label}`;
+    const href = control.href ?? "";
+    if (EXTERNAL_ORDER_ACTION_PATTERN.test(target) || EXTERNAL_AUTH_ACTION_PATTERN.test(target)) {
+      return [];
+    }
+
+    let priority = 0;
+    // Recovery controls for both rehearsed Amazon sabotages come first:
+    // More options reveals the moved action and Close clears the modal.
+    if (EXTERNAL_RECOVERY_CONTROL_PATTERN.test(target)) priority = 120;
+    else if (EXTERNAL_HIGH_VALUE_CONTROL_PATTERN.test(target)) priority = 100;
+    else if (EXTERNAL_PRODUCT_PATH_PATTERN.test(href) && label.length > 0) priority = 90;
+    else if (control.arenaRole === "searchbox") priority = 80;
+    else if (["combobox", "listbox", "radio", "checkbox"].includes(control.arenaRole ?? "")) priority = 70;
+    else if (EXTERNAL_NAVIGATION_CONTROL_PATTERN.test(target)) priority = 60;
+    if (priority === 0) return [];
+    return [{ control, index, priority }];
+  });
+
+  // Avoid duplicate responsive/mobile copies of the same Amazon control.
+  const seen = new Set<string>();
+  return ranked
+    .sort((left, right) => right.priority - left.priority || left.index - right.index)
+    .filter(({ control }) => {
+      const key = [
+        control.arenaRole ?? "",
+        control.text.replace(/\s+/g, " ").trim().toLowerCase(),
+        control.href ?? "",
+      ].join("\u0000");
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .slice(0, EXTERNAL_OBSERVATION_CONTROLS_MAX)
+    .map(({ control }) => control);
 }
 
 function candidateMilestone(decision: AgentDecision): string | undefined {
