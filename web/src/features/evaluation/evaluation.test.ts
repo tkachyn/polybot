@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest";
 import type { ReactionLabel, RobustnessCell, SabotageReaction, SteelTraceEntry, TraceEntry } from "@contract";
-import { evaluationExportUrl, evidenceFrameUrl, replayUrl } from "../../api/client";
+import { datasetExportUrl, datasetFileUrl, evidenceFrameUrl, replayUrl } from "../../api/client";
 import { EMPTY, MINUS } from "../../lib/format";
 import { AGENT_OUTCOME_LABEL, BLOCKED_BY_LABEL, EVALUATION_MODE_LABEL, EVALUATION_STATUS_LABEL, REACTION_DESCRIPTION, REACTION_LABEL } from "../../lib/labels";
+import { DATASET_FILES, simulatedDatasetWarning } from "./dataset";
 import {
   cellCountsText,
   describeHitOffset,
@@ -239,11 +240,43 @@ describe("evaluation filters", () => {
     expect(parseEvaluationWindow(null)).toBe(30);
   });
 
-  it("builds evidence, replay and export URLs", () => {
+  it("builds evidence and replay URLs", () => {
     expect(evidenceFrameUrl("race 1", "racer-2", "before/1")).toBe("/api/fights/race%201/agents/racer-2/evidence/before%2F1");
     expect(replayUrl("race-1", "racer-3")).toBe("/api/fights/race-1/agents/racer-3/replay.m3u8");
-    expect(evaluationExportUrl({ days: 30, mode: "all" })).toBe("/api/evaluations/export.jsonl?days=30&mode=all");
-    expect(evaluationExportUrl({ days: 7 })).toBe("/api/evaluations/export.jsonl?days=7");
+  });
+});
+
+describe("dataset downloads", () => {
+  it("builds the zip URL for the page's window and mode", () => {
+    expect(datasetExportUrl({ days: 30, mode: "all" })).toBe("/api/datasets/export.zip?days=30&mode=all");
+    expect(datasetExportUrl({ days: 7 })).toBe("/api/datasets/export.zip?days=7");
+    expect(datasetExportUrl()).toBe("/api/datasets/export.zip");
+  });
+
+  it("builds single-file URLs: JSON Lines files, and manifest.json", () => {
+    expect(datasetFileUrl("manifest", { days: 90, mode: "live" })).toBe("/api/datasets/manifest.json?days=90&mode=live");
+    expect(datasetFileUrl("steps", { days: 30, mode: "simulated" })).toBe("/api/datasets/steps.jsonl?days=30&mode=simulated");
+    expect(datasetFileUrl("episodes", { days: 7 })).toBe("/api/datasets/episodes.jsonl?days=7");
+    expect(datasetFileUrl("sft")).toBe("/api/datasets/sft.jsonl");
+    expect(datasetFileUrl("preferences", { mode: "all" })).toBe("/api/datasets/preferences.jsonl?mode=all");
+  });
+
+  it("describes every file once, in one line, under the name it downloads as", () => {
+    expect(DATASET_FILES.map((f) => f.file)).toEqual(["steps", "episodes", "sft", "preferences", "manifest"]);
+    for (const { file, name, description } of DATASET_FILES) {
+      expect(datasetFileUrl(file)).toBe(`/api/datasets/${name}`);
+      expect(description.trim().length).toBeGreaterThan(0);
+      expect(description).not.toMatch(/\n/);
+    }
+  });
+
+  it("warns against training on simulated rows whenever the download includes them", () => {
+    expect(simulatedDatasetWarning("live")).toBeNull();
+    expect(simulatedDatasetWarning(null)).toBeNull();
+    for (const mode of ["simulated", "all"] as const) {
+      expect(simulatedDatasetWarning(mode)).toMatch(/scripted agents, not real models, and shouldn’t be used for training/);
+    }
+    expect(simulatedDatasetWarning("all")).toMatch(/filter them out/);
   });
 });
 

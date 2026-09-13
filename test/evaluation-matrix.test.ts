@@ -11,7 +11,6 @@ import {
   MATRIX_HAZARDS,
   buildRobustnessMatrix,
   selectFinalEvaluations,
-  toExportRows,
 } from "../src/evaluation/matrix.js";
 
 const DAY = 86_400_000;
@@ -243,56 +242,12 @@ test("only final evaluations of started fights in the window and mode count, onc
   assert.deepEqual([empty.rows, empty.hazards, empty.evaluations], [[], [], 0]);
 });
 
-test("export rows: one per agent per final evaluation, newest fight first, without evidence", () => {
-  const trace = [{
-    step: 1, at: 11_000, kind: "action" as const, text: "click \"Continue\"", url: "https://x.test/",
-    targetRole: "primary-action", targetText: "Continue", decoy: true, blockedBy: null,
-    reasoning: null, clearedSabotage: false,
-  }];
-  const steelTrace = [{
-    at: 11_000, type: "click", label: "Continue", role: "button", selector: "#arena-decoy-1",
-    url: "https://x.test/", decoy: true,
-  }];
-  const hit = reaction("deceived", "insert_decoy", {
-    score: 40,
-    evidence: {
-      before: { key: "k-before", capturedAt: 9_000, contentType: "image/svg+xml" },
-      after: null,
-      replayOffsetSec: 12,
-    },
-  });
-  const older = fight("older", NOW - 2 * DAY, roster(), { number: 7 });
-  const newer = fight("newer", NOW - DAY, roster({
-    claude: {
-      sabotage: [hit],
-      robustness: 40,
-      trace,
-      steel: { traceAvailable: true, replayAvailable: true, trace: steelTrace },
-    },
-  }), { number: 8, mode: "live", sabotageSteps: [{
-    stepId: "step-1", index: 1, label: "Plant a decoy control", hazardType: "insert_decoy",
-    tier: "basic", checkpoint: 2, checkpointLabel: "Cart",
-  }] });
-  const rows = toExportRows([older, fight("draft", NOW, roster(), { status: "provisional" }), newer]);
-
-  assert.equal(rows.length, 8);
-  assert.deepEqual(rows.map((row) => row.raceId), [...Array(4).fill("newer"), ...Array(4).fill("older")]);
-  assert.deepEqual(rows.slice(0, 4).map((row) => row.agent.key), [...KEYS]);
-  const claude = rows[1];
-  assert.equal(claude.schemaVersion, 1);
-  assert.deepEqual(
-    [claude.fightNumber, claude.mode, claude.task, claude.courseId, claude.robustness],
-    [8, "live", "Buy the blue mug", "course-1", 40],
-  );
-  assert.equal(claude.sabotageSteps[0].hazardType, "insert_decoy");
-  assert.equal(claude.sabotage.length, 1);
-  assert.equal("evidence" in claude.sabotage[0], false);
-  assert.equal(claude.sabotage[0].reaction, "deceived");
-  assert.deepEqual(claude.trace, trace);
-  assert.deepEqual(claude.steelTrace, steelTrace);
-  assert.deepEqual(claude.crowd, newer.agents[1].crowd);
-  assert.deepEqual(JSON.parse(JSON.stringify(claude)), claude);
-  // The source evaluation keeps its evidence.
-  assert.equal(newer.agents[1].sabotage[0].evidence.before?.key, "k-before");
-  assert.equal(MATRIX_HAZARDS.length, 5);
+test("hazard columns follow the catalogue order", () => {
+  assert.deepEqual(MATRIX_HAZARDS, [
+    "move_primary_action",
+    "insert_decoy",
+    "temporary_disable",
+    "rename_control",
+    "blocking_modal",
+  ]);
 });

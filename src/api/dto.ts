@@ -753,31 +753,6 @@ export type RobustnessMatrixResponse = {
   evaluations: number;
 };
 
-/** One line of GET /api/evaluations/export.jsonl */
-export type EvaluationExportRow = {
-  schemaVersion: 1;
-  raceId: string;
-  fightNumber: number;
-  mode: ServerMode;
-  task: string;
-  courseId: string;
-  startedAt: number | null;
-  finishedAt: number | null;
-  sabotageSteps: EvaluatedSabotageStep[];
-  agent: AgentIdentity;
-  outcome: AgentOutcome;
-  success: boolean;
-  durationMs: number | null;
-  steps: number;
-  errors: number;
-  loops: number;
-  robustness: number | null;
-  sabotage: Array<Omit<SabotageReaction, "evidence">>;
-  trace: TraceEntry[];
-  steelTrace: SteelTraceEntry[];
-  crowd: AgentCrowdSignal;
-};
-
 // ---------------------------------------------------------------------------
 // Dataset export (docs/training-data.md). One zip: manifest.json plus
 // episodes / steps / sft / preferences JSON Lines, screenshots and raw Steel

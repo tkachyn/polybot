@@ -7,6 +7,7 @@ import type {
 } from "../application/race-coordinator.js";
 import { normalizeFightMetadata, type SabotageBrief } from "../application/fight-metadata.js";
 import { DomainError } from "../domain/errors.js";
+import { InMemoryDatasetStore, type DatasetStore } from "../dataset/store.js";
 import { InMemoryEvaluationStore, type EvaluationStore } from "../evaluation/index.js";
 import { InMemoryCreditLedger, type CreditLedger } from "../wallet/credit-ledger.js";
 import type { AgentIdentity } from "./dto.js";
@@ -37,11 +38,18 @@ export type ApiCreateRaceInput = CreateRaceInput & {
  * `input.fight = context.fight` and `deps.ledger = context.ledger`, so fight
  * numbering and the shared wallet work, and SHOULD pass
  * `deps.evaluationStore = context.evaluationStore`, so the fight's final
- * evaluation outlives it (evaluation route after a prune, matrix, export).
+ * evaluation outlives it (evaluation route after a prune, matrix), and
+ * `deps.datasetStore = context.datasetStore`, so the fight joins the
+ * training dataset export.
  */
 export type CoordinatorFactory = (
   input: ApiCreateRaceInput,
-  context: { ledger: CreditLedger; fight: FightMetadata; evaluationStore: EvaluationStore },
+  context: {
+    ledger: CreditLedger;
+    fight: FightMetadata;
+    evaluationStore: EvaluationStore;
+    datasetStore: DatasetStore;
+  },
 ) => RaceCoordinator | Promise<RaceCoordinator>;
 
 /**
@@ -57,6 +65,8 @@ export type RaceRegistryOptions = {
   startingBalance?: number;
   /** Where coordinators keep final evaluations. Default: in memory. */
   evaluationStore?: EvaluationStore;
+  /** Where coordinators keep fight dataset records. Default: in memory. */
+  datasetStore?: DatasetStore;
 };
 
 /** Enough of a pruned fight to enrich history and the leaderboard. */
@@ -140,6 +150,8 @@ export class RaceRegistry {
   readonly users: UserDirectory;
   /** Final evaluations; they outlive pruned fights. */
   readonly evaluations: EvaluationStore;
+  /** Fight dataset records and their files; they outlive pruned fights. */
+  readonly datasets: DatasetStore;
 
   private readonly races = new Map<string, RaceCoordinator>();
   private readonly unsubscribers = new Map<string, () => void>();
@@ -161,6 +173,7 @@ export class RaceRegistry {
       startingBalance: options.startingBalance ?? 1_000,
     });
     this.evaluations = options.evaluationStore ?? new InMemoryEvaluationStore();
+    this.datasets = options.datasetStore ?? new InMemoryDatasetStore();
   }
 
   /**
@@ -179,6 +192,7 @@ export class RaceRegistry {
       ledger: this.ledger,
       fight: structuredClone(fight),
       evaluationStore: this.evaluations,
+      datasetStore: this.datasets,
     });
     if (coordinator.raceId !== input.raceId) {
       throw new Error(`factory returned race ${coordinator.raceId} for ${input.raceId}`);

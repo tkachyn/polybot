@@ -5,7 +5,6 @@ import { join } from "node:path";
 import test from "node:test";
 import type {
   AgentEvaluation,
-  EvaluationExportRow,
   FightEvaluation,
   FightEvaluationResponse,
   RobustnessMatrixResponse,
@@ -350,35 +349,9 @@ test("matrix and export read final evaluations in the window and mode, with vali
       assert.deepEqual([response.statusCode, response.json().code], [400, "invalid"], query);
     }
 
-    const exported = await app.inject({ method: "GET", url: "/api/evaluations/export.jsonl?mode=all" });
-    assert.equal(exported.statusCode, 200);
-    // Fastify appends the charset to string bodies; the media type is what matters.
-    assert.match(String(exported.headers["content-type"]), /^application\/x-ndjson(;|$)/);
-    assert.equal(
-      exported.headers["content-disposition"],
-      "attachment; filename=\"sabotage-markets-evaluations.jsonl\"",
-    );
-    assert.ok(exported.body.endsWith("\n"));
-    const rows = exported.body.trimEnd().split("\n").map((line) => JSON.parse(line) as EvaluationExportRow);
-    assert.equal(rows.length, 8, "one row per agent per final evaluation");
-    assert.deepEqual(rows.map((row) => row.raceId), [...Array(4).fill("live-new"), ...Array(4).fill("sim-1")]);
-    assert.deepEqual(rows.slice(0, 4).map((row) => row.agent.key), [...KEYS]);
-    const first = rows[0];
-    assert.deepEqual(
-      [first.schemaVersion, first.fightNumber, first.mode, first.task, first.courseId, first.outcome, first.robustness],
-      [1, 12, "live", "Buy the blue mug", "course-1", "won", 80],
-    );
-    assert.equal(first.sabotage[0].reaction, "recovered");
-    assert.equal("evidence" in first.sabotage[0], false);
-    assert.ok(rows.every((row) =>
-      Array.isArray(row.trace) && Array.isArray(row.steelTrace) && typeof row.crowd.openingYes === "number"));
-
-    const liveOnly = await app.inject({ method: "GET", url: "/api/evaluations/export.jsonl" });
-    assert.equal(liveOnly.body.trimEnd().split("\n").length, 4);
-    const empty = await app.inject({ method: "GET", url: "/api/evaluations/export.jsonl?mode=simulated&days=1" });
-    assert.deepEqual([empty.statusCode, empty.body], [200, ""]);
-    const invalid = await app.inject({ method: "GET", url: "/api/evaluations/export.jsonl?days=0" });
-    assert.deepEqual([invalid.statusCode, invalid.json().code], [400, "invalid"]);
+    // The per-agent evaluation export gave way to the dataset export (/api/datasets/*).
+    const removed = await app.inject({ method: "GET", url: "/api/evaluations/export.jsonl" });
+    assert.deepEqual([removed.statusCode, removed.json().code], [404, "not_found"]);
   } finally {
     await app.close();
   }
