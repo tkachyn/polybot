@@ -24,7 +24,7 @@ export type LobbySection = {
   fights: FightSummary[];
   /** The cards are placeholder previews, not real fights. */
   preview: boolean;
-  /** Real fights in the section, before the All view's cap. */
+  /** Fights represented in the section, before the All view's cap. */
   total: number;
 };
 
@@ -33,7 +33,7 @@ export type Lobby = {
   hero: FightSummary | null;
   /** In display order. A section can be empty. */
   sections: LobbySection[];
-  /** Real fights per filter, after the search. */
+  /** Fights represented per filter, including visible upcoming previews. */
   counts: Record<FightFilter, number>;
 };
 
@@ -49,6 +49,15 @@ export type LobbyInput = {
 export function buildLobby({ fights, featured, filter, query, previews }: LobbyInput): Lobby {
   const q = query.trim();
   const matching = q ? fights.filter((f) => matchesFightQuery(f, q)) : [...fights];
+  const noneScheduled = !fights.some((f) => f.status === "upcoming");
+  const upcomingPreviews = noneScheduled && !q
+    ? previews.filter((fight) => fight.status === "upcoming")
+    : [];
+  const counts = countByFilter(matching);
+  if (upcomingPreviews.length > 0) {
+    counts.upcoming += upcomingPreviews.length;
+    counts.all += upcomingPreviews.length;
+  }
   const shows = (status: FightStatus) => filter === "all" || filter === status;
   const hero = featured && shows(featured.status) && matchesFightQuery(featured, q) ? featured : null;
   const rest = hero ? matching.filter((f) => f.raceId !== hero.raceId) : matching;
@@ -60,11 +69,9 @@ export function buildLobby({ fights, featured, filter, query, previews }: LobbyI
   }
   if (shows("upcoming")) {
     const upcoming = rest.filter((f) => f.status === "upcoming");
-    const noneScheduled = !fights.some((f) => f.status === "upcoming");
-    const standIns = noneScheduled && !q ? previews.filter((f) => f.status === "upcoming") : [];
     sections.push(
-      standIns.length > 0
-        ? { status: "upcoming", fights: standIns, preview: true, total: 0 }
+      upcomingPreviews.length > 0
+        ? { status: "upcoming", fights: upcomingPreviews, preview: true, total: upcomingPreviews.length }
         : { status: "upcoming", fights: upcoming, preview: false, total: upcoming.length },
     );
   }
@@ -73,7 +80,7 @@ export function buildLobby({ fights, featured, filter, query, previews }: LobbyI
     const shown = filter === "all" ? resolved.slice(0, ALL_VIEW_RESOLVED_LIMIT) : resolved;
     sections.push({ status: "resolved", fights: shown, preview: false, total: resolved.length });
   }
-  return { hero, sections, counts: countByFilter(matching) };
+  return { hero, sections, counts };
 }
 
 /** One rail list. `preview`: the rows are placeholders. */

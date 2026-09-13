@@ -119,14 +119,16 @@ describe("buildLobby", () => {
     const previews = buildPlaceholderFights(NOW, [428]);
     const noUpcoming = fights.filter((f) => f.status !== "upcoming");
 
-    it("stand in for upcoming fights only when there are none, marked as previews", () => {
+    it("stand in for upcoming fights only when there are none and count in the tabs", () => {
       const lobby = buildLobby({ ...base, fights: noUpcoming, previews });
       const upcoming = lobby.sections.find((s) => s.status === "upcoming")!;
+      const hardcodedUpcoming = previews.filter((fight) => fight.status === "upcoming").length;
       expect(upcoming.preview).toBe(true);
-      expect(upcoming.fights.length).toBeGreaterThan(0);
+      expect(upcoming.fights).toHaveLength(hardcodedUpcoming);
       expect(upcoming.fights.every(isPreview)).toBe(true);
-      expect(upcoming.total).toBe(0);
-      expect(lobby.counts.upcoming).toBe(0);
+      expect(upcoming.total).toBe(hardcodedUpcoming);
+      expect(lobby.counts.upcoming).toBe(hardcodedUpcoming);
+      expect(lobby.counts.all).toBe(noUpcoming.length + hardcodedUpcoming);
     });
 
     it("never replace or join real upcoming fights", () => {

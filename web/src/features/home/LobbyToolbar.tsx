@@ -1,6 +1,6 @@
 /**
  * The lobby's filter row: All / Live / Upcoming / Resolved, with a count of
- * real fights on each, and a search box. Both live in the URL (`?filter=`,
+ * represented fights on each, and a search box. Both live in the URL (`?filter=`,
  * `?q=`), so a filtered lobby can be linked to and survives Back.
  */
 import { useEffect, useRef, useState } from "react";
@@ -18,7 +18,7 @@ const FILTER_LABEL: Readonly<Record<FightFilter, string>> = {
 export type LobbyToolbarProps = {
   filter: FightFilter;
   onFilter: (filter: FightFilter) => void;
-  /** Real fights per filter; null while the lobby loads. */
+  /** Displayed fights per filter; null while the lobby loads. */
   counts: Record<FightFilter, number> | null;
   /** The current `?q=`, untrimmed. */
   query: string;
