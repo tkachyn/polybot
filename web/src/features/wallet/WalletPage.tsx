@@ -1,7 +1,7 @@
 import { useCallback, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import type { LedgerEntry, WalletTransferResponse } from "@contract";
-import { ErrorBanner, Page, PageHeader } from "../../components";
+import { EmptyState, ErrorBanner, Page, PageHeader } from "../../components";
 import { useSession } from "../../state/session";
 import { BalanceCard } from "./BalanceCard";
 import { TransferPanel } from "./TransferPanel";
@@ -11,7 +11,7 @@ import styles from "./Wallet.module.css";
 
 /** Route "/wallet". `?tab=deposit|withdraw` selects the transfer tab (the top-bar Deposit button links here). */
 export function WalletPage() {
-  const { userId, account, portfolio, status, error, refresh, applyAccount } = useSession();
+  const { userId, meta, account, portfolio, status, error, refresh, applyAccount } = useSession();
   const [params, setParams] = useSearchParams();
   const tab = parseTransferTab(params.get("tab"));
   const [recent, setRecent] = useState<LedgerEntry[]>([]);
@@ -45,6 +45,18 @@ export function WalletPage() {
   }, [refresh]);
 
   const entries = useMemo(() => walletActivity(portfolio?.history, recent), [portfolio, recent]);
+
+  if (meta?.demoMode) {
+    return (
+      <Page title="Demo bankroll">
+        <PageHeader title="Demo bankroll" subtitle="Every judge starts with the same locked balance." />
+        <EmptyState
+          title="Wallet transfers are locked"
+          description="Deposits and withdrawals are disabled during the judged demo so every participant competes from an equal starting balance."
+        />
+      </Page>
+    );
+  }
 
   return (
     <Page title="Wallet">
