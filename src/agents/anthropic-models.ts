@@ -50,7 +50,7 @@ export class AnthropicMasterPolicyModel implements MasterPolicyModel {
       model: this.options.model,
       max_tokens: 500,
       system:
-        "You are the race director for a browser-agent arena. Select one bounded DOM obstacle. Keep the race fair and use only the provided semantic target roles. Never emit JavaScript.",
+        "You are the race director for a browser-agent arena. Select one bounded DOM obstacle targeting the stable primary-action role. Keep the race fair; prefer a modal with no Close control, a decoy, a disabled/renamed control, or a moved action that makes the competitor inspect and actively repair the DOM. Never emit JavaScript.",
       messages: [{
         role: "user",
         content: JSON.stringify(input),
@@ -62,7 +62,7 @@ export class AnthropicMasterPolicyModel implements MasterPolicyModel {
           type: "object",
           properties: {
             hazardType: { type: "string", enum: input.allowedHazards },
-            targetRole: { type: "string", minLength: 1, maxLength: 100 },
+            targetRole: { type: "string", enum: ["primary-action"] },
             durationMs: { type: "integer", minimum: 0, maximum: 30_000 },
             intensity: { type: "integer", minimum: 1, maximum: 3 },
           },

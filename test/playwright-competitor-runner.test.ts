@@ -605,6 +605,47 @@ test("syncs progress after every action, success or error, before checking compl
   assert.deepEqual(reports.map((report) => report.kind), ["action", "action"]);
 });
 
+test("rejects waiting during sabotage and reports recovery after DOM cleanup", async () => {
+  const page = new FakePage();
+  page.activeDisruption = true;
+  const recovery: string[] = [];
+  const { reports } = await runWith(
+    page,
+    [
+      { type: "wait", durationMs: 100 },
+      { type: "evaluate", script: "window.__arenaRecoverDisruptions?.()" },
+      { type: "finish" },
+    ],
+    {
+      async reportRecovery() { recovery.push("recovered"); },
+    },
+  );
+
+  assert.equal(reports[0].kind, "error");
+  assert.match(reports[0].error ?? "", /Waiting cannot clear/);
+  assert.equal(reports[1].kind, "action");
+  assert.deepEqual(recovery, ["recovered"]);
+});
+
+test("reports a visible note when a provider pauses for rate-limit capacity", async () => {
+  const reports: AgentActionReport[] = [];
+  const model: CompetitorDecisionModel = {
+    async prepareForCall() {
+      return { waitedMs: 1_500, maxCalls: 20, windowMs: 60_000 };
+    },
+    async decide() {
+      return { type: "finish" };
+    },
+  };
+  await runWith(new FakePage(), [{ type: "finish" }], {
+    reportAction(report) { reports.push(report); },
+  }, { model });
+
+  assert.equal(reports[0].kind, "note");
+  assert.match(reports[0].text, /Rate limit pause complete/);
+  assert.equal(reports[1].kind, "action");
+});
+
 test("waits for a started navigation to commit before syncing progress", async () => {
   const events: string[] = [];
   class SettlingPage extends FakePage {

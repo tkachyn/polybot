@@ -6,6 +6,7 @@ import {
 import {
   OpenRouterCompetitorDecisionModel,
   OpenRouterMasterPolicyModel,
+  OpenRouterModelRateLimiter,
   OpenRouterUsageBudget,
 } from "../agents/openrouter-models.js";
 import { PlaywrightCompetitorRunner } from "../agents/playwright-competitor-runner.js";
@@ -149,10 +150,13 @@ export function createProductionRaceCoordinator(
   const budget = new OpenRouterUsageBudget(
     positiveNumberEnv("RACE_LLM_BUDGET_USD", 0.25),
   );
+  // Keep the configured model window shared across racers using the same
+  // provider model. Other models remain unlimited unless added here.
+  const competitorRateLimiter = new OpenRouterModelRateLimiter();
   const competitorModels = new Map(
     [...roster].map(([racerId, model]) => [
       racerId,
-      new OpenRouterCompetitorDecisionModel({ model, budget }),
+      new OpenRouterCompetitorDecisionModel({ model, budget, rateLimiter: competitorRateLimiter }),
     ]),
   );
 

@@ -33,6 +33,7 @@ type OpenRouterModelOptions = {
   apiKey?: string;
   budget?: OpenRouterUsageBudget;
   maxOutputTokens?: number;
+  rateLimiter?: OpenRouterModelRateLimiter;
 };
 
 export type OpenRouterUsageSnapshot = {
@@ -87,22 +88,128 @@ function createClient(apiKey?: string): OpenAI {
   });
 }
 
-function parseToolArguments(value: string): unknown {
-  try {
-    return JSON.parse(value) as unknown;
-  } catch {
-    throw new Error("OpenRouter returned invalid tool arguments");
+export class OpenRouterToolArgumentsError extends Error {
+  constructor(message = "OpenRouter returned invalid tool arguments") {
+    super(message);
+    this.name = "OpenRouterToolArgumentsError";
+  }
+}
+
+/**
+ * Providers occasionally wrap otherwise-valid tool JSON in markdown or add a
+ * short preamble. Accept only bounded JSON repairs; never evaluate provider
+ * output as JavaScript.
+ */
+export function parseToolArguments(value: unknown): unknown {
+  if (typeof value !== "string") {
+    if (value && typeof value === "object") return value;
+    throw new OpenRouterToolArgumentsError();
+  }
+  const source = value.trim();
+  const stripped = source.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "").trim();
+  const candidates = [
+    source,
+    stripped,
+    source.replace(/,\s*([}\]])/g, "$1"),
+    stripped.replace(/,\s*([}\]])/g, "$1"),
+  ];
+  const objectStart = source.indexOf("{");
+  const objectEnd = source.lastIndexOf("}");
+  if (objectStart >= 0 && objectEnd > objectStart) {
+    candidates.push(source.slice(objectStart, objectEnd + 1));
+  }
+  for (const candidate of candidates) {
+    try {
+      return JSON.parse(candidate) as unknown;
+    } catch {
+      // Try the next bounded representation.
+    }
+  }
+  throw new OpenRouterToolArgumentsError();
+}
+
+export type ModelRateLimit = {
+  maxCalls: number;
+  windowMs: number;
+};
+
+export type RateLimitWait = {
+  waitedMs: number;
+  maxCalls: number;
+  windowMs: number;
+};
+
+/**
+ * A shared per-model sliding window. Models without a configured entry never
+ * wait, so adding pacing for one provider cannot throttle the others.
+ */
+export class OpenRouterModelRateLimiter {
+  private readonly calls = new Map<string, number[]>();
+
+  constructor(
+    private readonly limits: Readonly<Record<string, ModelRateLimit>> = {
+      "openai/gpt-5.6-luna": { maxCalls: 20, windowMs: 60_000 },
+    },
+  ) {
+    for (const [model, limit] of Object.entries(limits)) {
+      if (!Number.isInteger(limit.maxCalls) || limit.maxCalls < 1 ||
+        !Number.isFinite(limit.windowMs) || limit.windowMs <= 0) {
+        throw new Error(`Invalid rate limit for ${model}`);
+      }
+    }
+  }
+
+  async acquire(model: string, signal?: AbortSignal): Promise<RateLimitWait> {
+    const key = model.trim().toLowerCase();
+    const limit = this.limits[key];
+    if (!limit) return { waitedMs: 0, maxCalls: 0, windowMs: 0 };
+    const startedAt = Date.now();
+    for (;;) {
+      if (signal?.aborted) throw new DOMException("Rate-limit wait aborted", "AbortError");
+      const now = Date.now();
+      const calls = (this.calls.get(key) ?? []).filter((timestamp) =>
+        timestamp > now - limit.windowMs,
+      );
+      if (calls.length < limit.maxCalls) {
+        calls.push(now);
+        this.calls.set(key, calls);
+        return { waitedMs: now - startedAt, ...limit };
+      }
+      const waitMs = Math.max(1, calls[0] + limit.windowMs - now);
+      await new Promise<void>((resolve, reject) => {
+        let timer: ReturnType<typeof setTimeout>;
+        const onAbort = () => {
+          clearTimeout(timer);
+          signal?.removeEventListener("abort", onAbort);
+          reject(new DOMException("Rate-limit wait aborted", "AbortError"));
+        };
+        timer = setTimeout(() => {
+          signal?.removeEventListener("abort", onAbort);
+          resolve();
+        }, waitMs);
+        signal?.addEventListener("abort", onAbort, { once: true });
+        if (signal?.aborted) onAbort();
+      });
+    }
   }
 }
 
 abstract class OpenRouterModelBase {
   protected readonly client: OpenAI;
   protected readonly maxOutputTokens: number;
+  private capacityReserved = false;
 
   constructor(protected readonly options: OpenRouterModelOptions) {
     if (!options.model) throw new Error("OpenRouter model is required");
     this.client = createClient(options.apiKey);
     this.maxOutputTokens = options.maxOutputTokens ?? 150;
+  }
+
+  async prepareForCall(signal?: AbortSignal): Promise<RateLimitWait> {
+    const wait = await this.options.rateLimiter?.acquire(this.options.model, signal) ??
+      { waitedMs: 0, maxCalls: 0, windowMs: 0 };
+    this.capacityReserved = true;
+    return wait;
   }
 
   protected async call(
@@ -115,24 +222,40 @@ abstract class OpenRouterModelBase {
       | ReturnType<typeof sabotageSequenceTool>,
     signal?: AbortSignal,
   ): Promise<unknown> {
-    this.options.budget?.assertAvailable();
-    const response = await this.client.chat.completions.create({
-      model: this.options.model,
-      max_tokens: this.maxOutputTokens,
-      messages: [
-        { role: "system", content: system },
-        { role: "user", content: JSON.stringify(input) },
-      ],
-      tools: [tool],
-      tool_choice: { type: "function", function: { name: tool.function.name } },
-    }, signal ? { signal } : undefined);
-    const usage = response.usage as (typeof response.usage & { cost?: number }) | undefined;
-    this.options.budget?.record(usage?.cost ?? 0);
-    const call = response.choices[0]?.message.tool_calls?.[0];
-    if (!call || call.type !== "function" || call.function.name !== tool.function.name) {
-      throw new Error(`OpenRouter model ${this.options.model} did not call ${tool.function.name}`);
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      this.options.budget?.assertAvailable();
+      if (!this.capacityReserved) {
+        await this.options.rateLimiter?.acquire(this.options.model, signal);
+      }
+      this.capacityReserved = false;
+      const response = await this.client.chat.completions.create({
+        model: this.options.model,
+        max_tokens: this.maxOutputTokens,
+        messages: [{
+          role: "system",
+          content: attempt === 0
+            ? system
+            : `${system}\nYour previous tool payload was malformed. Return only strict JSON matching the tool schema; do not use markdown or prose.`,
+        }, {
+          role: "user",
+          content: JSON.stringify(input),
+        }],
+        tools: [tool],
+        tool_choice: { type: "function", function: { name: tool.function.name } },
+      }, signal ? { signal } : undefined);
+      const usage = response.usage as (typeof response.usage & { cost?: number }) | undefined;
+      this.options.budget?.record(usage?.cost ?? 0);
+      const call = response.choices[0]?.message.tool_calls?.[0];
+      if (!call || call.type !== "function" || call.function.name !== tool.function.name) {
+        throw new Error(`OpenRouter model ${this.options.model} did not call ${tool.function.name}`);
+      }
+      try {
+        return parseToolArguments(call.function.arguments);
+      } catch (error) {
+        if (!(error instanceof OpenRouterToolArgumentsError) || attempt === 1) throw error;
+      }
     }
-    return parseToolArguments(call.function.arguments);
+    throw new OpenRouterToolArgumentsError();
   }
 }
 
@@ -146,7 +269,7 @@ function obstacleTool(allowedHazards: DisruptionCommand["hazardType"][]) {
         type: "object",
         properties: {
           hazardType: { type: "string", enum: allowedHazards },
-          targetRole: { type: "string", minLength: 1, maxLength: 100 },
+          targetRole: { type: "string", enum: ["primary-action"] },
           durationMs: { type: "integer", minimum: 0, maximum: 30_000 },
           intensity: { type: "integer", minimum: 1, maximum: 3 },
         },
@@ -171,7 +294,7 @@ function sabotageTool(
         properties: {
           tier: { type: "string", enum: allowedTiers },
           hazardType: { type: "string", enum: allowedHazards },
-          targetRole: { type: "string", minLength: 1, maxLength: 100 },
+          targetRole: { type: "string", enum: ["primary-action"] },
           durationMs: { type: "integer", minimum: 0, maximum: 30_000 },
           intensity: { type: "integer", minimum: 1, maximum: 3 },
         },
@@ -209,6 +332,10 @@ export class OpenRouterCompetitorDecisionModel
   extends OpenRouterModelBase
   implements CompetitorDecisionModel
 {
+  prepareForCall(signal?: AbortSignal): Promise<RateLimitWait> {
+    return super.prepareForCall(signal);
+  }
+
   async decide(input: {
     task: string;
     racerId: string;
@@ -216,13 +343,25 @@ export class OpenRouterCompetitorDecisionModel
     history: Array<{ decision: AgentDecision; error?: string }>;
     signal?: AbortSignal;
   }): Promise<AgentDecision> {
-    const value = await this.call(
-      COMPETITOR_SYSTEM_PROMPT,
-      input,
-      browserActionTool,
-      input.signal,
-    );
-    return parseDecision(value);
+    let value: unknown;
+    try {
+      value = await this.call(
+        COMPETITOR_SYSTEM_PROMPT,
+        input,
+        browserActionTool,
+        input.signal,
+      );
+    } catch (error) {
+      if (error instanceof OpenRouterToolArgumentsError) return { type: "inspect" };
+      throw error;
+    }
+    try {
+      return parseDecision(value);
+    } catch {
+      // A malformed tool payload is recoverable: inspect again so the agent
+      // can make progress on the next turn instead of terminating the racer.
+      return { type: "inspect" };
+    }
   }
 }
 
@@ -234,7 +373,7 @@ export class OpenRouterMasterPolicyModel
     input: Parameters<NonNullable<MasterPolicyModel["selectObstacle"]>>[0],
   ): Promise<DisruptionCommand> {
     const value = await this.call(
-      "You are the race director for a browser-agent arena. Select one bounded DOM obstacle. Keep the race fair and use only the provided semantic target roles. Never emit JavaScript.",
+      "You are the race director for a browser-agent arena. Select one bounded DOM obstacle targeting the stable primary-action role. Keep the race fair; prefer a modal with no Close control, a decoy, a disabled/renamed control, or a moved action that makes the competitor inspect and actively repair the DOM. Never emit JavaScript.",
       input,
       obstacleTool(input.allowedHazards),
     ) as DisruptionCommand;
@@ -247,7 +386,7 @@ export class OpenRouterMasterPolicyModel
   ): Promise<{ tier: SabotageTier; policy: DisruptionCommand }> {
     const tool = sabotageTool(input.allowedHazards, input.allowedTiers);
     const value = await this.call(
-      "You are the race director for a browser-agent arena. Select exactly one race-wide sabotage tier and one bounded DOM obstacle. The plan is immutable and will apply independently when each racer reaches the first verified target-opening milestone. Never emit JavaScript.",
+      "You are the race director for a browser-agent arena. Select exactly one race-wide sabotage tier and one bounded DOM obstacle targeting the stable primary-action role. Prefer obstacles that require active reasoning: a blocking modal has no Close control and requires bounded DOM recovery; a decoy requires comparing labels/attributes; a disabled or renamed control requires DOM inspection; moving the action requires finding the disclosure. The plan is immutable and will apply independently when each racer reaches the first verified target-opening milestone. Never emit JavaScript.",
       input,
       tool,
     ) as { tier: SabotageTier; hazardType: DisruptionCommand["hazardType"]; targetRole: string; durationMs: number; intensity: number };

@@ -2,6 +2,7 @@ import type { Locator, Page } from "playwright";
 import type { BlockedBy, CursorPosition } from "../api/dto.js";
 import type {
   ActionEvidence,
+  AgentActionReport,
   CompetitorAgentRunner,
   CompetitorContext,
 } from "../application/contracts.js";
@@ -39,6 +40,12 @@ export type AgentDecision =
   | { type: "finish" };
 
 export interface CompetitorDecisionModel {
+  /** Optional provider pacing hook; returns after the next call is allowed. */
+  prepareForCall?(signal?: AbortSignal): Promise<{
+    waitedMs: number;
+    maxCalls?: number;
+    windowMs?: number;
+  }>;
   decide(input: {
     task: string;
     racerId: string;
@@ -256,6 +263,13 @@ export class PlaywrightCompetitorRunner implements CompetitorAgentRunner {
       for (let action = 0; action < this.maxActions; action += 1) {
         if (controller.signal.aborted) return;
         const observation = await this.observe(page);
+        const wait = await model.prepareForCall?.(controller.signal);
+        if (wait && wait.waitedMs > 0) {
+          this.reportNote(context, action + 1, {
+            text: `Rate limit pause complete; resumed after ${Math.ceil(wait.waitedMs / 1_000)}s`,
+            signature: `rate-limit:${Math.ceil(wait.waitedMs / 1_000)}`,
+          });
+        }
         const decision = await model.decide({
           task: this.options.task,
           racerId: context.racerId,
@@ -325,6 +339,24 @@ export class PlaywrightCompetitorRunner implements CompetitorAgentRunner {
         signature: JSON.stringify(decision),
         ...(outcome.error === undefined ? {} : { error: outcome.error }),
         ...(Object.keys(outcome.evidence).length === 0 ? {} : { evidence: outcome.evidence }),
+      });
+    } catch {
+      // Telemetry must never break the competitor loop.
+    }
+  }
+
+  private reportNote(
+    context: CompetitorContext,
+    step: number,
+    report: Pick<AgentActionReport, "text" | "signature">,
+  ): void {
+    try {
+      context.reportAction?.({
+        kind: "note",
+        text: report.text,
+        step,
+        maxSteps: Number.isFinite(this.maxActions) ? this.maxActions : 0,
+        signature: report.signature,
       });
     } catch {
       // Telemetry must never break the competitor loop.
@@ -456,6 +488,12 @@ export class PlaywrightCompetitorRunner implements CompetitorAgentRunner {
         return false;
       }
       case "wait":
+        if (await this.hasActiveDisruption(page)) {
+          throw new ActionBlockedError(
+            "modal",
+            "Waiting cannot clear an active disruption; use a bounded same-page DOM recovery action",
+          );
+        }
         await page.waitForTimeout(Math.max(0, Math.min(decision.durationMs, 2_000)));
         return false;
       case "checkpoint":

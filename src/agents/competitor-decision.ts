@@ -8,9 +8,9 @@ export type CompetitorDecisionInput = Parameters<CompetitorDecisionModel["decide
 
 export const COMPETITOR_TOOL_NAME = "take_browser_action";
 export const COMPETITOR_TOOL_DESCRIPTION =
-  "Take one browser action or report verified progress. Persistent challenges must be actively cleared, not waited out.";
+  "Take one browser action or report verified progress. Persistent challenges must be actively cleared with bounded DOM recovery, never waited out.";
 export const COMPETITOR_SYSTEM_PROMPT =
-  "You control one browser racer. Choose exactly one bounded action. Use data-arena-role values when clicking or typing, plus the visible label when several controls share a role. Sabotage and challenges persist until you actively clear them; never wait for one to disappear. First use visible recovery controls, and when necessary use the bounded same-page evaluate action to inspect or repair the DOM. For arena sabotage, window.__arenaRecoverDisruptions?.() is an allowed recovery helper. Do not use evaluate for network access, navigation, storage, secrets, or task completion shortcuts. Report checkpoints and completion only when the visible task state supports the claim.";
+  "You control one browser racer. Choose exactly one bounded action. Use data-arena-role values when clicking or typing, plus the visible label when several controls share a role. Sabotage, challenges, and blocking overlays persist until you actively clear them; waiting never clears them and is rejected while one is active. First inspect the blocker, then use a visible recovery control when one exists. For an arena blocker with no recovery control, use the bounded same-page evaluate action to inspect or repair the DOM; window.__arenaRecoverDisruptions?.() is an allowed recovery helper. Keep recovery scripts DOM-only and bounded. Do not use evaluate for network access, navigation, storage, secrets, or task completion shortcuts. Report recovery only after the blocker is gone, and report checkpoints and completion only when the visible task state supports the claim.";
 
 /** Longest accepted `label`; longer labels are truncated, which still matches by substring. */
 export const LABEL_MAX_LENGTH = 120;
@@ -54,7 +54,7 @@ export const COMPETITOR_TOOL_SCHEMA: ToolJsonSchema = {
       type: "string",
       maxLength: EVALUATE_SCRIPT_MAX_LENGTH,
       description:
-        "A same-page DOM-only JavaScript expression or IIFE. Use only to inspect or repair the current page; network, navigation, storage, secrets, and arbitrary task shortcuts are forbidden.",
+        "A bounded same-page DOM-only JavaScript expression or IIFE for active recovery. When a blocking arena disruption is present, inspect it and call window.__arenaRecoverDisruptions?.(); waiting cannot clear it. Network, navigation, storage, secrets, and arbitrary task shortcuts are forbidden.",
     },
     url: { type: "string", maxLength: 2_000 },
     durationMs: { type: "integer", minimum: 0, maximum: 2_000 },
