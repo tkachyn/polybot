@@ -7,8 +7,9 @@
  * - `snapshot` (every connect/reconnect): full replace, including history.
  * - `fight`: replaces the detail if its serverTime is not older.
  * - `price`: appended when its `t` is newer than the last point.
- * While the stream is not open, `GET /api/fights/:raceId` is polled. A 404
- * sets status "not_found" and stops both stream and polling.
+ * While the stream is not open (still connecting, reconnecting, or silent
+ * past its heartbeat: see api/stream.ts), `GET /api/fights/:raceId` is
+ * polled. A 404 sets status "not_found" and stops both stream and polling.
  *
  * A new frame capture shows up as a bumped `agents[i].frame.seq`; build its
  * image URL with `fightFrameUrl(raceId, racerId, seq)` from api/client.
@@ -17,6 +18,7 @@ import { useCallback, useEffect, useReducer, useRef } from "react";
 import type { FightDetail, FightDetailResponse, FightStreamEvents, PricePoint } from "@contract";
 import { ApiFailure, fightStreamUrl, getFight, isAbortError, isApiFailure, toApiFailure } from "../api/client";
 import { useEventStream, type StreamStatus } from "../api/stream";
+import { needsFallbackPolling, useFallbackPolling } from "./polling";
 
 /** Matches the server's history cap. */
 export const MAX_PRICE_POINTS = 2000;
@@ -111,16 +113,19 @@ export function useFightDetail(raceId: string | null | undefined): FightDetailSt
     dispatch({ type: "reset", raceId: id });
   }, [id]);
 
-  const refresh = useCallback(async () => {
+  const load = useCallback(async (signal?: AbortSignal) => {
     const target = idRef.current;
     if (!target) return;
     try {
-      const data = await getFight(target);
+      const data = await getFight(target, signal);
       dispatch({ type: "snapshot", raceId: target, data, force: false });
     } catch (err) {
-      if (!isAbortError(err)) dispatch({ type: "error", raceId: target, error: toApiFailure(err) });
+      // An aborted poll (the stream came back) says nothing about the fight.
+      if (!isAbortError(err) && !signal?.aborted) dispatch({ type: "error", raceId: target, error: toApiFailure(err) });
     }
   }, []);
+
+  const refresh = useCallback(() => load(), [load]);
 
   const streamStatus = useEventStream<FightStreamEvents>(id && !state.notFound ? fightStreamUrl(id) : null, {
     snapshot: (data) => {
@@ -134,22 +139,11 @@ export function useFightDetail(raceId: string | null | undefined): FightDetailSt
     },
   });
 
-  const hasFight = state.fight !== null;
-  useEffect(() => {
-    if (!id || state.notFound || streamStatus === "open") return;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    let stopped = false;
-    const tick = () => {
-      void refresh().finally(() => {
-        if (!stopped) timer = setTimeout(tick, POLL_MS);
-      });
-    };
-    timer = setTimeout(tick, hasFight ? POLL_MS : FIRST_POLL_MS);
-    return () => {
-      stopped = true;
-      clearTimeout(timer);
-    };
-  }, [id, state.notFound, streamStatus, hasFight, refresh]);
+  // REST fallback while the stream is not delivering.
+  useFallbackPolling(Boolean(id) && !state.notFound && needsFallbackPolling(streamStatus), load, {
+    intervalMs: POLL_MS,
+    firstDelayMs: FIRST_POLL_MS,
+  });
 
   let status: FightDetailStatus;
   if (state.notFound) status = "not_found";

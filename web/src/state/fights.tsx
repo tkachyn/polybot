@@ -5,15 +5,17 @@
  *   const { fights, status, error } = useFights();
  *
  * Source: `GET /api/fights/stream` (`fights` on connect and on every change).
- * While the stream is not open, `GET /api/fights` is polled instead. Payloads
+ * While the stream is not open (connecting, reconnecting, or silent past its
+ * heartbeat), `GET /api/fights` is polled instead. Payloads
  * are ordered by `serverTime`, so a slow REST reply never overwrites a newer
  * stream event. `fights` keeps the server's order: live (newest first), then
  * upcoming (soonest first), then resolved (newest first).
  */
-import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useMemo, useRef, useState, type ReactNode } from "react";
 import type { FightListResponse, FightListStreamEvents, FightSummary } from "@contract";
 import { ApiFailure, fightsStreamUrl, isAbortError, listFights, toApiFailure } from "../api/client";
 import { useEventStream, type StreamStatus } from "../api/stream";
+import { needsFallbackPolling, useFallbackPolling } from "./polling";
 
 /**
  * - loading: no list yet.
@@ -54,27 +56,24 @@ export function FightsProvider({ children }: { children: ReactNode }) {
     setError(null);
   }, []);
 
-  const refresh = useCallback(async () => {
-    try {
-      apply(await listFights());
-    } catch (err) {
-      if (!isAbortError(err)) setError(toApiFailure(err));
-    }
-  }, [apply]);
+  const load = useCallback(
+    async (signal?: AbortSignal) => {
+      try {
+        apply(await listFights({}, signal));
+      } catch (err) {
+        // An aborted poll (the stream came back) is not a failure.
+        if (!isAbortError(err) && !signal?.aborted) setError(toApiFailure(err));
+      }
+    },
+    [apply],
+  );
+
+  const refresh = useCallback(() => load(), [load]);
 
   const streamStatus = useEventStream<FightListStreamEvents>(fightsStreamUrl(), { fights: apply });
 
-  useEffect(() => {
-    if (streamStatus === "open") return;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const tick = () => {
-      void refresh().finally(() => {
-        timer = setTimeout(tick, POLL_MS);
-      });
-    };
-    timer = setTimeout(tick, latest.current === -Infinity ? FIRST_POLL_MS : POLL_MS);
-    return () => clearTimeout(timer);
-  }, [streamStatus, refresh]);
+  // REST fallback while the stream is not delivering.
+  useFallbackPolling(needsFallbackPolling(streamStatus), load, { intervalMs: POLL_MS, firstDelayMs: FIRST_POLL_MS });
 
   const loaded = list !== null;
   const status: FightsStatus = !loaded ? (error ? "error" : "loading") : streamStatus === "open" ? "live" : "polling";
