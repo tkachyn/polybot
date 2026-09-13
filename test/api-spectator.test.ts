@@ -78,6 +78,9 @@ test("meta, users and wallet transfers", async () => {
   for (const payload of [
     { amount: 100_001, method: "virtual" },
     { amount: 0, method: "virtual" },
+    // Sub-cent amounts round to nothing a wallet can show.
+    { amount: 0.0000001, method: "virtual" },
+    { amount: 0.004, method: "virtual" },
     { amount: 10, method: "card" },
     { amount: "10", method: "virtual" },
   ]) {

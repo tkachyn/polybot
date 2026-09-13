@@ -5,6 +5,8 @@ import type { EnsureUserRequest, WalletMethodId } from "./dto.js";
 
 export const USER_ID_PATTERN = /^[A-Za-z0-9_-]{6,64}$/;
 export const TRANSFER_MAX = 100_000;
+/** Smallest deposit or withdrawal: one cent. */
+export const TRANSFER_MIN = 0.01;
 export const DISPLAY_NAME_MAX = 40;
 
 export type UserRecord = {
@@ -178,6 +180,9 @@ function assertTransfer(amount: unknown, method: unknown): number {
   if (typeof amount !== "number" || !Number.isFinite(amount) || amount <= 0) {
     invalid("amount must be a finite number greater than 0");
   }
-  if (amount > TRANSFER_MAX) invalid(`amount must be at most ${TRANSFER_MAX}`);
-  return amount;
+  // Judge the amount the ledger would actually move: it keeps 6 decimals.
+  const value = Math.round(amount * 1_000_000) / 1_000_000;
+  if (value < TRANSFER_MIN) invalid(`amount must be at least ${TRANSFER_MIN}`);
+  if (value > TRANSFER_MAX) invalid(`amount must be at most ${TRANSFER_MAX}`);
+  return value;
 }
