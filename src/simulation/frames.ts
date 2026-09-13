@@ -263,8 +263,12 @@ export function renderSimFrame(input: SimFrameInput): string {
       size: 22, weight: 700, anchor: "middle",
     }));
     parts.push(lines(430, 310, [420, 380, 300]));
-    parts.push(button({ x: 470, y: 420, w: 340, h: 52 }, "Yes, show me", "#f08c2e"));
-    parts.push(text(640, 505, "Close", { size: 12, fill: "#9aa5b1", anchor: "middle" }));
+    parts.push(text(640, 430, "Active DOM recovery required", {
+      size: 16, fill: "#f4b183", anchor: "middle",
+    }));
+    parts.push(text(640, 470, "Waiting will not clear this blocker", {
+      size: 12, fill: "#9aa5b1", anchor: "middle",
+    }));
     parts.push(cursor(700, 450, color));
   }
 

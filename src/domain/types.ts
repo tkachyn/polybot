@@ -120,6 +120,8 @@ export type DisruptionCommand = {
 export type DisruptionResult = {
   applied: boolean;
   reason?: string;
+  /** The policy that actually applied when an executor used a fallback. */
+  policy?: DisruptionCommand;
 };
 
 export interface ObstacleProvider {

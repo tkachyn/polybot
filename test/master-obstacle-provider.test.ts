@@ -45,8 +45,47 @@ test("returns and applies a validated master policy", async () => {
   };
   const provider = new MasterObstacleProvider(model, observations, executor);
 
-  assert.deepEqual(await provider.getPolicy("race-1", 1), selected);
-  assert.deepEqual(await provider.apply("racer-1", selected), { applied: true });
+  assert.deepEqual(await provider.getPolicy("race-1", 1), {
+    ...selected,
+    targetRole: "primary-action",
+  });
+  assert.deepEqual(await provider.apply("racer-1", selected), {
+    applied: true,
+    policy: { ...selected, targetRole: "primary-action" },
+  });
+});
+
+test("cycles to a different hazard when the selected target is unavailable", async () => {
+  const attempts: DisruptionCommand[] = [];
+  const cyclingExecutor: Pick<ObstacleProvider, "apply"> = {
+    async apply(_racerId, policy) {
+      attempts.push(policy);
+      return attempts.length === 1
+        ? { applied: false, reason: "target_not_found" }
+        : { applied: true };
+    },
+  };
+  const provider = new MasterObstacleProvider(
+    { async selectObstacle() {
+      return { hazardType: "move_primary_action", targetRole: "primary-action", durationMs: 4_000, intensity: 1 };
+    } },
+    observations,
+    cyclingExecutor,
+  );
+
+  const result = await provider.apply("racer-1", {
+    hazardType: "move_primary_action",
+    targetRole: "primary-action",
+    durationMs: 4_000,
+    intensity: 1,
+  });
+
+  assert.equal(result.applied, true);
+  assert.equal(result.policy?.hazardType, "blocking_modal");
+  assert.deepEqual(attempts.map((attempt) => attempt.hazardType), [
+    "move_primary_action",
+    "blocking_modal",
+  ]);
 });
 
 test("uses a deterministic fallback when the model fails", async () => {

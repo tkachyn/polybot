@@ -287,7 +287,7 @@ test("disrupted runners report blocked steps against the sabotage", async () => 
   const blocked = sink.actions.filter((report) =>
     report.text.includes("modal") || report.text.includes("overlay") || report.error?.includes("overlay"));
   assert.ok(blocked.length >= 1, "blocked steps were reported");
-  assert.ok(sink.actions.some((report) => report.text.includes('"Close"')));
+  assert.ok(sink.actions.some((report) => report.text.includes("DOM recovery helper")));
   assert.ok(sink.frames.some((frame) => String(frame.body).includes("SABOTAGE")));
   assert.ok(sink.actions.some((report) =>
     report.kind === "error" && report.evidence?.blockedBy === "modal" &&
@@ -440,13 +440,13 @@ test("normal steps carry a plausible target that is never a decoy", () => {
   assert.deepEqual(steps.at(-1)?.evidence, { target: target("primary-action", cart.target), navigated: true });
 });
 
-test("a careful agent closes a blocking modal at once and makes no missteps on that page", () => {
+test("a careful agent actively recovers a blocking modal at once and makes no missteps on that page", () => {
   const template = templateById("boot-exchange");
   // Random errors would be likely on any other page.
   const script = scriptAfter(template, template.sabotage.checkpoint, { vigilance: 1, errorRate: 0.5 });
   const steps = runPage(script, hazardOf(template));
-  assert.match(steps[0].text, /^click "Close" on the ".+" overlay$/);
-  assert.deepEqual(steps[0].evidence?.target, { role: "dismiss-overlay", text: "Close", decoy: false });
+  assert.equal(steps[0].text, "evaluate a bounded same-page DOM recovery helper");
+  assert.equal(steps[0].evidence, undefined);
   assert.ok(steps[0].disruption, "the overlay was on screen when it acted");
   assert.ok(steps.every((step) => step.kind === "action"), "no errors after the hit");
   assert.ok(steps.slice(1).every((step) => step.disruption === null), "the closed overlay is gone");

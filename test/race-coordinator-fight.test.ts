@@ -196,6 +196,15 @@ test("a default sabotage arms at checkpoint 1 and describes the armed hazard", a
   const plan = coordinator.engine.race.sabotagePlan;
   assert.equal(plan?.source, "fallback");
   assert.equal(plan?.trigger.checkpoint, 1);
+  await coordinator.recordCheckpoint("racer-1", 1, 2_000);
+  assert.deepEqual(
+    coordinator.engine.events
+      .filter((event) => event.racerId === "racer-1")
+      .map((event) => event.type),
+    ["racer_ready", "checkpoint_reached", "sabotage_triggered", "sabotage_applied"],
+  );
+  assert.equal(coordinator.engine.racers.get("racer-1")?.status, "recovering");
+  await coordinator.recordRecovery("racer-1", 2_100);
   await coordinator.shutdown();
 });
 

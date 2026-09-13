@@ -5,7 +5,6 @@ import {
   CdpObstacleProvider,
   DECOY_ID_PREFIX,
   DECOY_LABELS,
-  DISMISS_OVERLAY_ROLE,
   MORE_ACTIONS_LABEL,
   MORE_ACTIONS_ROLE,
   RENAME_LABELS,
@@ -57,7 +56,6 @@ test("every hazard script parses and carries the contract's roles and labels", (
     "d-1",
   );
   for (const expected of [
-    DISMISS_OVERLAY_ROLE,
     MORE_ACTIONS_ROLE,
     MORE_ACTIONS_LABEL,
     DECOY_ID_PREFIX,
@@ -66,6 +64,12 @@ test("every hazard script parses and carries the contract's roles and labels", (
   ]) {
     assert.ok(script.includes(expected), `script mentions ${expected}`);
   }
+  const blocking = buildDisruptionScript(
+    { hazardType: "blocking_modal", targetRole: "primary-action", durationMs: 5_000, intensity: 1 },
+    "blocking-1",
+  );
+  assert.doesNotMatch(blocking, /dismiss-overlay|Close/);
+  assert.match(blocking, /__arenaRecoverDisruptions/);
 });
 
 test("rejects unsafe disruption bounds", () => {

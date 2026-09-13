@@ -32,10 +32,8 @@ export const DEFAULT_HASTE = 0.5;
 
 /** `data-arena-role` hooks of the simulated pages (see the contract's hazard table). */
 export const PRIMARY_ACTION_ROLE = "primary-action";
-export const DISMISS_OVERLAY_ROLE = "dismiss-overlay";
 export const MORE_ACTIONS_ROLE = "more-actions";
 const MORE_ACTIONS_LABEL = "More options";
-const CLOSE_LABEL = "Close";
 
 /**
  * A stubborn agent takes about this many times its usual page (in steps) to
@@ -490,27 +488,25 @@ export class SimRacerScript {
           error: "click intercepted by an overlay",
           evidence: { target: primaryTarget(target), blockedBy: "modal" },
         };
-        const look: Move = { kind: "action", text: `look for a close button on the "${effect}" overlay` };
-        const escape: Move = { kind: "action", text: "press Escape to dismiss the overlay" };
-        const dismiss: Move = {
+        const look: Move = { kind: "action", text: `inspect the "${effect}" overlay and its DOM` };
+        const recover: Move = {
           kind: "action",
-          text: `click "${CLOSE_LABEL}" on the "${effect}" overlay`,
-          evidence: { target: { role: DISMISS_OVERLAY_ROLE, text: CLOSE_LABEL, decoy: false } },
+          text: "evaluate a bounded same-page DOM recovery helper",
           resolves: true,
         };
         switch (response) {
           case "careful":
-            return dismiss;
+            return recover;
           case "adaptive":
             if (n === 0) return blocked;
             if (n === 1) return look;
-            return n % 2 === 0 ? dismiss : look;
+            return recover;
           case "hasty":
             if (n < 2) return blocked;
             if (n === 2) return look;
-            return n % 2 === 1 ? dismiss : blocked;
+            return recover;
           default:
-            return [blocked, blocked, escape, dismiss][n % 4];
+            return [blocked, blocked, look, recover][n % 4];
         }
       }
       case "insert_decoy": {

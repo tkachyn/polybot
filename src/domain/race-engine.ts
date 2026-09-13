@@ -252,7 +252,7 @@ export class RaceEngine {
         occurredAt: now,
         metadata: {
           tier: step.tier,
-          policy: appliedPolicy,
+          policy: result.policy ?? appliedPolicy,
           ...(sequenced ? { stepId: step.stepId, step: racer.sabotageStep } : {}),
         },
       });

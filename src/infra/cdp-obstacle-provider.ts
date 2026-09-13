@@ -65,9 +65,6 @@ export const DECOY_LABELS = [
 const DECOY_FALLBACK_LABELS = ["Next", "Go on", "Keep going", "Skip ahead"] as const;
 /** rename_control labels by intensity (1-3). */
 export const RENAME_LABELS = ["Unavailable", "Not now", "Cancel"] as const;
-/** The Close control inside a blocking_modal overlay. */
-export const DISMISS_OVERLAY_ROLE = "dismiss-overlay";
-export const DISMISS_OVERLAY_LABEL = "Close";
 /** The disclosure that hides the target during move_primary_action. */
 export const MORE_ACTIONS_ROLE = "more-actions";
 export const MORE_ACTIONS_LABEL = "More options";
@@ -76,8 +73,8 @@ export const DECOY_ID_PREFIX = "arena-decoy-";
 
 /**
  * The page script for one hazard, evaluated through CDP. Hazards persist until
- * a visible recovery control or the bounded competitor recovery action calls
- * `revert`, restoring the exact original attributes, children and nodes.
+ * the bounded competitor recovery action calls `revert`, restoring the exact
+ * original attributes, children and nodes.
  * Returns `{ applied, reason? }`.
  */
 export function buildDisruptionScript(
@@ -236,22 +233,12 @@ export function buildDisruptionScript(
           message.style.margin = "0";
           message.textContent = "The interface is temporarily unavailable";
           panel.appendChild(message);
-          const close = document.createElement("button");
-          close.type = "button";
-          close.setAttribute("data-arena-role", ${JSON.stringify(DISMISS_OVERLAY_ROLE)});
-          close.textContent = ${JSON.stringify(DISMISS_OVERLAY_LABEL)};
-          Object.assign(close.style, {
-            padding: "8px 20px",
-            fontSize: "16px",
-            cursor: "pointer",
-          });
-          close.addEventListener("click", (event) => {
-            event.preventDefault();
-            event.stopPropagation();
-            revert();
-          });
+          const instruction = document.createElement("p");
+          instruction.textContent = "Use an in-page DOM recovery action to continue";
+          instruction.style.margin = "0";
+          instruction.style.opacity = "0.72";
           overlay.appendChild(panel);
-          panel.appendChild(close);
+          panel.appendChild(instruction);
           (document.body || document.documentElement).appendChild(overlay);
           undo.push(() => overlay.remove());
         } else if (hazardType === "move_primary_action") {

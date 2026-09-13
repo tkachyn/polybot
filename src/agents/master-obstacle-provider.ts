@@ -17,6 +17,20 @@ const ALLOWED_HAZARDS: DisruptionCommand["hazardType"][] = [
   "temporary_disable",
   "rename_control",
 ];
+const CANONICAL_TARGET_ROLE = "primary-action";
+const FALLBACK_HAZARD_ORDER: readonly DisruptionCommand["hazardType"][] = [
+  "blocking_modal",
+  "insert_decoy",
+  "temporary_disable",
+  "rename_control",
+  "move_primary_action",
+];
+const TARGETED_HAZARDS = new Set<DisruptionCommand["hazardType"]>([
+  "move_primary_action",
+  "insert_decoy",
+  "temporary_disable",
+  "rename_control",
+]);
 
 export type MasterRaceObservation = {
   raceId: string;
@@ -122,7 +136,18 @@ export class MasterObstacleProvider implements ObstacleProvider {
     racerId: string,
     policy: DisruptionCommand,
   ): Promise<DisruptionResult> {
-    return this.executor.apply(racerId, policy);
+    let last: DisruptionResult = { applied: false, reason: "not_applied" };
+    for (const candidate of fallbackPolicies(policy)) {
+      const result = await this.executor.apply(racerId, candidate);
+      if (result.applied) {
+        return samePolicy(candidate, policy)
+          ? result
+          : { ...result, policy: candidate };
+      }
+      last = result;
+      if (!isRecoverableApplyFailure(result.reason)) return result;
+    }
+    return last;
   }
 
   private async selectPlan(input: {
@@ -151,18 +176,19 @@ export class MasterObstacleProvider implements ObstacleProvider {
               }))
             : Promise.reject(new Error("Master policy model has no selector")),
       );
-      validateSelectedPlan(selected);
+      const policy = normalizeTarget(selected.policy);
+      validateSelectedPlan({ ...selected, policy });
       return freezePlan({
         raceId: input.raceId,
         tier: selected.tier,
         trigger: input.trigger,
-        policy: selected.policy,
+        policy,
         selectedAt: Date.now(),
         source: "model",
       });
     } catch {
       const tier = this.legacyFallback ? "basic" : fallbackTier(input.seed);
-      const policy = this.fallbackPolicies[tier];
+      const policy = normalizeTarget(this.fallbackPolicies[tier]);
       validateSelectedPlan({ tier, policy });
       return freezePlan({
         raceId: input.raceId,
@@ -240,4 +266,44 @@ function freezePlan(plan: SabotagePlan): SabotagePlan {
         }
       : {}),
   }) as SabotagePlan;
+}
+
+function normalizeTarget(policy: DisruptionCommand): DisruptionCommand {
+  if (!TARGETED_HAZARDS.has(policy.hazardType) ||
+    policy.targetRole === CANONICAL_TARGET_ROLE) {
+    return policy;
+  }
+  // Every production course exposes this stable semantic hook. Keeping the
+  // master model's target role from leaking into CDP is what prevents a
+  // perfectly valid hazard from becoming target_not_found.
+  return { ...policy, targetRole: CANONICAL_TARGET_ROLE };
+}
+
+function fallbackPolicies(policy: DisruptionCommand): DisruptionCommand[] {
+  const candidates: DisruptionCommand[] = [normalizeTarget(policy)];
+  for (const hazardType of FALLBACK_HAZARD_ORDER) {
+    if (hazardType === policy.hazardType) continue;
+    candidates.push({
+      ...policy,
+      hazardType,
+      targetRole: CANONICAL_TARGET_ROLE,
+    });
+  }
+  return candidates.filter((candidate, index) =>
+    candidates.findIndex((other) => samePolicy(other, candidate)) === index,
+  );
+}
+
+function samePolicy(left: DisruptionCommand, right: DisruptionCommand): boolean {
+  return left.hazardType === right.hazardType &&
+    left.targetRole === right.targetRole &&
+    left.durationMs === right.durationMs &&
+    left.intensity === right.intensity &&
+    left.disruptionId === right.disruptionId;
+}
+
+function isRecoverableApplyFailure(reason: string | undefined): boolean {
+  return reason === "target_not_found" ||
+    reason === "apply_failed" ||
+    reason === "invalid_cdp_response";
 }
