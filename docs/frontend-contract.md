@@ -196,6 +196,8 @@ OpenRouter competitor calls use a shared sliding window only for configured mode
 
 In live mode the coordinator also stores Steel Agent Traces (`GET /v1/sessions/:id/agent-traces`): Steel's own record of each click, input and navigation, with the target's role, accessible name, text, `id` and CSS selector. A click whose target `id` starts with `arena-decoy-` counts as a decoy click. The live action log additionally carries the pointer position used by the runner for diagnostics; the visible cursor itself is injected into the course page so it remains present in Steel recordings.
 
+Steel publishes a released session's traces, and sometimes its recording, seconds to minutes late, and returns an unpublished trace as empty. An empty trace is read again within the closing budget. Anything still missing when the evaluation becomes final is read again in the background about 15 s, 45 s, 2 min and 5 min later. Newer evidence updates the final evaluation's `steel` fields and what derives from them (a decoy click seen by Steel, `replayOffsetSec`), and the fight's dataset record. The evaluation stays `final`, and `FightDetail.evaluation.updatedAt` moves, so an open report refetches it.
+
 Keyframes: when a sabotage hits, the racer's latest frame is kept as `before`, and the first frame captured at least 1.5 s later as `after`.
 
 ### Rules

@@ -70,6 +70,8 @@ Each `steps.jsonl` line contains:
 
 **Passwords:** text typed into password fields is replaced with `[redacted]` everywhere: in the action, the description and the error. Its length is kept in `textLength`.
 
+**Late Steel traces:** Steel publishes a session's Agent Traces seconds to minutes after the session is released, and returns no events until then. A fight's record is stored when its evaluation becomes final. Any trace or recording still missing at that point is read again about 15 s, 45 s, 2 min and 5 min later. When it arrives, the record is stored again (the latest record per fight wins) with the raw trace files, the per-step Steel slices and the updated evaluation. An export taken in the first minutes after a live fight can therefore lack its Steel events.
+
 ## How rows are derived
 
 Every rule is deterministic, and all times are epoch ms.
