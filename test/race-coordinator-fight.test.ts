@@ -71,6 +71,14 @@ class FakeRunner implements CompetitorAgentRunner {
 
 class FakeVerifier implements CourseVerifier {
   openings: string[] = [];
+  /** False for a run the course does not serve; only then may the master judge decide. */
+  covers = true;
+  /** What the course's own state says about any checkpoint or finish. */
+  verifies = true;
+
+  coversRun(): boolean {
+    return this.covers;
+  }
 
   async verifyTargetOpening(input: { racerId: string }): Promise<boolean> {
     this.openings.push(input.racerId);
@@ -78,11 +86,11 @@ class FakeVerifier implements CourseVerifier {
   }
 
   async verifyCheckpoint(): Promise<boolean> {
-    return true;
+    return this.verifies;
   }
 
   async verifyFinish(): Promise<boolean> {
-    return true;
+    return this.verifies;
   }
 }
 
@@ -104,6 +112,8 @@ function setup(options: {
   prepareError?: Error;
   fight?: Parameters<typeof normalizeFightMetadata>[0]["fight"];
   completionJudge?: CompletionJudge;
+  /** The course does not serve the run, so the master judge reviews its pages. */
+  offCourse?: boolean;
   /** A step budget the runner declares before the start. */
   maxSteps?: number;
 } = {}) {
@@ -113,6 +123,7 @@ function setup(options: {
     options.maxSteps === undefined ? {} : { maxSteps: options.maxSteps },
   );
   const verifier = new FakeVerifier();
+  if (options.offCourse) verifier.covers = false;
   const events = new InMemoryRaceEventStore();
   const ledger = new InMemoryCreditLedger();
   const coordinator = new RaceCoordinator(
@@ -217,10 +228,48 @@ test("a default sabotage arms at checkpoint 1 and describes the armed hazard", a
   await coordinator.shutdown();
 });
 
+test("a course run never consults the master judge, and master claims are verified by the course", async () => {
+  const judged: string[] = [];
+  const { coordinator, runner, verifier } = setup({
+    completionJudge: {
+      async judgeCheckpoint(input) {
+        judged.push(`checkpoint ${input.checkpoint}`);
+        return true;
+      },
+      async judgeCompletion() {
+        judged.push("completion");
+        return true;
+      },
+    },
+  });
+  // Worker reports are stamped with the wall clock.
+  await coordinator.prepareAndStart(Date.now());
+  const context = runner.running.get("racer-1");
+  assert.ok(context);
+  // The worker gets neither the judge nor a page review.
+  assert.equal(context.completionJudge, undefined);
+  assert.equal(context.reviewProgress, undefined);
+
+  // A claim the judge approved still needs the course to agree.
+  verifier.verifies = false;
+  assert.equal(await context.reportCheckpoint(1, "master"), false);
+  assert.equal(await context.reportFinish("master"), false);
+  assert.equal(coordinator.engine.racers.get("racer-1")?.checkpoint, 0);
+  assert.equal(coordinator.engine.racers.get("racer-1")?.status, "running");
+
+  verifier.verifies = true;
+  assert.equal(await context.reportCheckpoint(1, "master"), true);
+  assert.equal(coordinator.engine.racers.get("racer-1")?.checkpoint, 1);
+  assert.deepEqual(judged, []);
+  await coordinator.shutdown();
+});
+
 test("master review advances a worker that never emits checkpoint decisions", async () => {
   const checkpointClaims: number[] = [];
   const completionClaims: number[] = [];
   const { coordinator, runner } = setup({
+    // The judge only reviews a run the course does not serve.
+    offCourse: true,
     completionJudge: {
       async judgeCheckpoint(input) {
         checkpointClaims.push(input.checkpoint);

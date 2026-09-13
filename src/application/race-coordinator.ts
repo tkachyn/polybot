@@ -113,7 +113,10 @@ export type RaceCoordinatorDependencies = {
   sessionManager: RacerSessionManager;
   agentRunner: CompetitorAgentRunner;
   courseVerifier: CourseVerifier;
-  /** Optional site-agnostic master judge used when course proof is unavailable. */
+  /**
+   * Master judge for a run the course verifier does not cover (see
+   * `CourseVerifier.coversRun`). Never consulted for a run the course covers.
+   */
   completionJudge?: CompletionJudge;
   eventStore: RaceEventStore;
   obstacleProvider?: ObstacleProvider;
@@ -440,8 +443,10 @@ export class RaceCoordinator {
           reportRecovery: () => this.recordRecovery(session.racerId),
           syncProgress: () => this.syncProgress(session.racerId),
           checkFinish: () => this.checkFinish(session.racerId),
-          reviewProgress: (observation) =>
-            this.reviewProgress(session.racerId, observation),
+          // Only a run the course does not cover has its pages reviewed.
+          reviewProgress: this.judgeFor(session.racerId)
+            ? (observation) => this.reviewProgress(session.racerId, observation)
+            : undefined,
         };
         const task = this.dependencies.agentRunner
           .run(context)
@@ -466,8 +471,15 @@ export class RaceCoordinator {
     now = Date.now(),
     source: "course" | "master" = "course",
   ): Promise<boolean> {
+    // The judge's approval stands in for the course only on a run the course
+    // does not cover; any other master claim is verified like a report.
     return this.enqueueLifecycle(() =>
-      this.recordCheckpointInternal(racerId, checkpoint, now, source === "master"),
+      this.recordCheckpointInternal(
+        racerId,
+        checkpoint,
+        now,
+        source === "master" && this.judgeFor(racerId) !== undefined,
+      ),
     );
   }
 
@@ -549,7 +561,7 @@ export class RaceCoordinator {
     return this.enqueueLifecycle(() => this.recordFinishInternal(
       racerId,
       now,
-      source === "master",
+      source === "master" && this.judgeFor(racerId) !== undefined,
     ));
   }
 
@@ -660,7 +672,7 @@ export class RaceCoordinator {
     racerId: string,
     observation: WorkerStateObservation,
   ): Promise<ProgressReviewOutcome> {
-    const judge = this.dependencies.completionJudge;
+    const judge = this.judgeFor(racerId);
     if (!judge) return { finished: false, progressed: false };
     const racer = this.engine.racers.get(racerId);
     if (!racer) return { finished: false, progressed: false };
@@ -1263,7 +1275,7 @@ export class RaceCoordinator {
       seed: this.engine.race.seed,
       checkpointCount: this.engine.race.checkpointCount,
       session,
-      completionJudge: this.dependencies.completionJudge,
+      completionJudge: this.judgeFor(racerId),
       reportState: (observation) => {
         try {
           this.recordAgentState(racerId, observation);
@@ -1297,6 +1309,29 @@ export class RaceCoordinator {
     const session = this.sessions.get(racerId);
     if (!session) throw new Error(`No prepared session for ${racerId}`);
     return session;
+  }
+
+  /**
+   * The master judge, only for a run the course verifier does not cover. A
+   * covered run is advanced by the verifier alone: its worker gets no judge,
+   * its pages are never reviewed, and a checkpoint or finish the judge
+   * approved is still checked against the course.
+   */
+  private judgeFor(racerId: string): CompletionJudge | undefined {
+    const judge = this.dependencies.completionJudge;
+    if (!judge) return undefined;
+    let covered = true;
+    try {
+      covered = this.dependencies.courseVerifier.coversRun?.({
+        raceId: this.engine.race.id,
+        racerId,
+        courseId: this.engine.race.courseId,
+        seed: this.engine.race.seed,
+      }) ?? true;
+    } catch {
+      // A coverage check that fails leaves the course in charge.
+    }
+    return covered ? undefined : judge;
   }
 
   private isLive(): boolean {

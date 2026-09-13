@@ -73,6 +73,14 @@ checkpoints must advance by exactly one, duplicate observations are idempotent, 
 fires at most once per racer. Transient course-state transport failures are retried by the
 deterministic verifier; hard authorization or run-proof failures are not hidden.
 
+The master completion judge (`completionJudge`, the master model) is consulted only for a
+run the verifier says it does not cover (`CourseVerifier.coversRun` returns false). A
+verifier without that method covers every run, and `DeterministicCourseVerifier` covers every
+run, so no course-server race (arena-shop or the test course) ever reaches the judge: its
+workers get no judge and no page review, and a checkpoint or finish reported with source
+`"master"` is still verified against the course. A run on a site the course does not serve
+fails closed (it never shows progress) unless it is wired with a verifier that declines it.
+
 ### Sabotage
 
 One immutable `SabotagePlan` is selected per race *before* the start (`armSabotage`), not per

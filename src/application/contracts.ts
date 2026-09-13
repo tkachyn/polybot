@@ -161,14 +161,18 @@ export type CompetitorContext = {
   reportCheckpoint(checkpoint: number, source?: "course" | "master"): Promise<boolean | void>;
   /** Returns false when the authoritative verifier has not accepted finish. */
   reportFinish(source?: "course" | "master"): Promise<boolean | void>;
-  /** Optional site-agnostic fallback when the course has no completion proof. */
+  /**
+   * The master judge, set only for a run the course verifier does not cover
+   * (a site the course does not serve). A course run has none.
+   */
   completionJudge?: CompletionJudge;
   /** Page state is evidence/request-for-review data, never completion proof. */
   reportState?(observation: WorkerStateObservation): void;
   /**
-   * Reviews the current page for the next checkpoint or completion. Worker
-   * claims remain hints; the callback decides from the supplied observation.
-   * Returns true only when the race accepted a verified finish.
+   * Set only for a run the course verifier does not cover. Reviews the
+   * current page for the next checkpoint or completion. Worker claims remain
+   * hints; the callback decides from the supplied observation. Returns true
+   * only when the race accepted a verified finish.
    */
   reviewProgress?(observation: WorkerStateObservation): Promise<boolean>;
   /** Ends the racer's current persistent sabotage recovery state. */
@@ -200,6 +204,19 @@ export interface CompetitorAgentRunner {
 }
 
 export interface CourseVerifier {
+  /**
+   * Whether this verifier's course state answers for the run. A covered run
+   * is advanced by the verifier alone: the master completion judge is never
+   * consulted for it and never records its progress. Return false only for
+   * a run on a site the course does not serve, which leaves its progress to
+   * the judge. Without this method the verifier covers every run.
+   */
+  coversRun?(input: {
+    raceId: string;
+    racerId: string;
+    courseId: string;
+    seed?: string;
+  }): boolean;
   /** Returns verified course progress when the verifier supports progress reads. */
   getProgress?(input: {
     raceId: string;

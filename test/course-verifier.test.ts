@@ -38,6 +38,15 @@ test("accepts only checkpoint state belonging to the exact run", async () => {
   }), false);
 });
 
+test("covers every run it is asked about, so the master judge never decides a course run", () => {
+  const verifier = new DeterministicCourseVerifier({
+    async getState() {
+      throw new Error("coverage must not read course state");
+    },
+  });
+  assert.equal(verifier.coversRun(), true);
+});
+
 test("accepts a finish only when the exact run is marked finished", async () => {
   const gateway: CourseStateGateway = {
     async getState(input) {

@@ -134,6 +134,15 @@ export class DeterministicCourseVerifier implements CourseVerifier {
     }
   }
 
+  /**
+   * The course state is the authority for every run it is asked about, so
+   * the master judge never records a course run's progress. A run on a site
+   * the course does not serve just never shows progress: it fails closed.
+   */
+  coversRun(): boolean {
+    return true;
+  }
+
   async getProgress(input: {
     raceId: string;
     racerId: string;
