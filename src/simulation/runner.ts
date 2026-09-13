@@ -21,9 +21,9 @@ import type { SimulatedWorld } from "./world.js";
 
 type PrepareContext = Omit<CompetitorContext, "reportCheckpoint" | "reportFinish">;
 
-/** Unscaled wait between progress reports while the racer is recovering. */
+/** Unscaled wait between progress reports while the racer is still recovering. */
 const RECOVERY_RETRY_MS = 500;
-/** Covers the longest sabotage (30 s) at any time scale. */
+/** Bounds the wait for a recovery report that has not landed yet. */
 const RECOVERY_MAX_RETRIES = 120;
 
 /** Resolves after `ms`, or as soon as the signal aborts. Leaves no timer behind. */
@@ -167,7 +167,10 @@ export class SimulatedCompetitorRunner implements CompetitorAgentRunner {
     };
 
     for (;;) {
-      if (script.pageDone) {
+      // Progress is claimed only once the page's sabotage is cleared: the
+      // engine rejects it while the racer is recovering, and only the agent's
+      // own recovery step clears a hazard. Until then the agent keeps acting.
+      if (script.pageDone && !world.disruption(racerId)) {
         if (script.onFinishPage) {
           if (!await this.reportProgress(() => context.reportFinish(), signal)) return;
           this.reportFrame(
@@ -217,9 +220,10 @@ export class SimulatedCompetitorRunner implements CompetitorAgentRunner {
   }
 
   /**
-   * Reports a checkpoint or the finish. The engine rejects progress while the
-   * racer is still recovering from the sabotage, so this waits and retries
-   * until the coordinator has recovered it. False when stopped meanwhile.
+   * Reports a checkpoint or the finish. The loop claims progress only once
+   * the racer's hazard is cleared, so the engine's recovery gate should not
+   * reject it; if it does (a recovery report that has not landed yet), this
+   * waits and retries a bounded number of times. False when stopped meanwhile.
    */
   private async reportProgress(
     report: () => Promise<boolean | void>,

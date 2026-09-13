@@ -17,12 +17,15 @@ import { STEP_DELAY_MAX_MS, STEP_DELAY_MIN_MS, type RacerPlan } from "./plan.js"
 import { Rng } from "./rng.js";
 
 /**
- * How a scripted agent meets one sabotage hit:
- * - `careful` reads the page before acting and handles the hazard cleanly.
+ * How a scripted agent meets one sabotage hit. Sabotage persists until the
+ * agent clears it, so every response ends with the step that gets past the
+ * hazard (and clears it) before the page's checkpoint can be claimed:
+ * - `careful` reads the page before acting and handles the hazard cleanly,
+ *   at the latest when it reaches the page's main control.
  * - `adaptive` acts first, is blocked once, then works around the hazard.
  * - `hasty` repeats the blocked (or decoy) click before working around it.
- * - `stubborn` hammers the blocked control until the hazard reverts, then
- *   loses the thread for a while.
+ * - `stubborn` hammers the blocked control for a while, finally gets past
+ *   the hazard, then loses the thread for a while.
  */
 export type HazardResponse = "careful" | "adaptive" | "hasty" | "stubborn";
 
@@ -89,9 +92,9 @@ type HitState = {
   stepsAtHit: number;
   /** Hazard steps taken so far. */
   attempts: number;
-  /** Past the hazard before it reverted: dismissed, revealed or identified. */
+  /** Past the hazard (dismissed, revealed or identified), which cleared it. */
   workedAround: boolean;
-  /** The hazard reverted. */
+  /** The hazard is gone from the page. */
   settled: boolean;
 };
 
@@ -472,14 +475,19 @@ export class SimRacerScript {
       if (move) {
         const shown = this.shown(hit, active);
         hit.attempts += 1;
-        if (move.resolves) hit.workedAround = true;
+        if (move.resolves) {
+          hit.workedAround = true;
+          // Finally past the hazard, a stubborn agent loses the thread for a while.
+          if (hit.response === "stubborn") this.loseThread(hit);
+        }
         return this.toStep(move, shown);
       }
     } else if (hit && !hit.settled) {
       hit.settled = true;
+      // Only a hazard cleared outside the script disappears before the agent got past it.
       if (hit.response !== "careful" && !hit.workedAround) {
-        this.recoverySteps = Math.max(0, hit.intensity - 1);
-        if (hit.response === "stubborn") this.stallLeft = this.stallBudget(hit);
+        if (hit.response === "stubborn") this.loseThread(hit);
+        else this.recoverySteps = Math.max(0, hit.intensity - 1);
         return {
           kind: "action",
           text: `resume: "${page.target}" is usable again`,
@@ -513,10 +521,16 @@ export class SimRacerScript {
   private stallBudget(hit: HitState): number {
     const pace = median(this.cleanPageSteps) || this.typicalPageSteps;
     const target = Math.ceil(STALL_PACE_FACTOR * pace);
-    // Includes the resume step being taken now.
+    // Includes the step being taken now.
     const used = this.stepCount - hit.stepsAtHit;
     const planned = this.recoverySteps + Math.max(0, this.remaining);
     return Math.max(STALL_MIN_STEPS, target - used - planned);
+  }
+
+  /** A stubborn agent re-checks the page, then re-orients (see stallBudget). */
+  private loseThread(hit: HitState): void {
+    this.recoverySteps = Math.max(0, hit.intensity - 1);
+    this.stallLeft = this.stallBudget(hit);
   }
 
   private enterStage(stage: number): void {
@@ -568,13 +582,15 @@ export class SimRacerScript {
 
     const text = page.actions[this.actionIndex % page.actions.length] ?? `click "${page.target}"`;
     const targeted = text.includes(`"${page.target}"`);
-    if (targeted && hit && hazard) {
-      const control = this.controlMove(hit, hazard, page);
-      if (control) {
-        if (control.resolves) hit.workedAround = true;
-        if (!control.productive) return this.toStep(control, shown);
-        return this.productive(control, page, shown, true);
-      }
+    // The page is left through its main control, so an agent still facing the
+    // hazard meets it there: when it reaches the control, and at the latest
+    // on the page's last step. Getting past it clears it before the page's
+    // checkpoint is claimed.
+    if (hit && hazard && !hit.workedAround && (targeted || this.remaining <= 1)) {
+      const control = this.controlMove(hazard, page);
+      hit.workedAround = true;
+      if (!control.productive) return this.toStep(control, shown);
+      return this.productive(control, page, shown, true);
     }
 
     const reasoning = pageReasoning(text, page);
@@ -664,48 +680,40 @@ export class SimRacerScript {
 
   /**
    * The page's main control while its hazard is still on, for an agent that
-   * reads the page (careful) or already worked the hazard out. Null when the
-   * control can be used normally.
+   * reads the page (careful): the move that gets past the hazard, which
+   * clears it. Productive when it also does the page's work (the real or the
+   * relabelled control); otherwise the page's own step follows.
    */
-  private controlMove(
-    hit: HitState,
-    hazard: ScriptHazard,
-    page: SimPage,
-  ): (Move & { productive: boolean }) | null {
+  private controlMove(hazard: ScriptHazard, page: SimPage): Move & { productive: boolean } {
     const target = page.target;
-    if (hit.workedAround) return null;
     const effect = hazard.effectLabel;
     switch (hazard.hazardType) {
+      case "blocking_modal":
+        return { ...modalRecovery(effect), productive: false };
       case "temporary_disable":
-        return {
-          kind: "action",
-          text: `wait for "${target}" to become enabled`,
-          signature: `wait:${target}`,
-          reasoning: `"${target}" is greyed out, so I wait for it to become enabled.`,
-          evidence: { target: primaryTarget(target) },
-          productive: false,
-        };
-      case "move_primary_action":
-        return hit.workedAround ? null : { ...openMoreOptions(target), productive: false };
+        return { ...fillWhileDisabled(page), productive: false };
       case "rename_control":
         return {
           kind: "action",
           text: `click "${effect}" (the relabelled "${target}")`,
           reasoning: `The button where "${target}" used to be now reads "${effect}", so I click it.`,
           evidence: { target: { role: PRIMARY_ACTION_ROLE, text: effect, decoy: false } },
+          resolves: true,
           productive: true,
         };
       case "insert_decoy":
+        // Clicking the real control gets past the look-alike and clears the trap.
         return {
           kind: "action",
           text: `click "${target}", not the look-alike "${effect}"`,
           reasoning: `"${target}" is the control the task needs and "${effect}" only looks like it, so I click "${target}".`,
           evidence: { target: primaryTarget(target) },
+          resolves: true,
           productive: true,
         };
+      case "move_primary_action":
       default:
-        // The modal was dismissed before the agent reached the control.
-        return null;
+        return { ...openMoreOptions(target), productive: false };
     }
   }
 
@@ -733,12 +741,7 @@ export class SimRacerScript {
           text: `inspect the "${effect}" overlay and its DOM`,
           reasoning: "An overlay with no close control covers the page, so I inspect it before repairing the DOM.",
         };
-        const recover: Move = {
-          kind: "action",
-          text: "evaluate a bounded same-page DOM recovery helper",
-          reasoning: `The "${effect}" overlay blocks the page and waiting will not clear it, so I run the DOM recovery helper.`,
-          resolves: true,
-        };
+        const recover = modalRecovery(effect);
         switch (response) {
           case "careful":
             return recover;
@@ -751,7 +754,7 @@ export class SimRacerScript {
             if (n === 2) return look;
             return recover;
           default:
-            return [blocked, blocked, look, recover][n % 4];
+            return stubbornMove(n, [blocked, blocked, look], recover);
         }
       }
       case "insert_decoy": {
@@ -793,7 +796,7 @@ export class SimRacerScript {
           case "hasty":
             return n === 0 ? decoyClick : n === 1 ? noChange : realClick;
           default:
-            return [decoyClick, noChange, reload, decoyClick][n % 4];
+            return stubbornMove(n, [decoyClick, noChange, reload, decoyClick], realClick);
         }
       }
       case "temporary_disable": {
@@ -811,12 +814,7 @@ export class SimRacerScript {
           reasoning: `"${target}" is greyed out, so I wait for it to become enabled.`,
           evidence: { target: primaryTarget(target) },
         };
-        const fillFirst: Move = {
-          kind: "action",
-          text: `fill in the rest of "${page.heading}" while "${target}" is disabled`,
-          reasoning: `"${target}" is disabled, so I complete the rest of the form first.`,
-          resolves: true,
-        };
+        const fillFirst = fillWhileDisabled(page);
         const recheck: Move = {
           kind: "action",
           text: "re-check the form for validation errors",
@@ -830,7 +828,7 @@ export class SimRacerScript {
           case "hasty":
             return n < 2 ? disabledClick : fillFirst;
           default:
-            return [disabledClick, wait, wait, recheck][n % 4];
+            return stubbornMove(n, [disabledClick, wait, wait, recheck], fillFirst);
         }
       }
       case "rename_control": {
@@ -866,7 +864,7 @@ export class SimRacerScript {
           case "hasty":
             return n < 2 ? missingClick : renamedClick;
           default:
-            return [search, missingClick, readCopy, missingClick][n % 4];
+            return stubbornMove(n, [search, missingClick, readCopy, missingClick], renamedClick);
         }
       }
       case "move_primary_action":
@@ -901,7 +899,7 @@ export class SimRacerScript {
           case "hasty":
             return n < 2 ? hiddenClick : openMoreOptions(target);
           default:
-            return [hiddenClick, scroll, footer, snapshot][n % 4];
+            return stubbornMove(n, [hiddenClick, scroll, footer, snapshot], openMoreOptions(target));
         }
       }
     }
@@ -916,6 +914,34 @@ function openMoreOptions(target: string): Move {
     evidence: { target: { role: MORE_ACTIONS_ROLE, text: MORE_ACTIONS_LABEL, decoy: false } },
     resolves: true,
   };
+}
+
+/** The bounded DOM repair that clears a blocking overlay, which has no Close control. */
+function modalRecovery(effect: string): Move {
+  return {
+    kind: "action",
+    text: "evaluate a bounded same-page DOM recovery helper",
+    reasoning: `The "${effect}" overlay blocks the page and waiting will not clear it, so I run the DOM recovery helper.`,
+    resolves: true,
+  };
+}
+
+/** Completing the rest of the form re-enables the disabled main control. */
+function fillWhileDisabled(page: SimPage): Move {
+  return {
+    kind: "action",
+    text: `fill in the rest of "${page.heading}" while "${page.target}" is disabled`,
+    reasoning: `"${page.target}" is disabled, so I complete the rest of the form first.`,
+    resolves: true,
+  };
+}
+
+/**
+ * A stubborn agent's attempt `n`: its misses first, then, because sabotage
+ * never reverts on its own, the move that gets past the hazard.
+ */
+function stubbornMove(n: number, misses: readonly Move[], fix: Move): Move {
+  return n < misses.length ? misses[n] : fix;
 }
 
 // ---------------------------------------------------------------------------
@@ -989,7 +1015,8 @@ export function runScriptOffline(options: OfflineRunOptions): OfflineRun {
 
   events.push({ t: 0, kind: "note", step: 0, text: `open ${script.page.url}`, idle: false, ...pageRef() });
   for (;;) {
-    if (script.pageDone) {
+    // As live, progress is claimed only once the page's hazard is cleared.
+    if (script.pageDone && hazard === null) {
       const at = t + verifyMs;
       if (at >= horizonMs) return result(null, null);
       if (script.onFinishPage) {

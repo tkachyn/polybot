@@ -1,10 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { AgentActionReport, CapturedFrame, CompetitorContext } from "../src/application/contracts.js";
+import { RaceCoordinator } from "../src/application/race-coordinator.js";
 import { validateDisruptionCommand } from "../src/infra/cdp-obstacle-provider.js";
 import { HAZARD_TYPES, SABOTAGE_DETAIL_MAX, SABOTAGE_SUMMARY_MAX } from "../src/domain/sabotage.js";
+import { InMemoryRaceEventStore } from "../src/persistence/in-memory-event-store.js";
 import {
   SIM_TEMPLATES,
+  effectLabelFor,
   fitTemplate,
   pageAfterCheckpoint,
   templateForCourse,
@@ -12,7 +15,7 @@ import {
 } from "../src/simulation/catalogue.js";
 import { SIM_AGENT_ROSTER } from "../src/simulation/factory.js";
 import { escapeXml, renderSimFrame } from "../src/simulation/frames.js";
-import { planFight, planTimeline, type RacerPlan } from "../src/simulation/plan.js";
+import { planFight, planTimeline, type FightPlan, type RacerPlan } from "../src/simulation/plan.js";
 import { Rng, hashString } from "../src/simulation/rng.js";
 import { RaceRegistry } from "../src/api/race-registry.js";
 import { createSimulatedCoordinatorFactory, startSimulationAutopilot } from "../src/simulation/index.js";
@@ -26,10 +29,13 @@ import {
   simAction,
   simObservation,
   targetForAction,
+  type HazardResponse,
   type ScriptEvent,
   type ScriptHazard,
   type ScriptStep,
 } from "../src/simulation/script.js";
+import { SimulatedSessionManager } from "../src/simulation/sessions.js";
+import { SimulatedCourseVerifier } from "../src/simulation/verifier.js";
 import { SimulatedObstacleExecutor, SimulatedWorld, scaleDurationMs } from "../src/simulation/world.js";
 
 const RACERS = SIM_AGENT_ROSTER.map((agent, index) => ({ racerId: `racer-${index + 1}`, key: agent.key }));
@@ -411,6 +417,34 @@ function runPage(script: SimRacerScript, hazard: ScriptHazard | null): ScriptSte
 
 const ADAPTIVE = { vigilance: 0, composure: 1, haste: 0 };
 
+/** Plan traits that make chooseResponse pick each response. */
+const RESPONSE_TRAITS: Readonly<Record<HazardResponse, Partial<RacerPlan>>> = {
+  careful: { vigilance: 1 },
+  adaptive: ADAPTIVE,
+  hasty: { vigilance: 0, composure: 1, haste: 1 },
+  stubborn: { vigilance: 0, composure: 0 },
+};
+const RESPONSES = Object.keys(RESPONSE_TRAITS) as HazardResponse[];
+
+/**
+ * Steps one second apart under a persistent hazard, which only a step that
+ * clears it removes (as the runner clears the world), until the page is done.
+ */
+function runPersistentPage(script: SimRacerScript, hazard: ScriptHazard): { steps: ScriptStep[]; active: boolean } {
+  const steps: ScriptStep[] = [];
+  let active = true;
+  for (let t = 2_000; !script.pageDone && steps.length < 200; t += 1_000) {
+    const step = script.next(active ? hazard : null, t);
+    steps.push(step);
+    if (step.recovered) active = false;
+  }
+  return { steps, active };
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 test("hazard responses follow the plan's traits, which vary per fight", () => {
   const rng = new Rng("responses");
   assert.equal(chooseResponse({ vigilance: 1 }, rng), "careful");
@@ -505,19 +539,159 @@ test("evidence names the block until an adaptive agent works around it", () => {
   assert.deepEqual(renameSteps[1].evidence?.target, { role: "primary-action", text: "Decline", decoy: false });
 });
 
-test("a stubborn agent hammers the blocked control, then stalls about 3x its usual page", () => {
-  const template = templateById("flight-sea");
-  const script = scriptAfter(template, template.sabotage.checkpoint, { vigilance: 0, composure: 0 });
-  const steps = runPage(script, hazardOf(template, { intensity: 2, until: 3_500 }));
+test("a stubborn agent hammers the blocked control, clears it itself, then stalls about 3x its usual page", () => {
+  // Sabotage never reverts on its own: whatever the hazard, the stubborn
+  // agent must end its hammering with the step that clears it.
+  for (const hazardType of HAZARD_TYPES) {
+    const template = SIM_TEMPLATES.find((item) => item.sabotage.policy.hazardType === hazardType);
+    assert.ok(template, hazardType);
+    const script = scriptAfter(template, template.sabotage.checkpoint, RESPONSE_TRAITS.stubborn);
+    const page = script.page;
+    const { steps, active } = runPersistentPage(script, hazardOf(template, { intensity: 2 }));
+    const id = `${template.id} (${hazardType})`;
+    assert.equal(active, false, `${id}: the sabotage was cleared`);
+    const cleared = steps.findIndex((step) => step.recovered);
+    assert.ok(cleared >= 3, `${id}: hammered ${cleared} times before clearing it`);
+    assert.ok(steps.slice(0, cleared + 1).every((step) => step.disruption !== null), `${id}: on screen until cleared`);
+    assert.ok(
+      steps.slice(cleared + 1).some((step) => step.text === `re-check "${page.heading}" after the disruption`),
+      `${id}: loses the thread once past it`,
+    );
+    // Its clean pages took 4 steps: getting past this one takes over three times that.
+    assert.ok(steps.length >= 3 * 4, `${id}: ${steps.length} steps`);
+    assert.ok(steps.length <= Math.ceil(STALL_PACE_FACTOR * 4) + 1, `${id}: ${steps.length} steps`);
+  }
+  const modal = templateById("flight-sea");
+  const { steps } = runPersistentPage(
+    scriptAfter(modal, modal.sabotage.checkpoint, RESPONSE_TRAITS.stubborn),
+    hazardOf(modal),
+  );
   assert.deepEqual(
     steps.slice(0, 2).map((step) => [step.kind, step.evidence?.blockedBy]),
     [["error", "modal"], ["error", "modal"]],
   );
-  assert.ok(steps.some((step) => step.text.startsWith("resume:")));
-  assert.ok(steps.some((step) => step.signature === "stall:recheck"));
-  // Its clean pages took 4 steps: getting past this one takes over three times that.
-  assert.ok(steps.length >= 3 * 4, `${steps.length} steps`);
-  assert.ok(steps.length <= Math.ceil(STALL_PACE_FACTOR * 4) + 1, `${steps.length} steps`);
+});
+
+test("every hazard × response clears the persistent hazard before its page is done", () => {
+  for (const template of SIM_TEMPLATES) {
+    for (const hazardType of HAZARD_TYPES) {
+      for (const response of RESPONSES) {
+        for (const perStage of [2, 3, 5, 8]) {
+          const script = scriptAfter(template, template.sabotage.checkpoint, {
+            ...RESPONSE_TRAITS[response],
+            stepsPerStage: [...template.stages.map(() => perStage), 2],
+            errorRate: 0.2,
+            loopRate: 0.3,
+          });
+          const hazard = hazardOf(template, {
+            hazardType,
+            effectLabel: effectLabelFor(template, hazardType, script.page),
+          });
+          const { steps, active } = runPersistentPage(script, hazard);
+          const id = `${template.id} ${hazardType} × ${response}, ${perStage} steps a page`;
+          assert.ok(script.pageDone, `${id}: the page is done`);
+          assert.equal(active, false, `${id}: cleared before the checkpoint is claimed`);
+          assert.equal(steps.filter((step) => step.recovered).length, 1, `${id}: cleared once`);
+        }
+      }
+    }
+    // Offline (history) runs claim the next checkpoint only after the step that cleared it.
+    for (const hazardType of HAZARD_TYPES) {
+      for (const response of RESPONSES) {
+        const run = runScriptOffline({
+          plan: scriptPlan(template, RESPONSE_TRAITS[response]),
+          template,
+          seed: `offline/${hazardType}/${response}`,
+          sabotage: [{ checkpoint: template.sabotage.checkpoint, hazardType, durationMs: 9_000, intensity: 2 }],
+          freezeAtMs: 1_000_000,
+          horizonMs: 2_000_000,
+          maxSteps: 90,
+        });
+        const id = `${template.id} ${hazardType} × ${response} offline`;
+        const cleared = run.events.find((event) => event.kind === "step" && event.entry.recovered === true);
+        assert.equal(run.hitAt.length, 1, `${id}: hit`);
+        assert.ok(cleared && cleared.t > run.hitAt[0], `${id}: cleared after the hit`);
+        assert.ok(run.checkpointAt[template.sabotage.checkpoint] > cleared.t, `${id}: progress after clearing`);
+        assert.ok(run.finishAt !== null, `${id}: finished`);
+      }
+    }
+  }
+});
+
+test("every hazard × response reaches its next checkpoint without a racer failure", { timeout: 60_000 }, async () => {
+  // The real coordinator and engine (with its recovery gate), the simulated
+  // runner, world and obstacle executor. One fight per hazard; each racer
+  // meets it with a different response.
+  const timeScale = 1_000;
+  const template = templateById("ssd-checkout");
+  for (const hazardType of HAZARD_TYPES) {
+    const raceId = `race-${hazardType}`;
+    const world = new SimulatedWorld(timeScale);
+    const racers = RESPONSES.map((response, index) => ({ racerId: `racer-${index + 1}`, response }));
+    const plan: FightPlan = {
+      difficulty: "normal",
+      racers: Object.fromEntries(racers.map(({ racerId, response }) => [racerId, {
+        ...scriptPlan(template, RESPONSE_TRAITS[response]),
+        racerId,
+        // Everyone reaches checkpoint 2 long before the fastest can finish.
+        stepsPerStage: [2, 4, 30, 30, 2],
+      }])),
+    };
+    const coordinator = new RaceCoordinator(
+      {
+        raceId,
+        courseId: "sim-ssd-checkout",
+        seed: `responses-${hazardType}`,
+        checkpointCount: template.stages.length,
+        fight: {
+          checkpointLabels: template.stages.map((stage) => stage.label),
+          sabotage: {
+            checkpoint: 1,
+            summary: "A sabotage on the product page",
+            policy: { hazardType, targetRole: "add-to-cart", durationMs: 9_000, intensity: 2 },
+          },
+        },
+      },
+      {
+        sessionManager: new SimulatedSessionManager(raceId),
+        agentRunner: new SimulatedCompetitorRunner({
+          template,
+          world,
+          plan,
+          agents: {},
+          timeScale,
+          seed: `responses-${hazardType}`,
+        }),
+        courseVerifier: new SimulatedCourseVerifier(),
+        eventStore: new InMemoryRaceEventStore(),
+        obstacleProvider: new SimulatedObstacleExecutor(world, `responses-${hazardType}`),
+      },
+    );
+    try {
+      await coordinator.prepareAndStart();
+      const deadline = Date.now() + 20_000;
+      while (coordinator.engine.race.status !== "finished" && Date.now() < deadline) await delay(10);
+      assert.equal(coordinator.engine.race.status, "finished", `${hazardType}: a racer won`);
+      const events = coordinator.engine.events;
+      assert.deepEqual(
+        events.filter((event) => event.type === "racer_failed").map((event) => event.metadata?.reason),
+        [],
+        `${hazardType}: no racer failed`,
+      );
+      for (const { racerId, response } of racers) {
+        const own = events.filter((event) => event.racerId === racerId);
+        const hit = own.findIndex((event) => event.type === "sabotage_applied");
+        const cleared = own.findIndex((event) => event.type === "sabotage_recovered");
+        const next = own.findIndex((event) => event.type === "checkpoint_reached" && event.checkpoint === 2);
+        const id = `${hazardType} × ${response}`;
+        assert.ok(hit >= 0, `${id}: hit at checkpoint 1`);
+        assert.ok(cleared > hit, `${id}: cleared the hazard itself`);
+        assert.ok(next > cleared, `${id}: reached checkpoint 2 after clearing it`);
+      }
+    } finally {
+      await coordinator.shutdown();
+    }
+  }
 });
 
 test("offline runs follow the engine: progress waits for active recovery, frozen races apply none", () => {
