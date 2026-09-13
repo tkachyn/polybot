@@ -1,0 +1,29 @@
+# The course server: the storefront the racers actually shop on.
+#
+# Separate app because Steel's cloud browsers load it directly, so it needs its
+# own public hostname. It holds the authoritative per-run state that the API
+# verifies against, over plain HTTPS.
+
+app = "polybot-course"
+primary_region = "iad"
+
+[build]
+
+[env]
+  COURSE_HOST = "0.0.0.0"
+  COURSE_PORT = "4000"
+
+[processes]
+  app = "node dist/src/course-server.js"
+
+[http_service]
+  internal_port = 4000
+  force_https = true
+  auto_start_machines = true
+  auto_stop_machines = false   # in-memory run state dies with the machine
+  min_machines_running = 1
+  processes = ["app"]
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"

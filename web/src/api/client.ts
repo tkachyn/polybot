@@ -29,7 +29,15 @@ import type {
 } from "@contract";
 import { noteServerTime } from "../state/clock";
 
-export const API_BASE = "";
+/**
+ * Where the API lives. Empty means same origin, which is how the dev server
+ * (which proxies /api) and a single-host deploy both work. A split deploy —
+ * SPA on a CDN, API on its own host — sets VITE_API_BASE at build time, and
+ * every REST call, SSE stream, frame and replay URL below follows it.
+ *
+ * No trailing slash: paths are concatenated directly.
+ */
+export const API_BASE = (import.meta.env.VITE_API_BASE ?? "").replace(/\/+$/, "");
 
 /**
  * Contract error codes plus two client-side codes:

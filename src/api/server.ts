@@ -1,5 +1,6 @@
 import { existsSync, statSync } from "node:fs";
 import { resolve } from "node:path";
+import fastifyCors from "@fastify/cors";
 import fastifyStatic from "@fastify/static";
 import Fastify, { type FastifyError, type FastifyInstance, type FastifyRequest } from "fastify";
 import { DomainError, isDomainError } from "../domain/errors.js";
@@ -43,6 +44,13 @@ export type ApiServerOptions = {
   fightNumberStart?: number;
   /** Built SPA directory. Served with an SPA fallback when it exists. */
   webDist?: string;
+  /**
+   * Browser origins allowed to call this API and open its streams. Needed when
+   * the SPA is served from somewhere else (a Vercel deploy, a Vite dev server);
+   * same-origin deploys need none. Exact origins only, no wildcard: the API
+   * carries a user's balance, so it must not answer to any page that asks.
+   */
+  corsOrigins?: readonly string[];
   /**
    * Awaited once on ready, before the ticker starts (e.g. to seed history).
    * A returned function is called when the server closes.
@@ -133,6 +141,18 @@ export function buildApi(options: ApiServerOptions): FastifyInstance {
     new DefaultSteelBrowserSessionService();
   let ticker: ReturnType<typeof setInterval> | undefined;
   let stopRegistryHook: (() => void) | undefined;
+
+  // Registered before any route so preflights and error responses carry the
+  // headers too. SSE is a simple GET, but EventSource still enforces CORS.
+  const corsOrigins = options.corsOrigins?.filter((origin) => origin.length > 0) ?? [];
+  if (corsOrigins.length > 0) {
+    void app.register(fastifyCors, {
+      origin: corsOrigins as string[],
+      methods: ["GET", "POST", "DELETE", "OPTIONS"],
+      credentials: true,
+      maxAge: 86_400,
+    });
+  }
 
   app.decorate("registry", registry);
 
