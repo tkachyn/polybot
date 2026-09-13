@@ -22,7 +22,18 @@
  */
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { Account, Portfolio, PortfolioResponse, ServerMeta, UserStreamEvents } from "@contract";
-import { ApiFailure, ensureUser, getMeta, getPortfolio, getUser, isAbortError, isApiFailure, toApiFailure, userStreamUrl } from "../api/client";
+import {
+  ApiFailure,
+  ensureUser,
+  getMeta,
+  getPortfolio,
+  getUser,
+  isAbortError,
+  isApiFailure,
+  onUnconfirmedRequest,
+  toApiFailure,
+  userStreamUrl,
+} from "../api/client";
 import { useEventStream, type StreamStatus } from "../api/stream";
 import { backoffMs } from "../lib/backoff";
 import { needsFallbackPolling, useFallbackPolling } from "./polling";
@@ -66,6 +77,8 @@ const USER_CHECK_GAP_MS = 5_000;
 /** REST portfolio polling while the stream is not open. */
 const PORTFOLIO_POLL_MS = 10_000;
 const PORTFOLIO_FIRST_POLL_MS = 1_500;
+/** Portfolio reads after an unconfirmed write before leaving it to the stream and polling. */
+const RECONCILE_ATTEMPTS = 6;
 
 export type SessionProviderProps = {
   children: ReactNode;
@@ -235,6 +248,35 @@ export function SessionProvider({ children, userId: userIdOverride }: SessionPro
     intervalMs: PORTFOLIO_POLL_MS,
     firstDelayMs: PORTFOLIO_FIRST_POLL_MS,
   });
+
+  // A write that timed out (an order, a transfer) may still have gone
+  // through. Re-read balance and positions until a read succeeds, so the
+  // screen shows what actually happened.
+  useEffect(() => {
+    let cancelled = false;
+    let running = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const attempt = async (n: number) => {
+      timer = undefined;
+      const ok = await loadPortfolio();
+      if (cancelled) return;
+      if (ok || n + 1 >= RECONCILE_ATTEMPTS) {
+        running = false;
+        return;
+      }
+      timer = setTimeout(() => void attempt(n + 1), backoffMs(n));
+    };
+    const unsubscribe = onUnconfirmedRequest(() => {
+      if (running) return;
+      running = true;
+      void attempt(0);
+    });
+    return () => {
+      cancelled = true;
+      unsubscribe();
+      clearTimeout(timer);
+    };
+  }, [loadPortfolio]);
 
   const status: SessionStatus = account ? "ready" : error ? "error" : "loading";
 
