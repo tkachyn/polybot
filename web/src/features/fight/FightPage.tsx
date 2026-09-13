@@ -9,6 +9,7 @@ import type { FightDetail, PricePoint } from "@contract";
 import type { StreamStatus } from "../../api/stream";
 import { ErrorBanner, Skeleton, SkeletonText } from "../../components";
 import { cx } from "../../lib/cx";
+import { useSession } from "../../state/session";
 import { MarketRail } from "../market/MarketRail";
 import { SLIP_PARAM, slipFromParam } from "../market/slipParam";
 import type { Slip } from "../market/types";
@@ -25,6 +26,8 @@ export type FightPageProps = {
 };
 
 export function FightPage({ fight, priceHistory, streamStatus }: FightPageProps) {
+  // Judge invites promise every phone an equal bankroll, which only demo mode provides.
+  const { meta } = useSession();
   const [params, setParams] = useSearchParams();
   // `?slip=racer-1:yes` (from the lobby's featured card) opens the order form once.
   const [slip, setSlip] = useState<Slip | null>(() => slipFromParam(fight, params.get(SLIP_PARAM)));
@@ -46,7 +49,7 @@ export function FightPage({ fight, priceHistory, streamStatus }: FightPageProps)
 
   return (
     <div className={styles.screen}>
-      <MasterStrip fight={fight} action={<FightInvite raceId={fight.raceId} />} />
+      <MasterStrip fight={fight} action={meta?.demoMode ? <FightInvite raceId={fight.raceId} /> : undefined} />
       <SabotageStrip fight={fight} roster={roster} />
       <div className={styles.body}>
         <Arena fight={fight} roster={roster} slip={activeSlip} streamStatus={streamStatus} className={styles.arena} />
