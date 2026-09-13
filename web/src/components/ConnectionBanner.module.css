@@ -1,0 +1,91 @@
+/*
+ * Floats under the navbar, centred over the content: no screen's layout
+ * moves when live data stalls or recovers. Fixed, so it sits outside the
+ * shell's grid; the empty region lets clicks through.
+ */
+.region {
+  position: fixed;
+  top: calc(var(--navbar-height) + var(--space-2));
+  left: 50%;
+  z-index: var(--z-toast);
+  width: max-content;
+  max-width: calc(100vw - 2 * var(--page-gutter));
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+
+.banner {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2-5);
+  min-height: 40px;
+  padding: var(--space-1-5) var(--space-2) var(--space-1-5) var(--space-3);
+  border: 1px solid var(--tint-negative-border);
+  border-radius: var(--radius-lg);
+  /* The tint over an opaque surface: the banner covers what is beneath. */
+  background-color: var(--color-surface);
+  background-image: linear-gradient(var(--tint-negative), var(--tint-negative));
+  box-shadow: var(--shadow-pop);
+  color: var(--color-text);
+  font-size: var(--fs-body);
+  line-height: var(--lh-snug);
+  pointer-events: auto;
+  animation: enter var(--duration-base) var(--ease-standard);
+}
+
+.resumed {
+  padding-right: var(--space-3);
+  border-color: var(--tint-positive-border);
+  background-image: linear-gradient(var(--tint-positive), var(--tint-positive));
+}
+
+.icon {
+  flex-shrink: 0;
+  color: var(--color-negative);
+}
+
+.dot {
+  flex-shrink: 0;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background-color: var(--color-positive);
+}
+
+.text {
+  min-width: 0;
+}
+
+.title {
+  font-weight: var(--fw-semibold);
+}
+
+.detail {
+  color: var(--color-text-secondary);
+}
+
+.action {
+  flex-shrink: 0;
+}
+
+@keyframes enter {
+  from {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* Phones: full width inside the gutters, the text wraps. */
+@media (max-width: 759px) {
+  .region {
+    right: var(--page-gutter);
+    left: var(--page-gutter);
+    width: auto;
+    max-width: none;
+    transform: none;
+  }
+}

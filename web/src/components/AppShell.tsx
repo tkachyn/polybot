@@ -13,6 +13,7 @@ import { Link, Outlet, useLocation } from "react-router-dom";
 import { cx } from "../lib/cx";
 import { formatInitials } from "../lib/format";
 import { useSession } from "../state/session";
+import { ConnectionBanner } from "./ConnectionBanner";
 import { Skeleton } from "./Feedback";
 import { Money } from "./Figures";
 import { IconFights, IconPortfolio, IconResolved, IconWallet, LogoMark, type IconProps } from "./icons";
@@ -132,6 +133,7 @@ export function AppShell() {
         Skip to content
       </a>
       <Navbar />
+      <ConnectionBanner />
       <main id="main" className={styles.content} tabIndex={-1}>
         <ErrorBoundary resetKey={pathname}>
           <Outlet />
