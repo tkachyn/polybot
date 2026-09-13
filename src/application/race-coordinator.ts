@@ -632,14 +632,23 @@ export class RaceCoordinator {
     return run;
   }
 
-  /** Reviews the live page when a worker did not emit an explicit milestone. */
+  /**
+   * Reviews the live page with the master judge, for a run the course does
+   * not cover. Reviews run one at a time per racer, and the last state each
+   * racer's review answered for is remembered whatever the verdict, so an
+   * unchanged page is judged once instead of after every step. A review the
+   * judge could not answer (it threw) is not remembered: the next step asks
+   * again.
+   */
   private reviewProgress(
     racerId: string,
     observation: WorkerStateObservation,
   ): Promise<boolean> {
-    const checkpoint = this.engine.racers.get(racerId)?.checkpoint ?? -1;
+    const racer = this.engine.racers.get(racerId);
     const key = JSON.stringify({
-      checkpoint,
+      checkpoint: racer?.checkpoint ?? -1,
+      // A racer that recovers from sabotage on the same page is judged again.
+      status: racer?.status ?? null,
       url: observation.url,
       title: observation.title,
       bodyText: observation.bodyText,
@@ -655,7 +664,7 @@ export class RaceCoordinator {
           return { finished: false, progressed: false };
         }
         const outcome = await this.reviewProgressOnce(racerId, observation);
-        if (outcome.progressed) this.progressReviewKeys.set(racerId, key);
+        this.progressReviewKeys.set(racerId, key);
         return outcome;
       })
       .catch(() => ({ finished: false, progressed: false }));

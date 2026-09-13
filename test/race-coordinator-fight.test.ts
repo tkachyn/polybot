@@ -308,6 +308,54 @@ test("master review advances a worker that never emits checkpoint decisions", as
   await coordinator.shutdown();
 });
 
+test("the master judges an unchanged page once, and asks again when it changes or fails", async () => {
+  const judged: string[] = [];
+  let failNext = false;
+  const { coordinator, runner } = setup({
+    offCourse: true,
+    completionJudge: {
+      async judgeCheckpoint(input) {
+        judged.push(input.observation.bodyText);
+        if (failNext) {
+          failNext = false;
+          throw new Error("judge unavailable");
+        }
+        return false;
+      },
+      async judgeCompletion() {
+        return false;
+      },
+    },
+  });
+  await coordinator.prepareAndStart(1_000);
+  const review = runner.running.get("racer-1")?.reviewProgress;
+  assert.ok(review);
+  const page = {
+    url: "https://shop.test/search",
+    title: "Search",
+    bodyText: "8 results",
+    controls: [],
+    at: 2_000,
+    step: 1,
+    maxSteps: 40,
+  };
+
+  // Every step reviews the page; only the first review reaches the judge.
+  for (let step = 1; step <= 4; step += 1) {
+    assert.equal(await review({ ...page, at: 2_000 + step, step }), false);
+  }
+  assert.deepEqual(judged, ["8 results"]);
+
+  // A changed page is judged, and a review the judge could not answer is
+  // asked again on the next step, then remembered.
+  failNext = true;
+  for (let step = 5; step <= 7; step += 1) {
+    await review({ ...page, bodyText: "Cart (1)", at: 2_000 + step, step });
+  }
+  assert.deepEqual(judged, ["8 results", "Cart (1)", "Cart (1)"]);
+  await coordinator.shutdown();
+});
+
 test("an operator plan keeps its summary and fixed policy", async () => {
   const fixed: DisruptionCommand = { ...policy, hazardType: "insert_decoy", intensity: 3 };
   const obstacles = new FakeObstacles();
