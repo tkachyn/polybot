@@ -25,7 +25,7 @@ sabotage-markets-dataset-YYYY-MM-DD.zip
   steps.jsonl                                    one line per agent step (the core record)
   sft.jsonl                                      chat-format examples for supervised fine-tuning
   preferences.jsonl                              chosen / rejected pairs at sabotage moments (DPO)
-  assets/<raceId>/<racerId>/step-0007.jpg        the screenshot each step's observation was taken with
+  assets/<raceId>/<racerId>/step-0007.<ext>      the screenshot each step's observation was taken with: jpg (live) or svg (simulated)
   steel/<raceId>/<racerId>.trace.json            raw Steel Agent Traces, as returned by Steel
 ```
 
@@ -39,7 +39,7 @@ All files are [JSON Lines](https://jsonlines.org) (UTF-8, one object per line). 
 | `episodes.jsonl` (`DatasetEpisode`) | One agent in one fight | Outcome (won, finished, failed, timed_out, stopped), duration, steps, errors, loops, robustness, every sabotage reaction with time lost and explanation, crowd prices, links to its steps and Steel trace | Filtering, evaluation, curricula |
 | `sft.jsonl` (`DatasetSftExample`) | One good step of a successful run | `messages`: the runner's system prompt, the exact input the model received (task, observation, last 10 actions), and the tool call it made (with its reasoning) | Supervised fine-tuning, in the OpenAI / Hugging Face chat format |
 | `preferences.jsonl` (`DatasetPreference`) | One pair at a sabotage | The page as the trap appeared; the action that worked (`chosen`) and one that failed (`rejected`) | Preference training (DPO) |
-| `assets/…` | A screenshot | The page each step's observation was taken on | Vision and grounding, with the cursor and Steel bounding boxes |
+| `assets/…` | A screenshot: jpg (live) or svg (simulated) | The page each step's observation was taken on | Vision and grounding, with the cursor and Steel bounding boxes |
 | `steel/…` | One agent's session | Steel's own record, unmodified | Independent verification; re-deriving anything |
 
 Each `steps.jsonl` line contains:
