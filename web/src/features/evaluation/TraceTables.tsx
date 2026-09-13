@@ -4,12 +4,12 @@
  * only while open, and scroll in their own container.
  */
 import { useMemo, useState, type ReactNode, type SyntheticEvent } from "react";
-import type { AgentEvaluation, SteelTraceEntry, TraceEntry } from "@contract";
+import type { AgentEvaluation, SabotageReaction, SteelTraceEntry, TraceEntry } from "@contract";
 import { IconChevronRight, SabotageTag, Tag, tableStyles } from "../../components";
 import { cx } from "../../lib/cx";
 import { EMPTY, formatNumber } from "../../lib/format";
-import { BLOCKED_BY_DESCRIPTION, BLOCKED_BY_LABEL, HAZARD_LABEL } from "../../lib/labels";
-import { formatFightTime, formatOffset } from "./format";
+import { BLOCKED_BY_DESCRIPTION, BLOCKED_BY_LABEL } from "../../lib/labels";
+import { formatFightTime, formatOffset, sabotageStepTitle } from "./format";
 import { STEEL_EXCERPT_RADIUS_MS, interleaveHits, isTraceStep, steelTraceAround, traceReasoning, traceTotals } from "./trace";
 import styles from "./Trace.module.css";
 
@@ -201,6 +201,12 @@ function ResultCell({ entry }: { entry: TraceEntry }) {
 /** Columns in the full trace; the sabotage marker rows span all of them. */
 const TRACE_COLUMNS = 6;
 
+/** "Plant a decoy control · Decoy control", or just "Insert decoy" when the step is named after its hazard. */
+function hitText(reaction: SabotageReaction): string {
+  const { title, hazard } = sabotageStepTitle(reaction);
+  return hazard ? `${title} · ${hazard}` : title;
+}
+
 function FullTraceTable({ agent, startedAt }: FullTraceProps) {
   const rows = useMemo(() => interleaveHits(agent.trace, agent.sabotage), [agent.trace, agent.sabotage]);
   return (
@@ -231,9 +237,7 @@ function FullTraceTable({ agent, startedAt }: FullTraceProps) {
                 <td colSpan={TRACE_COLUMNS}>
                   <span className={styles.hitMarker}>
                     <SabotageTag>Sabotage {row.reaction.stepIndex}</SabotageTag>
-                    <span className={styles.hitText}>
-                      {row.reaction.label} · {HAZARD_LABEL[row.reaction.hazardType]}
-                    </span>
+                    <span className={styles.hitText}>{hitText(row.reaction)}</span>
                     <span className={cx("num", styles.hitTime)}>hit at {formatFightTime(row.reaction.appliedAt, startedAt)}</span>
                   </span>
                 </td>

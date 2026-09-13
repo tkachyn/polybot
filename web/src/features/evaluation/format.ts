@@ -2,9 +2,9 @@
  * Pure formatters for the evaluation report and the robustness matrix. Like
  * lib/format, every function accepts null/undefined/NaN and returns "—".
  */
-import type { RobustnessCell } from "@contract";
+import type { EvaluatedSabotageStep, RobustnessCell } from "@contract";
 import { EMPTY, MINUS, formatClock, formatDuration, formatLogTime, formatNumber, formatPercent, isFiniteNumber, roundTo, type Numeric } from "../../lib/format";
-import { REACTION_LABEL, ROBUSTNESS_NOT_TESTED } from "../../lib/labels";
+import { HAZARD_LABEL, REACTION_LABEL, ROBUSTNESS_NOT_TESTED, SABOTAGE_TIER_LABEL } from "../../lib/labels";
 
 /** Reaction or robustness score (0–100), rounded to a whole number: 74.6 → "75". */
 export function formatScore(score: Numeric): string {
@@ -66,13 +66,63 @@ export function formatReplayOffset(seconds: Numeric): string {
 }
 
 /**
- * "Checkpoint 3 · Search results". A default label ("Checkpoint 3", the
- * backend's fallback) is not repeated.
+ * ["Checkpoint 3", "Search results"]. A default label ("Checkpoint 3", the
+ * backend's fallback) is not repeated: ["Checkpoint 3"].
  */
-export function formatCheckpoint(index: number, label: string | null | undefined): string {
+export function checkpointParts(index: number, label: string | null | undefined): [string] | [string, string] {
   const base = `Checkpoint ${index}`;
   const text = label?.trim() ?? "";
-  return !text || text.toLowerCase() === base.toLowerCase() ? base : `${base} · ${text}`;
+  return !text || text.toLowerCase() === base.toLowerCase() ? [base] : [base, text];
+}
+
+/** "Checkpoint 3 · Search results", or "Checkpoint 3" for a default label. */
+export function formatCheckpoint(index: number, label: string | null | undefined): string {
+  return checkpointParts(index, label).join(" · ");
+}
+
+/** Lowercase words only, so "Insert decoy" and "insert_decoy" compare equal. */
+function words(text: string): string {
+  return text
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+/**
+ * A sabotage step's title, and its hazard when that adds something. A step
+ * without a named preset is labelled after its hazard type ("Insert decoy"
+ * for insert_decoy), which names the same thing as the hazard's display
+ * label ("Decoy control"), so the hazard is not repeated beside it. A named
+ * preset ("Plant a decoy control") keeps its hazard.
+ */
+export function sabotageStepTitle(step: Pick<EvaluatedSabotageStep, "label" | "hazardType">): { title: string; hazard: string | null } {
+  const hazard = HAZARD_LABEL[step.hazardType];
+  const title = step.label.trim();
+  if (!title) return { title: hazard, hazard: null };
+  const own = words(title);
+  return own === words(step.hazardType) || own === words(hazard) ? { title, hazard: null } : { title, hazard };
+}
+
+export type StepMetaItem = {
+  text: string;
+  /** Free text (a checkpoint's own label) may wrap inside itself; the short items never break. */
+  wrap: boolean;
+};
+
+/**
+ * The facts under a sabotage step's title, one item each so a line breaks
+ * between items, never inside one ("Checkpoint / 3"): the hazard (unless the
+ * title already names it), the tier, the checkpoint and its label.
+ */
+export function sabotageStepMeta(step: Pick<EvaluatedSabotageStep, "label" | "hazardType" | "tier" | "checkpoint" | "checkpointLabel">): StepMetaItem[] {
+  const { hazard } = sabotageStepTitle(step);
+  const [checkpoint, checkpointLabel] = checkpointParts(step.checkpoint, step.checkpointLabel);
+  const items: StepMetaItem[] = [];
+  if (hazard) items.push({ text: hazard, wrap: false });
+  items.push({ text: SABOTAGE_TIER_LABEL[step.tier], wrap: false });
+  items.push({ text: checkpoint, wrap: false });
+  if (checkpointLabel) items.push({ text: checkpointLabel, wrap: true });
+  return items;
 }
 
 /** Time into the fight ("01:23"), or the local time of day when the start is unknown. */

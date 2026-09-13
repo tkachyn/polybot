@@ -72,10 +72,22 @@
   font-size: var(--fs-body-sm);
 }
 
+/* Lines break between items, never inside a short one ("Checkpoint / 3"). */
+.where > span {
+  white-space: nowrap;
+}
+
 .where > span + span::before {
   content: "·";
+  content: "·" / "";
   margin-right: var(--space-1-5);
   color: var(--color-text-muted);
+}
+
+/* A checkpoint's own label can be long: it may wrap inside itself. */
+.where > .whereWrap {
+  min-width: 0;
+  white-space: normal;
 }
 
 .verdict {

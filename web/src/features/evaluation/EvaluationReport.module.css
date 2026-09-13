@@ -197,9 +197,30 @@
   font-weight: var(--fw-medium);
 }
 
+/* Hazard · tier · checkpoint · its label: lines break between items, never inside a short one. */
 .sequenceMeta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 var(--space-1-5);
   color: var(--color-text-secondary);
   font-size: var(--fs-body-sm);
+}
+
+.sequenceMeta > span {
+  white-space: nowrap;
+}
+
+.sequenceMeta > span + span::before {
+  content: "·";
+  content: "·" / "";
+  margin-right: var(--space-1-5);
+  color: var(--color-text-muted);
+}
+
+/* A checkpoint's own label can be long: it may wrap inside itself. */
+.sequenceMeta > .metaWrap {
+  min-width: 0;
+  white-space: normal;
 }
 
 .findings {

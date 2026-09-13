@@ -6,6 +6,7 @@ import { AGENT_OUTCOME_LABEL, BLOCKED_BY_LABEL, EVALUATION_MODE_LABEL, EVALUATIO
 import { DATASET_FILES, datasetScope, simulatedDatasetWarning } from "./dataset";
 import {
   cellCountsText,
+  checkpointParts,
   describeHitOffset,
   formatCheckpoint,
   formatFightTime,
@@ -16,6 +17,8 @@ import {
   formatSeconds,
   formatSurvival,
   matrixCellView,
+  sabotageStepMeta,
+  sabotageStepTitle,
 } from "./format";
 import { matchesSelection, parseEvaluationMode, parseEvaluationWindow } from "./params";
 import { EVALUATION_STATUS_TONE, OUTCOME_TONE, REACTION_TONE, TONE_COLOR_VAR } from "./tones";
@@ -221,6 +224,36 @@ describe("time formatting", () => {
   it("gives times into the fight", () => {
     expect(formatFightTime(84_000, 1_000)).toBe("01:23");
     expect(formatFightTime(null, 1_000)).toBe(EMPTY);
+  });
+});
+
+describe("sabotage step labels", () => {
+  it("does not repeat a hazard the step is already named after", () => {
+    // A step without a named preset is labelled after its hazard type.
+    expect(sabotageStepTitle({ label: "Blocking modal", hazardType: "blocking_modal" })).toEqual({ title: "Blocking modal", hazard: null });
+    expect(sabotageStepTitle({ label: "Insert decoy", hazardType: "insert_decoy" })).toEqual({ title: "Insert decoy", hazard: null });
+    expect(sabotageStepTitle({ label: "Temporary disable", hazardType: "temporary_disable" })).toEqual({ title: "Temporary disable", hazard: null });
+    expect(sabotageStepTitle({ label: "Decoy control", hazardType: "insert_decoy" })).toEqual({ title: "Decoy control", hazard: null });
+    // A named preset keeps its hazard; a missing label falls back to the hazard alone.
+    expect(sabotageStepTitle({ label: "Plant a decoy control", hazardType: "insert_decoy" })).toEqual({
+      title: "Plant a decoy control",
+      hazard: "Decoy control",
+    });
+    expect(sabotageStepTitle({ label: "  ", hazardType: "rename_control" })).toEqual({ title: "Renamed control", hazard: null });
+  });
+
+  it("splits the facts under a step into items a line never breaks inside", () => {
+    const step = { tier: "difficult" as const, checkpoint: 3, checkpointLabel: "Seat map" };
+    expect(sabotageStepMeta({ ...step, label: "Blocking modal", hazardType: "blocking_modal" })).toEqual([
+      { text: "Difficult", wrap: false },
+      { text: "Checkpoint 3", wrap: false },
+      { text: "Seat map", wrap: true },
+    ]);
+    expect(
+      sabotageStepMeta({ ...step, label: "Cover the page with a modal", hazardType: "blocking_modal", checkpointLabel: "Checkpoint 3" }).map((item) => item.text),
+    ).toEqual(["Blocking modal", "Difficult", "Checkpoint 3"]);
+    expect(checkpointParts(3, "Seat map")).toEqual(["Checkpoint 3", "Seat map"]);
+    expect(checkpointParts(2, "checkpoint 2")).toEqual(["Checkpoint 2"]);
   });
 });
 

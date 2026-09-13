@@ -12,17 +12,10 @@ import { AgentMonogram, Button, EmptyState, ErrorBanner, IconAlert, ProgressBar,
 import { agentStyle, rosterVisuals, type AgentVisual } from "../../lib/agents";
 import { cx } from "../../lib/cx";
 import { formatDateTime, formatFightNumber, formatNumber, isFiniteNumber } from "../../lib/format";
-import {
-  EVALUATION_MODE_LABEL,
-  HAZARD_LABEL,
-  REACTION_LABEL,
-  SABOTAGE_TIER_LABEL,
-  SIMULATED_AGENTS_COPY,
-  SIMULATED_AGENTS_LABEL,
-} from "../../lib/labels";
+import { EVALUATION_MODE_LABEL, REACTION_LABEL, SIMULATED_AGENTS_COPY, SIMULATED_AGENTS_LABEL } from "../../lib/labels";
 import { AgentEvaluationSection } from "./AgentEvaluationSection";
 import { EvaluationStatusChip, OutcomeChip, ReactionChip } from "./Chip";
-import { formatCheckpoint, formatRobustness } from "./format";
+import { formatRobustness, sabotageStepMeta, sabotageStepTitle } from "./format";
 import { REACTION_TONE } from "./tones";
 import { Disclosure } from "./TraceTables";
 import { useFightEvaluation } from "./useFightEvaluation";
@@ -249,9 +242,13 @@ function SabotageSequence({ steps }: { steps: readonly EvaluatedSabotageStep[] }
             <li key={step.stepId} className={styles.sequenceStep}>
               <span className={cx("num", styles.stepBadge)}>{step.index}</span>
               <span className={styles.sequenceText}>
-                <span className={styles.sequenceLabel}>{step.label}</span>
+                <span className={styles.sequenceLabel}>{sabotageStepTitle(step).title}</span>
                 <span className={styles.sequenceMeta}>
-                  {HAZARD_LABEL[step.hazardType]} · {SABOTAGE_TIER_LABEL[step.tier]} · {formatCheckpoint(step.checkpoint, step.checkpointLabel)}
+                  {sabotageStepMeta(step).map((item, i) => (
+                    <span key={i} className={item.wrap ? styles.metaWrap : undefined}>
+                      {item.text}
+                    </span>
+                  ))}
                 </span>
               </span>
             </li>

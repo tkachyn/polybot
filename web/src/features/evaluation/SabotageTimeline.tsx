@@ -9,10 +9,18 @@ import { evidenceFrameUrl, replayUrl } from "../../api/client";
 import { Button, Tag } from "../../components";
 import { cx } from "../../lib/cx";
 import { EMPTY, formatNumber } from "../../lib/format";
-import { HAZARD_LABEL, SABOTAGE_TIER_LABEL } from "../../lib/labels";
 import { ReactionChip } from "./Chip";
 import { EvidenceDialog, type EvidenceItem, type EvidenceSide } from "./EvidenceDialog";
-import { describeHitOffset, formatCheckpoint, formatFightTime, formatOffset, formatReplayOffset, formatScore, formatSeconds } from "./format";
+import {
+  describeHitOffset,
+  formatFightTime,
+  formatOffset,
+  formatReplayOffset,
+  formatScore,
+  formatSeconds,
+  sabotageStepMeta,
+  sabotageStepTitle,
+} from "./format";
 import { IconPlay } from "./icons";
 import { ReplayDialog } from "./ReplayPlayer";
 import { SteelExcerpt } from "./TraceTables";
@@ -50,6 +58,8 @@ function ReactionRow({ raceId, agent, reaction, startedAt }: ReactionRowProps) {
   const [evidenceOpen, setEvidenceOpen] = useState<EvidenceSide | null>(null);
   const [replayOpen, setReplayOpen] = useState(false);
   const name = agent.agent.name;
+  // The same title and de-duplicated hazard as the sequence card and the trace.
+  const { title, hazard } = sabotageStepTitle(reaction);
   const { before, after, replayOffsetSec } = reaction.evidence;
   const delay = reaction.progressedAt !== null ? reaction.progressedAt - reaction.appliedAt : null;
   const active = reaction.expiredAt !== null ? reaction.expiredAt - reaction.appliedAt : null;
@@ -67,11 +77,13 @@ function ReactionRow({ raceId, agent, reaction, startedAt }: ReactionRowProps) {
       <div className={styles.content}>
         <div className={styles.head}>
           <div className={styles.what}>
-            <h5 className={styles.preset}>{reaction.label}</h5>
+            <h5 className={styles.preset}>{title}</h5>
             <p className={styles.where}>
-              <span>{HAZARD_LABEL[reaction.hazardType]}</span>
-              <span>{SABOTAGE_TIER_LABEL[reaction.tier]}</span>
-              <span>{formatCheckpoint(reaction.checkpoint, reaction.checkpointLabel)}</span>
+              {sabotageStepMeta(reaction).map((item, i) => (
+                <span key={i} className={item.wrap ? styles.whereWrap : undefined}>
+                  {item.text}
+                </span>
+              ))}
               <span className="num">Hit at {formatFightTime(reaction.appliedAt, startedAt)}</span>
             </p>
           </div>
@@ -143,14 +155,7 @@ function ReactionRow({ raceId, agent, reaction, startedAt }: ReactionRowProps) {
       {evidenceOpen && (
         <EvidenceDialog
           title={`${name} · sabotage ${reaction.stepIndex}`}
-          subtitle={[
-            reaction.label,
-            // A step without a named preset is labelled after its hazard; don't repeat it.
-            HAZARD_LABEL[reaction.hazardType].toLowerCase() === reaction.label.toLowerCase()
-              ? null
-              : HAZARD_LABEL[reaction.hazardType],
-            reaction.checkpointLabel,
-          ].filter(Boolean).join(" · ")}
+          subtitle={[title, hazard, reaction.checkpointLabel].filter(Boolean).join(" · ")}
           frames={frames}
           initial={evidenceOpen}
           appliedAt={reaction.appliedAt}
@@ -163,7 +168,7 @@ function ReactionRow({ raceId, agent, reaction, startedAt }: ReactionRowProps) {
           startAt={replayOffset}
           agentName={name}
           stepIndex={reaction.stepIndex}
-          stepLabel={reaction.label}
+          stepLabel={title}
           onClose={() => setReplayOpen(false)}
         />
       )}
