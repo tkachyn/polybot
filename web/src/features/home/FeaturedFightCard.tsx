@@ -1,6 +1,7 @@
 /**
  * Featured fight: the lobby's large hero card, laid out like Kalshi's
- * featured market. It is the demo's one real fight, live over its stream.
+ * featured market. It shows the fight picked by ./featured, live over its
+ * stream.
  *
  *   header   FEATURED · FIGHT #0412 · status pill · clock
  *            title (2 lines) · SABOTAGE + summary
@@ -8,15 +9,17 @@
  *            chart (right): win probability over time, sabotage marker
  *   footer   volume · traders · leader checkpoint · resolution · View fight
  *
- * Yes / No open the fight screen with that bet slip preselected.
+ * Yes / No open the fight screen with that bet slip preselected. Once the
+ * market settles, the chance and Yes / No give way to each agent's result
+ * and what one YES share paid ($1.00 or $0.00).
  */
 import { useId } from "react";
 import { useNavigate } from "react-router-dom";
-import type { FightAgentSummary, FightSummary, Side } from "@contract";
-import { AgentMonogram, ButtonLink, ChangeCents, EmptyState, Skeleton, StatusPill, fightPillStatus } from "../../components";
+import type { FightAgentSummary, FightSummary, RunStatus, Side } from "@contract";
+import { AgentMonogram, ButtonLink, ChangeCents, EmptyState, Skeleton, StatusPill, Tag, fightPillStatus } from "../../components";
 import { agentStyle, rosterVisuals, type AgentVisual } from "../../lib/agents";
 import { cx } from "../../lib/cx";
-import { formatCents, formatChance, formatCompactMoney, formatFightNumber, formatNumber } from "../../lib/format";
+import { formatCents, formatChance, formatCompactMoney, formatFightNumber, formatMoney, formatNumber } from "../../lib/format";
 import { RUN_STATUS_LABEL } from "../../lib/labels";
 import { useFightStream } from "../fight/useFightStream";
 import { ProbabilityChart } from "../market/ProbabilityChart";
@@ -27,71 +30,130 @@ import styles from "./FeaturedFightCard.module.css";
 /** Chance as a whole percent. Lives in lib/format; re-exported for this screen. */
 export { formatChance } from "../../lib/format";
 
-type Outcome = "winner" | "loser" | null;
+/**
+ * Run status as one word, so it fits beside the checkpoint count in the
+ * narrow outcome column. The full label is the progress line's tooltip.
+ */
+const SHORT_RUN_STATUS: Readonly<Record<Exclude<RunStatus, "run">, string>> = {
+  warn: "Looping",
+  recovering: "Recovering",
+  bad: "Blocked",
+};
 
-function outcomeFor(fight: FightSummary, racerId: string): Outcome {
-  if (fight.status !== "resolved" || fight.voided || !fight.winnerRacerId) return null;
-  return fight.winnerRacerId === racerId ? "winner" : "loser";
+/** How the market settled for one agent; null until it has. */
+type Settlement = "won" | "lost" | "void";
+
+function settlementFor(fight: FightSummary, racerId: string): Settlement | null {
+  if (fight.status !== "resolved") return null;
+  if (fight.voided) return "void";
+  if (!fight.winnerRacerId) return null;
+  return fight.winnerRacerId === racerId ? "won" : "lost";
 }
 
 type OutcomeRowProps = {
   agent: FightAgentSummary;
   visual: AgentVisual;
   checkpointCount: number;
-  outcome: Outcome;
+  /** The fight is running: show each agent's run status. */
+  live: boolean;
+  settlement: Settlement | null;
   tradable: boolean;
   closedReason: string;
   onPick: (racerId: string, side: Side) => void;
 };
 
-function OutcomeRow({ agent, visual, checkpointCount, outcome, tradable, closedReason, onPick }: OutcomeRowProps) {
+function OutcomeRow({ agent, visual, checkpointCount, live, settlement, tradable, closedReason, onPick }: OutcomeRowProps) {
   const name = agent.agent.name;
+  const status = live && agent.runStatus !== "run" ? agent.runStatus : null;
+  const progressTitle = `${formatNumber(agent.checkpoint)} of ${formatNumber(checkpointCount)} checkpoints${
+    status ? ` · ${RUN_STATUS_LABEL[status]}` : ""
+  }`;
   return (
-    <li className={cx(styles.outcome, outcome && styles[outcome])} style={agentStyle(visual)}>
+    <li
+      className={cx(styles.outcome, settlement === "won" && styles.winner, settlement === "lost" && styles.loser)}
+      style={agentStyle(visual)}
+    >
       <AgentMonogram agent={visual} size="md" />
       <div className={styles.identity}>
         <span className={styles.name} title={name}>
           {name}
         </span>
-        <span className={styles.progress}>
+        <span className={styles.progress} title={progressTitle}>
           <span className="num">
             {formatNumber(agent.checkpoint)}/{formatNumber(checkpointCount)}
-          </span>{" "}
-          checkpoints
-          {agent.runStatus !== "run" && (
-            <span className={cx(styles.status, styles[agent.runStatus])}> · {RUN_STATUS_LABEL[agent.runStatus]}</span>
+          </span>
+          {status ? (
+            <>
+              {" · "}
+              <span className={cx(styles.status, styles[status])}>{SHORT_RUN_STATUS[status]}</span>
+            </>
+          ) : (
+            " checkpoints"
           )}
         </span>
       </div>
-      <div className={styles.chance}>
-        <span className={cx("num", styles.chanceValue)}>{formatChance(agent.yes)}</span>
-        {/* The chance restates the Yes price, so the only figure worth adding
-            here is a move. At no change there is nothing to add. */}
-        {agent.change !== 0 && <ChangeCents value={agent.change} />}
-      </div>
-      <div className={styles.sides}>
-        <button
-          type="button"
-          className={cx(styles.side, styles.yes)}
-          disabled={!tradable}
-          title={tradable ? undefined : closedReason}
-          onClick={() => onPick(agent.racerId, "yes")}
-          aria-label={`Buy Yes on ${name} at ${formatCents(agent.yes)}`}
-        >
-          Yes <span className="num">{formatCents(agent.yes)}</span>
-        </button>
-        <button
-          type="button"
-          className={cx(styles.side, styles.no)}
-          disabled={!tradable}
-          title={tradable ? undefined : closedReason}
-          onClick={() => onPick(agent.racerId, "no")}
-          aria-label={`Buy No on ${name} at ${formatCents(agent.no)}`}
-        >
-          No <span className="num">{formatCents(agent.no)}</span>
-        </button>
-      </div>
+      {settlement ? (
+        <SettlementCells settlement={settlement} />
+      ) : (
+        <>
+          <div className={styles.chance}>
+            <span className={cx("num", styles.chanceValue)}>{formatChance(agent.yes)}</span>
+            {/* The chance restates the Yes price, so the only figure worth adding
+                here is a move. At no change there is nothing to add. */}
+            {agent.change !== 0 && <ChangeCents value={agent.change} />}
+          </div>
+          <div className={styles.sides}>
+            <button
+              type="button"
+              className={cx(styles.side, styles.yes)}
+              disabled={!tradable}
+              title={tradable ? undefined : closedReason}
+              onClick={() => onPick(agent.racerId, "yes")}
+              aria-label={`Buy Yes on ${name} at ${formatCents(agent.yes)}`}
+            >
+              Yes <span className="num">{formatCents(agent.yes)}</span>
+            </button>
+            <button
+              type="button"
+              className={cx(styles.side, styles.no)}
+              disabled={!tradable}
+              title={tradable ? undefined : closedReason}
+              onClick={() => onPick(agent.racerId, "no")}
+              aria-label={`Buy No on ${name} at ${formatCents(agent.no)}`}
+            >
+              No <span className="num">{formatCents(agent.no)}</span>
+            </button>
+          </div>
+        </>
+      )}
     </li>
+  );
+}
+
+/** Result and settlement in place of chance and Yes / No, once the market settles. */
+function SettlementCells({ settlement }: { settlement: Settlement }) {
+  if (settlement === "void") {
+    return (
+      <>
+        <div className={styles.chance}>
+          <span className={cx("label", styles.resultVoid)}>Void</span>
+        </div>
+        <div className={styles.settlement} title="No agent finished before the cap. Positions were refunded.">
+          <span className={styles.settleNote}>Refunded</span>
+        </div>
+      </>
+    );
+  }
+  const won = settlement === "won";
+  return (
+    <>
+      <div className={styles.chance}>
+        <Tag tone={won ? "positive" : "neutral"}>{won ? "Won" : "Lost"}</Tag>
+      </div>
+      <div className={styles.settlement} title={won ? "Each YES share paid $1.00" : "YES shares paid nothing"}>
+        <span className={cx("num", styles.settleValue)}>{formatMoney(won ? 1 : 0)}</span>
+      </div>
+    </>
   );
 }
 
@@ -113,6 +175,8 @@ export function FeaturedFightCard({ fight }: { fight: FightSummary }) {
 
   const href = `/fights/${encodeURIComponent(shown.raceId)}`;
   const tradable = shown.marketStatus === "open";
+  const frozen = shown.status === "live" && shown.marketStatus === "frozen";
+  const settled = shown.status === "resolved" && (shown.voided || shown.winnerRacerId !== null);
   const visuals = rosterVisuals(shown.agents.map((a) => a.agent));
   const number = formatFightNumber(shown.number);
   const pick = (racerId: string, side: Side) => {
@@ -128,6 +192,11 @@ export function FeaturedFightCard({ fight }: { fight: FightSummary }) {
             Fight <span className="num">{number}</span>
           </span>
           <StatusPill status={fightPillStatus(shown)} size="sm" />
+          {frozen && (
+            <Tag tone="neutral" title={closedReasonFor(shown)}>
+              Trading frozen
+            </Tag>
+          )}
           <CardClock fight={shown} />
         </div>
         <h2 id={titleId} className={cx("clamp-2", styles.title)} title={shown.title}>
@@ -140,7 +209,12 @@ export function FeaturedFightCard({ fight }: { fight: FightSummary }) {
         <section className={styles.outcomesPanel} aria-label="Outcomes">
           <div className={cx("label", styles.outcomesHead)}>
             <span>Agent</span>
-            <span className={styles.headChance}>Chance</span>
+            <span className={styles.headChance}>{settled ? "Result" : "Chance"}</span>
+            {settled && (
+              <span className={styles.headSettle} title="What one YES share paid at settlement">
+                Settlement
+              </span>
+            )}
           </div>
           <ul className={styles.outcomes}>
             {shown.agents.map((agent, index) => (
@@ -149,7 +223,8 @@ export function FeaturedFightCard({ fight }: { fight: FightSummary }) {
                 agent={agent}
                 visual={visuals[index] ?? rosterVisuals([agent.agent])[0]!}
                 checkpointCount={shown.checkpointCount}
-                outcome={outcomeFor(shown, agent.racerId)}
+                live={shown.status === "live"}
+                settlement={settlementFor(shown, agent.racerId)}
                 tradable={tradable}
                 closedReason={closedReasonFor(shown)}
                 onPick={pick}
@@ -203,13 +278,13 @@ export function FeaturedFightCard({ fight }: { fight: FightSummary }) {
   );
 }
 
-/** Shown when the backend has no fight yet (live mode before POST /races). */
+/** Shown when there is no fight at all yet. */
 export function FeaturedFightEmpty() {
   return (
     <div className={cx(styles.card, styles.emptyCard)}>
       <EmptyState
-        title="The featured fight hasn’t been created yet"
-        description="It appears here, live, as soon as the race is created on the backend."
+        title="No fights yet"
+        description="The next fight shows up here as soon as it’s scheduled, with its market open for trading."
       />
     </div>
   );

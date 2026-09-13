@@ -168,6 +168,39 @@
   gap: var(--space-1-5);
 }
 
+/* Once the market settles: result over column 3, what YES paid over column 4. */
+.headSettle {
+  grid-column: 4;
+  text-align: right;
+}
+
+.settlement {
+  display: flex;
+  align-items: baseline;
+  justify-content: flex-end;
+  min-width: 0;
+}
+
+.settleValue {
+  font-size: var(--fs-price);
+  font-weight: 600;
+  line-height: 1;
+  color: var(--color-text);
+}
+
+.winner .settleValue {
+  color: var(--color-positive);
+}
+
+.settleNote {
+  font-size: var(--fs-body);
+  color: var(--color-text-muted);
+}
+
+.resultVoid {
+  color: var(--color-text-muted);
+}
+
 .side {
   padding: var(--space-2);
   border: 1px solid transparent;
@@ -313,6 +346,12 @@
 
   .sides {
     grid-column: 1 / -1;
+  }
+
+  /* No fourth column here: the Won / Lost result carries it. */
+  .headSettle,
+  .settlement {
+    display: none;
   }
 
   .view {

@@ -4,6 +4,7 @@
  *   head     FIGHT #0412 · status pill · clock
  *   title    the task (2 lines) · SABOTAGE + summary (1 line)
  *   agents   one row per agent: mark, name over a progress rule, chance
+ *            (once resolved: what one YES share paid, $1.00 or $0.00)
  *   footer   volume / traders / checkpoints · resolution · View
  *
  * Shared by the Fights (home) and Resolved screens.
@@ -23,7 +24,16 @@ import {
 } from "../../components";
 import { agentStyle, rosterVisuals, type AgentVisual } from "../../lib/agents";
 import { cx } from "../../lib/cx";
-import { formatChance, formatClock, formatCompactMoney, formatFightNumber, formatNumber, formatTimeOfDay, isoDuration } from "../../lib/format";
+import {
+  formatChance,
+  formatClock,
+  formatCompactMoney,
+  formatFightNumber,
+  formatMoney,
+  formatNumber,
+  formatTimeOfDay,
+  isoDuration,
+} from "../../lib/format";
 import { RUN_STATUS_LABEL, SABOTAGE_HIDDEN_COPY } from "../../lib/labels";
 import { useNow } from "../../state/clock";
 import { PREVIEW_FIGHT_HINT } from "./placeholders";
@@ -161,6 +171,14 @@ function AgentRow({ agent, visual, outcome, live, checkpointCount }: {
       {blocked && <span className={styles.blocked} title={RUN_STATUS_LABEL.bad} role="img" aria-label={RUN_STATUS_LABEL.bad} />}
       {outcome === "void" ? (
         <span className={cx("label", styles.chipVoid)}>Void</span>
+      ) : outcome ? (
+        // Settled: the last traded price would read as a live chance.
+        <span
+          className={cx("num", styles.agentChance)}
+          title={`Each YES share paid ${formatMoney(outcome === "winner" ? 1 : 0)}. Last price before settlement: ${formatChance(agent.yes)}.`}
+        >
+          {formatMoney(outcome === "winner" ? 1 : 0)}
+        </span>
       ) : (
         <span className={cx("num", styles.agentChance)}>{formatChance(agent.yes)}</span>
       )}
@@ -173,7 +191,7 @@ function AgentStrip({ fight }: { fight: FightSummary }) {
   const visuals = rosterVisuals(fight.agents.map((a) => a.agent));
   const live = fight.status === "live";
   return (
-    <ul className={styles.strip} aria-label="Agents and win chance">
+    <ul className={styles.strip} aria-label={fight.status === "resolved" ? "Agents and settlement" : "Agents and win chance"}>
       {fight.agents.map((agent, i) => (
         <AgentRow
           key={agent.racerId}
