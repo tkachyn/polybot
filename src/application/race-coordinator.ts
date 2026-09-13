@@ -10,6 +10,8 @@ import type {
   SabotageState,
   ServerMode,
 } from "../api/dto.js";
+import { captureFightDataset } from "../dataset/capture.js";
+import type { DatasetStore } from "../dataset/store.js";
 import { DomainError } from "../domain/errors.js";
 import { RaceEngine } from "../domain/race-engine.js";
 import {
@@ -108,6 +110,12 @@ export type RaceCoordinatorDependencies = {
   llmUsage?: () => RaceSnapshot["llmUsage"];
   /** The final evaluation is stored here once the fight closes. */
   evaluationStore?: EvaluationStore;
+  /**
+   * The fight's training record (docs/training-data.md), with its step
+   * screenshots and raw Steel traces, is stored here once, after the final
+   * evaluation. A failure never reaches the race or the evaluation.
+   */
+  datasetStore?: DatasetStore;
   /** Stamped on evaluations; Steel evidence is read in live mode only. Default "live". */
   mode?: ServerMode;
   /** Fetch used for Steel evidence (agent traces, HLS). Default: the global fetch. */
@@ -252,6 +260,7 @@ export class RaceCoordinator {
   private evaluationCache: { key: string; evaluation: FightEvaluation } | null = null;
   private finalEvaluation: FightEvaluation | null = null;
   private finalizeRequested = false;
+  private datasetStored = false;
   private readonly finalWaiters: Array<(evaluation: FightEvaluation) => void> = [];
 
   constructor(
@@ -1409,12 +1418,62 @@ export class RaceCoordinator {
     } catch {
       // A storage failure must not keep the evaluation provisional.
     }
+    // Captured now, stored in the background: the dataset never delays finality.
+    const dataset = this.storeDataset(evaluation, steel);
     this.finalEvaluation = evaluation;
     this.evaluationCache = null;
     this.evaluationVersion += 1;
     this.evaluationUpdatedAt = Math.max(this.evaluationUpdatedAt + 1, evaluation.generatedAt);
     for (const resolve of this.finalWaiters.splice(0)) resolve(structuredClone(evaluation));
     this.flush({ ...createChanges(), fight: true });
+    await dataset;
+  }
+
+  /**
+   * Hands the fight's training record (docs/training-data.md) and its files
+   * to the dataset store, exactly once: every racer's step records and step
+   * screenshots, the engine events, and the Steel evidence the evaluation
+   * already read (never fetched again). Never throws and never rejects.
+   */
+  private storeDataset(
+    evaluation: FightEvaluation,
+    steel: ReadonlyMap<string, SteelEvidence> | undefined,
+  ): Promise<void> {
+    const store = this.dependencies.datasetStore;
+    if (!store || this.datasetStored) return Promise.resolve();
+    this.datasetStored = true;
+    try {
+      const race = this.engine.race;
+      const fight = this.fightMeta;
+      const { record, files } = captureFightDataset({
+        raceId: race.id,
+        fightNumber: fight.number,
+        title: fight.title,
+        mode: this.mode,
+        task: {
+          text: fight.task,
+          courseId: race.courseId,
+          seed: race.seed,
+          checkpointLabels: [...fight.checkpointLabels],
+          checkpointCount: race.checkpointCount,
+        },
+        startedAt: evaluation.startedAt,
+        finishedAt: evaluation.finishedAt,
+        evaluation,
+        events: this.engine.events,
+        racers: [...this.engine.racers.keys()].map((racerId, index) => ({
+          racerId,
+          agent: this.agentIdentity(index, racerId),
+          steps: this.telemetry.stepRecords(racerId),
+          frame: (step: number) => this.telemetry.stepFrame(racerId, step),
+          steelRaw: steel?.get(racerId)?.raw ?? null,
+        })),
+      });
+      return Promise.resolve(store.put(record, files)).catch(() => undefined);
+    } catch {
+      // The dataset must never break the race or hold up its evaluation.
+      return Promise.resolve();
+    }
   }
 
   /** Live mode: each racer's Steel traces and replay start, within the overall budget. */

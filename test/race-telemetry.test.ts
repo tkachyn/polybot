@@ -4,6 +4,8 @@ import {
   ACTION_LOG_LIMIT,
   PRICE_HISTORY_LIMIT,
   RaceTelemetry,
+  STEP_FRAME_LIMIT,
+  STEP_RECORD_LIMIT,
   deriveRunStatus,
 } from "../src/application/race-telemetry.js";
 import type { AgentActionReport } from "../src/application/contracts.js";
@@ -199,4 +201,161 @@ test("stores opening prices", () => {
   assert.deepEqual(opening, { "racer-1": 0.4 });
   if (opening) opening["racer-1"] = 0;
   assert.deepEqual(telemetry.openingPrices(), { "racer-1": 0.4 });
+});
+
+test("keeps every step's full capture as a bounded list of copies", () => {
+  const telemetry = new RaceTelemetry(racers, 3);
+  const observation = {
+    url: "https://course.test/cart",
+    title: "Cart",
+    text: "Your cart",
+    controls: [
+      { tag: "button", role: null, arenaRole: "primary-action", label: "Checkout", visible: true, disabled: false },
+    ],
+  };
+  const signature = '{"type":"click","targetRole":"primary-action","label":"Checkout"}';
+  telemetry.recordAction("racer-1", report({
+    text: 'Clicked "Checkout" (primary-action)',
+    step: 3,
+    url: "https://course.test/cart",
+    at: 5_000,
+    observedAt: 3_000,
+    decidedAt: 4_500,
+    observation,
+    action: { type: "click", targetRole: "primary-action", label: "Checkout" },
+    reasoning: `  Checkout\n is next. ${"x".repeat(500)}`,
+    signature,
+    evidence: {
+      target: { role: "primary-action", text: "Checkout", decoy: false },
+      navigated: true,
+      clearedSabotage: true,
+      cursor: { x: 10, y: 20, viewportWidth: 800, viewportHeight: 600, action: "click" },
+    },
+  }), 9_999);
+  telemetry.recordAction("racer-1", report({
+    kind: "error",
+    text: 'Clicked "Pay" (primary-action)',
+    error: "\x1b[2mlocator.click: Timeout 5000ms exceeded.\x1b[22m",
+    modelError: "locator.click: Timeout 5000ms exceeded. Another element is covering the control.",
+    step: 4,
+    evidence: { blockedBy: "modal" },
+    // Nothing to record: reads as no pause and no issue.
+    rateLimitWaitMs: -5,
+    decisionIssue: { malformedAttempts: 0, fallback: false },
+  }), 6_000);
+  telemetry.recordAction("racer-1", report({
+    kind: "note",
+    text: "waiting for the referee",
+    step: 4,
+    observation: "junk" as never,
+    action: { type: "teleport" } as never,
+  }), 7_000);
+  telemetry.recordAction("racer-1", report({
+    kind: "action",
+    text: "Inspected the page",
+    step: 5,
+    observedAt: 7_100,
+    promptedAt: 7_600,
+    decidedAt: 7_900,
+    rateLimitWaitMs: 1_499.6,
+    decisionIssue: { malformedAttempts: 2, fallback: true },
+  }), 8_000);
+
+  const [first, second, third, fourth] = telemetry.stepRecords("racer-1");
+  assert.deepEqual({ ...first, reasoning: null }, {
+    step: 3,
+    kind: "action",
+    actedAt: 5_000,
+    observedAt: 3_000,
+    promptedAt: null,
+    decidedAt: 4_500,
+    rateLimitWaitMs: 0,
+    url: "https://course.test/cart",
+    text: 'Clicked "Checkout" (primary-action)',
+    observation,
+    action: { type: "click", targetRole: "primary-action", label: "Checkout" },
+    reasoning: null,
+    decisionIssue: null,
+    error: null,
+    modelError: null,
+    signature,
+    evidence: {
+      target: { role: "primary-action", text: "Checkout", decoy: false },
+      blockedBy: null,
+      navigated: true,
+      clearedSabotage: true,
+      cursor: { x: 10, y: 20, viewportWidth: 800, viewportHeight: 600, action: "click" },
+    },
+  });
+  // Reasoning is whitespace-collapsed and clipped at 400 characters.
+  assert.equal(first.reasoning?.length, 400);
+  assert.ok(first.reasoning?.startsWith("Checkout is next. xxx"));
+  // Errors lose Playwright's colour codes; absent fields are null.
+  assert.deepEqual(
+    [second.kind, second.error, second.evidence.blockedBy, second.evidence.target, second.observation, second.observedAt],
+    ["error", "locator.click: Timeout 5000ms exceeded.", "modal", null, null, null],
+  );
+  // The record keeps the raw error for diagnostics and what the model was told, for prompts.
+  assert.equal(second.modelError, "locator.click: Timeout 5000ms exceeded. Another element is covering the control.");
+  assert.deepEqual(
+    [third.kind, third.observation, third.action, third.signature, third.modelError],
+    ["note", null, null, null, null],
+  );
+  // The prompt time, the rate-limit pause and the decision issue, as reported.
+  assert.deepEqual(
+    [fourth.promptedAt, fourth.rateLimitWaitMs, fourth.decisionIssue],
+    [7_600, 1_500, { malformedAttempts: 2, fallback: true }],
+  );
+  assert.deepEqual([second.promptedAt, second.rateLimitWaitMs, second.decisionIssue], [null, 0, null]);
+
+  // Copies: changing a returned record changes nothing stored.
+  if (first.observation) first.observation.text = "mutated";
+  assert.equal(telemetry.stepRecords("racer-1")[0].observation?.text, "Your cart");
+
+  for (let step = 1; step <= STEP_RECORD_LIMIT + 20; step += 1) {
+    telemetry.recordAction("racer-2", report({ text: `step ${step}`, step }), step);
+  }
+  const records = telemetry.stepRecords("racer-2");
+  assert.equal(records.length, STEP_RECORD_LIMIT);
+  assert.deepEqual([records[0].step, records.at(-1)?.step], [21, STEP_RECORD_LIMIT + 20]);
+  assert.deepEqual(telemetry.stepRecords("racer-9"), []);
+});
+
+test("keeps step-tagged frames by step for the latest 300 steps, beside the latest frame", () => {
+  const telemetry = new RaceTelemetry(racers, 3);
+  for (let step = 1; step <= STEP_FRAME_LIMIT + 5; step += 1) {
+    telemetry.recordFrame(
+      "racer-1",
+      { contentType: "image/jpeg", body: Buffer.from(`step-${step}`), capturedAt: step * 10, step },
+      step * 10,
+    );
+    telemetry.recordFrame(
+      "racer-1",
+      { contentType: "image/jpeg", body: Buffer.from(`after-${step}`), capturedAt: step * 10 + 5 },
+      step * 10 + 5,
+    );
+  }
+  const steps = telemetry.stepFrameSteps("racer-1");
+  assert.equal(steps.length, STEP_FRAME_LIMIT);
+  assert.deepEqual([steps[0], steps.at(-1)], [6, STEP_FRAME_LIMIT + 5]);
+  assert.equal(telemetry.stepFrame("racer-1", 5), null);
+  const sixth = telemetry.stepFrame("racer-1", 6);
+  assert.equal(String(sixth?.body), "step-6");
+  assert.deepEqual([sixth?.capturedAt, sixth?.contentType], [60, "image/jpeg"]);
+  // Normal frame handling is unchanged: the latest frame is the latest capture.
+  assert.equal(String(telemetry.frame("racer-1")?.body), `after-${STEP_FRAME_LIMIT + 5}`);
+  assert.equal(telemetry.frame("racer-1")?.seq, 2 * (STEP_FRAME_LIMIT + 5));
+
+  // A repeated step replaces its frame; a step older than every kept one is dropped.
+  telemetry.recordFrame("racer-1", { contentType: "image/png", body: Buffer.from("again"), step: 100 }, 9_000);
+  assert.equal(String(telemetry.stepFrame("racer-1", 100)?.body), "again");
+  telemetry.recordFrame("racer-1", { contentType: "image/png", body: Buffer.from("stale"), step: 2 }, 9_100);
+  assert.equal(telemetry.stepFrame("racer-1", 2), null);
+  assert.equal(telemetry.stepFrameSteps("racer-1").length, STEP_FRAME_LIMIT);
+
+  // Untagged frames are never stored by step; unknown racers have none.
+  telemetry.recordFrame("racer-2", { contentType: "image/svg+xml", body: "<svg/>" }, 1);
+  assert.deepEqual(telemetry.stepFrameSteps("racer-2"), []);
+  assert.deepEqual(telemetry.stepFrameSteps("racer-9"), []);
+  assert.equal(telemetry.stepFrame("racer-9", 1), null);
 });

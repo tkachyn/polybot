@@ -207,7 +207,7 @@
   color: var(--color-text-secondary);
 }
 
-/* --- Dataset export ------------------------------------------------------------------ */
+/* --- Dataset ---------------------------------------------------------------------------- */
 
 .text {
   color: var(--color-text-secondary);
@@ -225,43 +225,68 @@
   white-space: nowrap;
 }
 
-.schema {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-}
-
-.schemaRow {
-  display: grid;
-  grid-template-columns: 76px minmax(0, 1fr);
-  align-items: baseline;
-  gap: var(--space-2);
-}
-
-.schemaRow dd {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-1);
-  min-width: 0;
-}
-
-.fields {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-1);
-}
-
-.fieldNote {
-  color: var(--color-text-muted);
-  font-size: var(--fs-body-sm);
-}
-
 .exportRow {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: var(--space-2) var(--space-3);
   padding-top: var(--space-1);
+}
+
+.filesBlock {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1-5);
+}
+
+/* One line per file: the single-file link, then what a row is and what it is for. */
+.files {
+  display: flex;
+  flex-direction: column;
+  border-top: 1px solid var(--color-hairline);
+}
+
+.file {
+  display: grid;
+  grid-template-columns: 136px minmax(0, 1fr);
+  align-items: baseline;
+  gap: var(--space-3);
+  padding: var(--space-2) 0;
+  border-bottom: 1px solid var(--color-hairline);
+}
+
+.file:last-child {
+  padding-bottom: 0;
+  border-bottom: 0;
+}
+
+.fileLink {
+  color: var(--color-edge);
+  font-family: var(--font-mono);
+  font-size: var(--fs-body-sm);
+  white-space: nowrap;
+}
+
+.fileLink:hover {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.fileIcon {
+  display: inline-block;
+  margin-right: var(--space-1);
+  vertical-align: -2px;
+}
+
+.fileExtra {
+  color: var(--color-text-muted);
+  font-size: var(--fs-body-sm);
+}
+
+.fileText {
+  color: var(--color-text-secondary);
+  font-size: var(--fs-body);
+  line-height: var(--lh-snug);
 }
 
 /* --- Recent reports ------------------------------------------------------------------- */
@@ -345,7 +370,7 @@
 }
 
 @media (max-width: 759px) {
-  .schemaRow {
+  .file {
     grid-template-columns: minmax(0, 1fr);
     gap: var(--space-1);
   }

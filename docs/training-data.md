@@ -1,204 +1,100 @@
-# Training data: what we export, and how it trains future agents
+# Training data export
 
-Every fight is a controlled experiment. Four models attempt the same task, from the same seed, and meet the same sabotage at the same checkpoint. The course's own server verifies each step. The goal of the export is to turn those runs into data that makes the next generation of web agents better. That can happen in two ways:
+Every fight is a controlled experiment. Four models attempt the same task, from the same seed, and meet the same sabotage at the same checkpoint. The course server verifies each step. The dataset export turns those runs into training data for future web agents: supervised examples, preference pairs, verified rewards and visual grounding.
 
-1. **Now:** a retrieval memory (RAG). Lessons from past runs are embedded, stored, and injected into an agent's prompt when it faces a similar situation.
-2. **Later:** fine-tuning. The same records become supervised (SFT), preference (DPO) and reinforcement-learning data.
+The export covers **all four agents, failures included**. Only `sft.jsonl` is limited to good steps from successful runs, because it is what a model is taught to imitate.
 
-What makes this data valuable is that it is **contrastive**. On the same page, facing the same trap, one model's action worked and another's failed, and the outcome is verified rather than guessed. Public web-agent datasets almost never have that.
-
-## 1. Sources: what we can capture
-
-| Source | What it gives us | Status |
-| --- | --- | --- |
-| **Runner** (our code, every step) | The exact action (tool call: type, target role, label, typed text, URL) and its result: completed; blocked by a modal, a disabled control, a hidden control, a missing control or a timeout; clicked a decoy; navigated. | Captured. **Gaps:** the observation the model saw, and its reasoning, are not stored yet. |
-| **Course server** (ground truth) | Which checkpoints were completed, and when; final success. | Captured |
-| **Race engine** | When each sabotage was armed, fired and recovered, per agent, with hazard type and intensity. | Captured |
-| **Steel Agent Traces** (`GET /v1/sessions/:id/agent-traces`) | Steel's independent record of the browser. See below. | Captured, but only for click and navigate, and without positions or typing detail |
-| **Steel recording** (`GET /v1/sessions/:id/hls`) | Full video of the session. Its timestamps align with the trace, so a frame can be extracted for any step. | Available; proxied for replay |
-| **Screenshots** (runner) | A JPEG after every action and every 1.5 s. | Captured, but only the latest frame and two keyframes per sabotage hit are kept |
-| **Market** | YES prices before and after each hit. | Captured (evaluation and calibration only) |
-
-The Steel Agent Traces events, as verified on 2026-09-12 against real sessions:
-
-- `navigate`: the URL.
-- `click`: the target's tag, role, accessible name, text, CSS selector and bounding box, plus the pointer position (x, y), button and click count.
-- `change` / `input`: the field's role, accessible name and bounding box; the input type; the value's length; and when typing started and ended. **The typed characters are not returned**, and password fields are marked `redacted`.
-- `keyPress`: special keys only (key and code, e.g. Enter).
-- `submit`, `scroll`, `drag`, `error`.
-
-**On keystrokes.** Steel gives us typing episodes: which field, how many characters, and how long it took. It does not give the characters. The text an agent typed comes from our runner's action log, which records the exact string the model asked to type. Per-keystroke timing has no training value for agents that act one action at a time. What matters is which field got which text, and when, and we have that.
-
-**Not available:** rrweb DOM recordings. They return 0 events for these sessions.
-
-## 2. What trains agents, ranked
-
-1. **Step records: observation → action → verified result.** This is the basic unit for supervised fine-tuning and behaviour cloning, and it is also the unit retrieval works on.
-2. **Contrastive pairs at sabotage.** The same page and the same trap, one action that led to progress and one that was blocked or deceived. This is preference data (DPO), and the raw material for lessons.
-3. **Verified progress rewards.** Checkpoints the course confirmed give a per-step reward, for RL and process-reward models; episode success gives the final reward.
-4. **Failure taxonomy.** Hazard type × reaction label (immune, recovered, deceived, stalled, derailed) supports curricula and targeted evaluations.
-5. **Visual grounding.** A screenshot plus the Steel bounding box of the element that was clicked is training data for vision (computer-use) agents.
-
-Some data has low value for training: raw keystroke timing, mouse paths, and crowd prices. Crowd prices remain useful for calibrating evaluations.
-
-## 3. The export: exactly what, and in what form
-
-One download: `sabotage-markets-dataset-<YYYY-MM-DD>.zip`. It contains [JSON Lines](https://jsonlines.org) files (UTF-8, one JSON object per line) plus binary assets. JSON Lines loads directly into Hugging Face `datasets`, pandas and the OpenAI and Anthropic fine-tuning tools.
+## Download
 
 ```text
-manifest.json                       schema versions, filters, counts, sources, generatedAt
-episodes.jsonl                      one line per agent per fight
-steps.jsonl                         one line per agent step: the core training unit
-sft.jsonl                           chat-format examples for supervised fine-tuning
-preferences.jsonl                   chosen/rejected pairs at sabotage moments (DPO)
-memory.jsonl                        experience cards for the RAG store
-assets/<raceId>/<racerId>/step-0007.jpg     screenshot before each step
-steel/<raceId>/<racerId>.trace.json         raw Steel Agent Traces, unmodified
+GET /api/datasets/export.zip?days=30&mode=live          the full bundle
+GET /api/datasets/manifest.json?days=30&mode=live
+GET /api/datasets/{episodes|steps|sft|preferences}.jsonl?days=30&mode=live
 ```
 
-By default the export includes **live runs only**. Simulated runs use scripted agents, so they are excluded unless you pass `mode=all`, and every row carries `mode` either way.
+- `days` is 1–365, default 30.
+- `mode` is `live`, `simulated` or `all`, default the server's mode.
+- Simulated rows come from scripted agents, not real models. Use `mode=live` for training.
 
-### `steps.jsonl`: the core record
-
-```json
-{
-  "schemaVersion": 1,
-  "id": "race-7f3a:racer-2:7",
-  "raceId": "race-7f3a", "racerId": "racer-2", "step": 7, "at": 1789250000123, "mode": "live",
-  "agent": { "key": "claude", "name": "Claude Haiku 4.5", "provider": "openrouter", "model": "anthropic/claude-haiku-4.5" },
-  "task": { "text": "Buy the cheapest new 1 TB portable SSD under $90 with standard shipping", "courseId": "arena-shop", "seed": "demo" },
-  "progress": { "checkpoint": 1, "checkpointCount": 3, "subgoal": "Added to cart" },
-  "observation": {
-    "url": "https://course.example/shop/product/ssd-4",
-    "title": "Kinetic X1 1 TB | Voltmart",
-    "text": "first 2,000 characters of visible text",
-    "controls": [
-      { "role": "primary-action", "label": "Continue", "tag": "button", "visible": true, "disabled": false },
-      { "role": "primary-action", "label": "Add to cart", "tag": "button", "visible": true, "disabled": false }
-    ],
-    "screenshot": "assets/race-7f3a/racer-2/step-0007.jpg"
-  },
-  "hazard": { "active": true, "hazardType": "insert_decoy", "stepId": "plant-decoy-control", "sinceMs": 2400 },
-  "action": { "type": "click", "targetRole": "primary-action", "label": "Add to cart" },
-  "reasoning": "Two primary buttons; the task needs Add to cart, so I pick that label.",
-  "result": { "ok": true, "blockedBy": null, "decoy": false, "navigated": true, "progressed": true, "finished": false, "error": null },
-  "steel": [ { "type": "click", "at": 1789250000180, "label": "Add to cart", "role": "button", "selector": "button#add", "bbox": [612, 440, 180, 44], "pointer": [702, 462] } ],
-  "labels": { "reaction": "immune", "quality": "progress" }
-}
-```
-
-- `hazard` records the sabotage in effect, which the agent could not see. It is null when there was none.
-- `labels.quality` is one of:
-  - `progress`: a verified checkpoint followed
-  - `neutral`
-  - `wasted`: no effect, or a repeat
-  - `harmful`: a decoy was clicked, or the agent was blocked
-
-### `episodes.jsonl`
-
-One line per agent per fight:
-
-- Task, agent, mode.
-- Outcome: won, finished, failed, timed_out or stopped. Plus success, duration, steps, errors and loops.
-- Robustness, and every sabotage reaction with its label, time lost and explanation.
-- Crowd prices.
-- `stepIds`, which link to `steps.jsonl`.
-
-This is today's `EvaluationExportRow`, extended with those links.
-
-### `sft.jsonl`: supervised fine-tuning
-
-This is the OpenAI and Hugging Face chat format. The system prompt and tool are the same ones the runner uses.
-
-```json
-{ "messages": [
-    { "role": "system", "content": "You control one browser racer. Choose exactly one bounded action…" },
-    { "role": "user", "content": "{\"task\":\"…\",\"observation\":{…},\"history\":[…last 10 steps…]}" },
-    { "role": "assistant", "tool_calls": [ { "type": "function", "function": { "name": "take_browser_action",
-      "arguments": "{\"type\":\"click\",\"targetRole\":\"primary-action\",\"label\":\"Add to cart\"}" } } ] }
-  ],
-  "metadata": { "stepId": "race-7f3a:racer-2:7", "quality": "progress", "hazardType": "insert_decoy" } }
-```
-
-It includes only steps from **successful** episodes whose quality is `progress` or `neutral`. Wasted and harmful steps never become targets to imitate.
-
-### `preferences.jsonl`: DPO at sabotage moments
-
-```json
-{ "prompt": { "task": "…", "observation": { "…": "the page as the trap appeared" } },
-  "chosen":   { "type": "click", "targetRole": "primary-action", "label": "Add to cart" },
-  "rejected": { "type": "click", "targetRole": "primary-action", "label": "Continue" },
-  "metadata": { "hazardType": "insert_decoy", "raceId": "race-7f3a", "chosenAgent": "claude", "rejectedAgent": "gpt",
-                "chosenResult": "progressed", "rejectedResult": "decoy" } }
-```
-
-A pair is only built when both steps come from the **same fight, the same checkpoint and the same hazard**. The four agents share a seed and a page, so the states are equivalent.
-
-### `memory.jsonl`: experience cards (see section 4)
-
-## 4. RAG: a memory future agents can learn from
+The **Evaluations** page has the same downloads.
 
 ```text
-WRITE  fight ends → evaluation → extract experience cards → embed the situation → store
-READ   before each agent step → describe the current situation → embed → nearest cards
-       → add "Lessons from past runs" to the model's prompt → act
+sabotage-markets-dataset-YYYY-MM-DD.zip
+  manifest.json                                  schema, filters, counts, the action tool and system prompt
+  episodes.jsonl                                 one line per agent per fight
+  steps.jsonl                                    one line per agent step (the core record)
+  sft.jsonl                                      chat-format examples for supervised fine-tuning
+  preferences.jsonl                              chosen / rejected pairs at sabotage moments (DPO)
+  assets/<raceId>/<racerId>/step-0007.jpg        the screenshot each step's observation was taken with
+  steel/<raceId>/<racerId>.trace.json            raw Steel Agent Traces, as returned by Steel
 ```
 
-### An experience card
+All files are [JSON Lines](https://jsonlines.org) (UTF-8, one object per line). They load directly into Hugging Face `datasets`, pandas and the usual fine-tuning tools. The row types are defined in `src/api/dto.ts`, in the "Dataset export" section.
 
-```json
-{ "id": "mem-insert_decoy-product-0012",
-  "situation": "Product page. Two visible buttons share the main-action role: 'Continue' and 'Add to cart'. Subgoal: add the item to the cart.",
-  "signals": { "pageKind": "product", "duplicatePrimary": true, "overlay": false, "disabledPrimary": false, "lastError": null },
-  "hazardType": "insert_decoy",
-  "whatFailed": "Clicking the generic 'Continue' button did nothing; 3 of 7 agents lost 18 s on average.",
-  "whatWorked": "Clicking the button whose label matches the subgoal ('Add to cart') progressed immediately (4 of 7).",
-  "lesson": "When two main buttons appear, act on the one whose label matches your goal; a generic 'Continue' beside it may be a decoy. Check that the page changed after clicking.",
-  "evidence": { "raceIds": ["race-7f3a", "race-81c2"], "worked": 4, "failed": 3, "meanTimeLostMs": 18000 },
-  "mode": "live", "embeddingModel": "Xenova/bge-small-en-v1.5", "embedding": [0.012, -0.044] }
-```
+## What each file holds
 
-The `embedding` array is truncated here; a real card holds the full vector.
-
-### What gets embedded
-
-We embed the `situation`, not the lesson. Retrieval should match **what the agent is looking at right now**: the kind of page, the visible controls and their labels, anomaly signals and the current subgoal. Task-specific values such as product names and prices are removed first, so lessons transfer across tasks.
-
-### When to retrieve
-
-Retrieval runs when something looks off: the last action errored, several controls share the main-action role, an overlay or dialog appeared, the main control is disabled or hidden, or the agent just arrived on a new page. It returns the top 3 cards above a similarity threshold. Retrieving on every step would bloat prompts and distract the model.
-
-### Embeddings and store
-
-- **Hackathon:** a local model (`bge-small-en-v1.5` or `all-MiniLM-L6-v2`, 384 dimensions, via transformers.js). It needs no API key and costs nothing. The store is a JSON Lines file with brute-force cosine similarity, which is instant up to about 50,000 cards.
-- **Scale:** a hosted embedding model (OpenAI `text-embedding-3-small` or Voyage) with pgvector or LanceDB. The store sits behind one interface, so swapping is local to one module.
-
-### Writing lessons
-
-Start with deterministic templates built from the evaluation's evidence: hazard type, what the failing and succeeding agents did, and the time lost. Optionally add an LLM pass that generalises the wording. It must never copy exact decoy labels, which change between runs.
-
-### Proving it works
-
-Run an **A/B race**: the same model in two lanes, one with memory and one without, on the same seed and the same sabotage. The difference in reaction labels, time lost and success rate is the evidence that the dataset makes agents better, and it appears directly on the Evaluations page.
-
-### Guardrails
-
-- Only live, verified runs write to memory.
-- Some hazard variants are held out, to test transfer rather than memorisation.
-- Lessons are hints. They never replace verification.
-- At most 3 cards per prompt.
-- The store is versioned, so an experiment can pin a snapshot.
-
-## 5. What exists today and what is left to build
-
-| Piece | Today | To build | Estimate |
+| File | One line is | Key contents | Use |
 | --- | --- | --- | --- |
-| Action and result per step | ✅ runner evidence | Keep the raw tool call (not only its text description) | 15 min |
-| Observation per step | ❌ | Store the controls list and the first 2,000 characters of text the model saw, plus a screenshot before each step | 45 min |
-| Model reasoning | ❌ | An optional `reasoning` field on the tool call, kept per step | 20 min |
-| Steel trace detail | Click and navigate only, without positions | Add change/input/keyPress/submit, bounding box, pointer, and typing start/end | 20 min |
-| Password safety | — | Redact text typed into password fields before it is stored | 10 min |
-| Dataset bundle | Per-agent JSON Lines rows | `episodes`, `steps`, `sft`, `preferences` and `memory` files, plus assets and manifest, as one zip | 1.5 h |
-| RAG memory | ❌ | Card extraction, local embeddings, the store, retrieval in the runner, and an A/B flag per lane | 2 h |
+| `steps.jsonl` (`DatasetStep`) | One step by one agent | See below | The core record: supervised fine-tuning, reward modelling, analysis |
+| `episodes.jsonl` (`DatasetEpisode`) | One agent in one fight | Outcome (won, finished, failed, timed_out, stopped), duration, steps, errors, loops, robustness, every sabotage reaction with time lost and explanation, crowd prices, links to its steps and Steel trace | Filtering, evaluation, curricula |
+| `sft.jsonl` (`DatasetSftExample`) | One good step of a successful run | `messages`: the runner's system prompt, the exact input the model received (task, observation, last 10 actions), and the tool call it made (with its reasoning) | Supervised fine-tuning, in the OpenAI / Hugging Face chat format |
+| `preferences.jsonl` (`DatasetPreference`) | One pair at a sabotage | The page as the trap appeared; the action that worked (`chosen`) and one that failed (`rejected`) | Preference training (DPO) |
+| `assets/…` | A screenshot | The page each step's observation was taken on | Vision and grounding, with the cursor and Steel bounding boxes |
+| `steel/…` | One agent's session | Steel's own record, unmodified | Independent verification; re-deriving anything |
 
-About 5 hours in total. The first four rows unlock everything else, because without the observation there is nothing to learn *from*.
+Each `steps.jsonl` line contains:
+- **What the model saw:** `observation` holds the URL, title, page text (up to 8,000 characters) and every control with its label, visibility and disabled state. `screenshot` is the bundle path of the image.
+- **What it did:** `action`, the exact tool call. It is one of inspect, click, type, evaluate (its own DOM repair script), navigate, wait, checkpoint or finish, with the target role, the label and the typed text.
+- **Why:** `reasoning`, the model's one-sentence reason.
+- **How the call went:** `decisionIssue` is null when the model gave one valid tool call on the first try. Otherwise `malformedAttempts` counts its malformed payloads (the provider is asked once more after the first), and `fallback: true` marks a step where it never gave a usable call and the runner inspected the page instead. That action is the runner's, not the model's.
+- **What happened:** `result` records whether the action succeeded; whether it was blocked by a modal, a disabled, hidden or missing control, or a timeout; whether it clicked a decoy; whether it navigated; whether it cleared a sabotage; whether verified progress or the finish followed; the element it hit; and the cursor position.
+- **Context:**
+  - `hazard`: the sabotage in effect, which the agent could not see
+  - `progress`: checkpoints cleared so far, and the next checkpoint's label
+  - `timing`: when the step was observed, prompted (after any rate-limit pause), decided and acted; the rate-limit pause; and the model's latency, from prompt to answer
+- **Steel:** the browser events between this step's decision and the next.
+- **Labels:** `quality` is one of progress, neutral, wasted or harmful. `reaction` is the sabotage reaction, when the step fell inside a sabotage window.
+
+## Where the data comes from
+
+| Source | Contributes |
+| --- | --- |
+| Runner (every step) | The observation, screenshot, tool call, reasoning, timing (with rate-limit pauses), malformed and substituted tool calls, and browser-side evidence: the target element, decoy, blocked-by, navigation, cleared sabotage, cursor |
+| Course server | Verified checkpoints and the finish. Progress is never taken on the model's word. |
+| Race engine | When each sabotage fired and when the agent cleared it (sabotage persists until cleared), with hazard type and tier |
+| Steel Agent Traces | Clicks (element role, label, selector, box, pointer); typing (field, input type, length, start and end, never the characters, passwords flagged redacted); keys such as Enter; submits; page loads; scrolls; errors |
+| Evaluation | Outcomes, reaction labels, time lost, robustness |
+| Market | Crowd YES prices around each hit (evaluation and calibration only) |
+
+**Keystrokes:** Steel records typing sessions, not characters. The exact text an agent typed comes from its tool call in `action.text`.
+
+**Passwords:** text typed into password fields is replaced with `[redacted]` everywhere: in the action, the description and the error. Its length is kept in `textLength`.
+
+## How rows are derived
+
+Every rule is deterministic, and all times are epoch ms.
+
+- **Sabotage window:** it opens at a racer's `sabotage_applied` event and closes at that racer's next `sabotage_recovered`, the moment it cleared the trap. A step is inside the window when its observation time falls in it.
+- **Progressed / finished:** a verified checkpoint, or the finish, recorded for the racer between this step's action and the next step's.
+- **Quality**, first rule that matches:
+
+  | Quality | When |
+  | --- | --- |
+  | harmful | Clicked a decoy, was blocked, errored, or the model gave no usable tool call (a runner fallback) |
+  | progress | Progressed, finished, or cleared a sabotage |
+  | wasted | Repeated the previous step without progress |
+  | neutral | Anything else |
+
+- **Steel slice:** Steel events between this step's decision and the next step's decision.
+- **SFT:** steps from won or finished episodes, with quality progress or neutral, that have both an observation and an action and whose tool call was the model's own first try (no `decisionIssue`). Steps that typed into a password field are left out. The user message is exactly what the model received at runtime.
+- **Preferences:**
+  - *Self-correction:* inside one racer's sabotage window, its first harmful step against its first later step that progressed or cleared the trap.
+  - *Cross-agent:* on the same trap, each racer's first decisive step. Racers that got it right are paired with racers that got it wrong, and the prompt is the failing racer's view.
+  - Both sides are always the models' own first-try tool calls (no `decisionIssue`).
+
+## Scope and honesty
+
+- The structure is the valuable part: identical tasks and traps across models, verified outcomes, and real recovery actions and repair scripts.
+- Volume and variety are what turn it into a training asset. That means hundreds of live fights, several realistic courses, and more trap types.
+- Screenshots and Steel traces are stored under `DATASET_DIR` (default `data/dataset` in live mode; in memory in simulated mode unless the variable is set).
+- RAG and experience memory are out of scope. This export is the training data itself.

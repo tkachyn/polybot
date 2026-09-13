@@ -14,6 +14,8 @@ import { SIM_AGENT_ROSTER } from "../src/simulation/factory.js";
 import { escapeXml, renderSimFrame } from "../src/simulation/frames.js";
 import { planFight, planTimeline, type RacerPlan } from "../src/simulation/plan.js";
 import { Rng, hashString } from "../src/simulation/rng.js";
+import { RaceRegistry } from "../src/api/race-registry.js";
+import { createSimulatedCoordinatorFactory, startSimulationAutopilot } from "../src/simulation/index.js";
 import { InertCompetitorRunner, SimulatedCompetitorRunner } from "../src/simulation/runner.js";
 import {
   STALL_PACE_FACTOR,
@@ -21,6 +23,8 @@ import {
   chooseResponse,
   runScriptOffline,
   scriptHistoryRuns,
+  simAction,
+  simObservation,
   targetForAction,
   type ScriptEvent,
   type ScriptHazard,
@@ -564,5 +568,192 @@ test("history runs finish well before the cap, and void runs never finish before
     const brutal = planFight(seed, RACERS, template.stages.length, { difficulty: "brutal" });
     const voided = scriptHistoryRuns({ ...options, seeds, voided: true, plans: RACERS.map(({ racerId }) => brutal.racers[racerId]) });
     assert.ok(voided.every((run) => run.finishAt === null || run.finishAt >= 320_000), seed);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Dataset capture: the same fields a live runner reports
+// ---------------------------------------------------------------------------
+
+test("simulated steps report what the agent saw, its tool call, a reason, timing and a step frame", async () => {
+  const template = SIM_TEMPLATES[1];
+  const world = new SimulatedWorld(200);
+  const scaledPolicy = {
+    ...template.sabotage.policy,
+    durationMs: scaleDurationMs(template.sabotage.policy.durationMs, 200),
+  };
+  const executor = new SimulatedObstacleExecutor(world, "exec");
+  const plan = planFight("runner-capture", RACERS, template.stages.length, { difficulty: "normal" });
+  // Stubborn: blocked twice by the overlay, tries Escape, then closes it.
+  plan.racers["racer-2"] = {
+    ...plan.racers["racer-2"],
+    failAtStep: null,
+    errorRate: 0,
+    loopRate: 0,
+    vigilance: 0,
+    composure: 0,
+  };
+  const runner = new SimulatedCompetitorRunner({
+    template,
+    world,
+    plan,
+    agents: { "racer-2": SIM_AGENT_ROSTER[1] },
+    timeScale: 200,
+    seed: "runner-capture",
+  });
+  const sink = { actions: [] as AgentActionReport[], frames: [] as CapturedFrame[], checkpoints: [] as number[], finished: false };
+  const context = runnerContext("racer-2", sink);
+  context.reportCheckpoint = async (checkpoint) => {
+    sink.checkpoints.push(checkpoint);
+    if (checkpoint === template.sabotage.checkpoint) await executor.apply("racer-2", scaledPolicy);
+  };
+  const started = Date.now();
+  await runner.run(context);
+  assert.equal(sink.finished, true);
+
+  const steps = sink.actions.filter((report) => report.kind !== "note");
+  for (const report of steps) {
+    assert.ok(report.observation && report.action && report.reasoning, `step ${report.step} is captured`);
+    assert.equal(report.observation.url, report.url);
+    assert.ok(report.observation.controls.some((control) => control.arenaRole === "primary-action"));
+    assert.ok(report.reasoning.length <= 400 && !report.reasoning.includes("\n"));
+    assert.ok(typeof report.observedAt === "number" && typeof report.decidedAt === "number");
+    assert.ok(started <= report.observedAt && report.observedAt <= report.decidedAt);
+  }
+  // One step-tagged SVG frame per step, in order.
+  const tagged = sink.frames.filter((frame) => frame.step !== undefined);
+  assert.deepEqual(tagged.map((frame) => frame.step), steps.map((report) => report.step));
+  assert.ok(tagged.every((frame) => frame.contentType === "image/svg+xml"));
+
+  // While the overlay is up it is on screen, and a bounded DOM repair clears the sabotage.
+  const target = pageAfterCheckpoint(template, template.sabotage.checkpoint).target;
+  const blocked = steps.find((report) => report.evidence?.blockedBy === "modal");
+  assert.deepEqual(blocked?.action, { type: "click", targetRole: "primary-action", label: target });
+  assert.ok(blocked?.observation?.controls.some((control) => control.role === "dialog"));
+  // A scripted error is already what the agent would be told.
+  const errors = steps.filter((report) => report.kind === "error");
+  assert.ok(errors.length > 0 && errors.every((report) => report.modelError === report.error));
+  assert.ok(steps.filter((report) => report.kind === "action").every((report) => report.modelError === undefined));
+  const cleared = steps.filter((report) => report.evidence?.clearedSabotage === true);
+  assert.equal(cleared.length, 1);
+  assert.deepEqual(cleared[0].action, { type: "evaluate", script: "window.__arenaRecoverDisruptions?.()" });
+  // The overlay has no Close control to click.
+  assert.ok(cleared[0].observation?.controls.some((control) => control.role === "dialog"));
+  assert.ok(cleared[0].observation?.controls.every((control) => control.label !== "Close"));
+  assert.match(cleared[0].reasoning ?? "", /overlay/);
+});
+
+test("scripted steps map to tool calls and observations that match the page", () => {
+  const template = templateById("ssd-checkout");
+  const search = template.stages[0];
+  const cart = template.stages[2];
+  const decoy: ScriptStep = {
+    kind: "action",
+    text: 'click "Express checkout"',
+    evidence: { target: { role: "primary-action", text: "Express checkout", decoy: true } },
+    disruption: { hazardType: "insert_decoy", effectLabel: "Express checkout" },
+  };
+  assert.deepEqual(simAction(decoy, cart), { type: "click", targetRole: "primary-action", label: "Express checkout" });
+  const seen = simObservation(decoy, cart, template.brand);
+  // The look-alike comes first, where an unlabelled click would land.
+  assert.deepEqual(seen.controls.map((control) => [control.arenaRole, control.label]), [
+    ["primary-action", "Express checkout"],
+    ["primary-action", cart.target],
+  ]);
+  assert.deepEqual([seen.url, seen.title], [cart.url, `${cart.heading} | ${template.brand}`]);
+  assert.doesNotMatch(JSON.stringify(seen), /decoy/i, "the observation never names the decoy");
+
+  const text = 'type "1tb usb-c ssd" into the search box';
+  const typing: ScriptStep = { kind: "action", text, evidence: { target: targetForAction(text, search) }, disruption: null };
+  assert.deepEqual(simAction(typing, search), {
+    type: "type",
+    targetRole: "textbox",
+    label: "search box",
+    text: "1tb usb-c ssd",
+    textLength: 13,
+  });
+  assert.ok(simObservation(typing, search, template.brand).controls.some((control) =>
+    control.arenaRole === "textbox" && control.label === "search box"));
+
+  // Masked catalogue values stay redacted, as a live runner records them.
+  const library = templateById("library-renewal");
+  assert.deepEqual(simAction({ kind: "action", text: "fill PIN: ****", disruption: null }, library.stages[0]), {
+    type: "type",
+    targetRole: "textbox",
+    label: "PIN",
+    text: "[redacted]",
+    textLength: 4,
+  });
+  assert.deepEqual(
+    simAction({ kind: "action", text: 'wait for "Next" to become enabled', disruption: null }, cart),
+    { type: "wait", durationMs: 2_000 },
+  );
+  assert.deepEqual(simAction({ kind: "action", text: "reload the page", disruption: null }, cart), { type: "navigate", url: cart.url });
+  assert.deepEqual(simAction({ kind: "action", text: "read the order subtotal: $84.99", disruption: null }, cart), { type: "inspect" });
+});
+
+test("every scripted step gives a one-sentence reason", () => {
+  const responses = [{ vigilance: 1 }, ADAPTIVE, { vigilance: 0, composure: 1, haste: 1 }, { vigilance: 0, composure: 0 }];
+  for (const template of SIM_TEMPLATES) {
+    for (const response of responses) {
+      const script = scriptAfter(template, template.sabotage.checkpoint, { ...response, errorRate: 0.3, loopRate: 0.5 });
+      for (const step of runPage(script, hazardOf(template, { until: 4_500 }))) {
+        assert.ok(step.reasoning, `${template.id}: "${step.text}" has a reason`);
+        assert.ok(step.reasoning.length <= 400 && /\.$/.test(step.reasoning) && !step.reasoning.includes("\n"));
+      }
+    }
+  }
+});
+
+test("offline steps record when their page was read", () => {
+  const template = templateById("ssd-checkout");
+  const run = runScriptOffline({
+    plan: scriptPlan(template),
+    template,
+    seed: "observed",
+    sabotage: [],
+    freezeAtMs: 1_000_000,
+    horizonMs: 2_000_000,
+    maxSteps: 90,
+  });
+  let steps = 0;
+  run.events.forEach((event, index) => {
+    if (event.kind !== "step") return;
+    steps += 1;
+    // The agent reads the page as its previous event ends.
+    assert.equal(event.observedT, run.events[index - 1].t);
+    assert.ok(event.observedT < event.t);
+  });
+  assert.ok(steps > 10);
+});
+
+test("seeded history steps carry the same capture as live simulated steps", { timeout: 60_000 }, async () => {
+  const options = { seed: "capture-history", timeScale: 60 };
+  const registry = new RaceRegistry(createSimulatedCoordinatorFactory(options));
+  const stop = await startSimulationAutopilot(registry, {
+    ...options,
+    historyFights: 1,
+    liveFights: 0,
+    upcomingFights: 0,
+    bots: false,
+  });
+  try {
+    const [coordinator] = registry.list();
+    assert.ok(coordinator, "a history fight was seeded");
+    let checked = 0;
+    for (const racerId of coordinator.market.racerIds) {
+      for (const record of coordinator.telemetry.stepRecords(racerId)) {
+        if (record.kind === "note") continue;
+        assert.ok(record.observation && record.action && record.reasoning, `${racerId} step ${record.step}`);
+        assert.ok(record.observedAt !== null && record.decidedAt !== null);
+        assert.ok(record.observedAt <= record.decidedAt && record.decidedAt <= record.actedAt);
+        assert.ok(coordinator.telemetry.stepFrame(racerId, record.step), `${racerId} step ${record.step} has its frame`);
+        assert.equal(record.modelError, record.error, `${racerId} step ${record.step} keeps what the agent was told`);
+        checked += 1;
+      }
+    }
+    assert.ok(checked > 10, `${checked} seeded steps checked`);
+  } finally {
+    stop();
   }
 });

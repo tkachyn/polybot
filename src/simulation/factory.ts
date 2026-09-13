@@ -111,6 +111,8 @@ export function createSimulatedCoordinatorFactory(options: SimulationOptions): C
         // Final evaluations land in the registry's store, labelled as
         // scripted agents rather than real models.
         evaluationStore: context.evaluationStore,
+        // Each closed fight's training record goes to the registry's dataset store.
+        datasetStore: context.datasetStore,
         mode: "simulated",
       },
     );

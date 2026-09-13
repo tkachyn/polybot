@@ -19,6 +19,7 @@ import {
 import type { DisruptionCommand } from "../domain/types.js";
 import { CdpObstacleProvider } from "../infra/cdp-obstacle-provider.js";
 import { SteelSessionManager } from "../infra/steel-session-manager.js";
+import type { DatasetStore } from "../dataset/store.js";
 import type { EvaluationStore } from "../evaluation/store.js";
 import { JsonlRaceEventStore } from "../persistence/jsonl-event-store.js";
 import type { CreditLedger } from "../wallet/credit-ledger.js";
@@ -36,6 +37,8 @@ export type ProductionRaceContext = {
   fight: Partial<FightMetadata>;
   /** Where the fight's final evaluation is stored once it closes. */
   evaluationStore?: EvaluationStore;
+  /** Where the fight's training record is stored once it closes. */
+  datasetStore?: DatasetStore;
 };
 
 export const OPENROUTER_PROVIDER = "openrouter";
@@ -245,6 +248,7 @@ export function createProductionRaceCoordinator(
       ledger: context.ledger,
       llmUsage: () => budget.snapshot(),
       evaluationStore: context.evaluationStore,
+      datasetStore: context.datasetStore,
       mode: "live",
     },
   );

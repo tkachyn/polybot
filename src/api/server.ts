@@ -3,12 +3,14 @@ import { resolve } from "node:path";
 import fastifyCors from "@fastify/cors";
 import fastifyStatic from "@fastify/static";
 import Fastify, { type FastifyError, type FastifyInstance, type FastifyRequest } from "fastify";
+import { InMemoryDatasetStore, JsonlDatasetStore, type DatasetStore } from "../dataset/store.js";
 import { DomainError, isDomainError } from "../domain/errors.js";
 import {
   InMemoryEvaluationStore,
   JsonlEvaluationStore,
   type EvaluationStore,
 } from "../evaluation/index.js";
+import { registerDatasetRoutes } from "./dataset-routes.js";
 import type { ApiErrorCode, ServerMode } from "./dto.js";
 import type { ApiCreateRaceInput, CoordinatorFactory } from "./race-registry.js";
 import { RaceRegistry } from "./race-registry.js";
@@ -64,9 +66,12 @@ export type ApiServerOptions = {
   browserSessionService?: SteelBrowserSessionService;
   /** Where final evaluations are kept. Default: `defaultEvaluationStore(mode)`. */
   evaluationStore?: EvaluationStore;
+  /** Where fight dataset records and their files are kept. Default: `defaultDatasetStore(mode)`. */
+  datasetStore?: DatasetStore;
 };
 
 export const DEFAULT_EVALUATION_FILE = "data/evaluations.jsonl";
+export const DEFAULT_DATASET_DIR = "data/dataset";
 
 /**
  * Live mode appends final evaluations to EVALUATION_FILE (default
@@ -80,6 +85,21 @@ export function defaultEvaluationStore(
   const file = env.EVALUATION_FILE?.trim();
   if (mode === "simulated" && !file) return new InMemoryEvaluationStore();
   return new JsonlEvaluationStore(resolve(file || DEFAULT_EVALUATION_FILE));
+}
+
+/**
+ * Live mode keeps fight dataset records, step screenshots and raw Steel
+ * traces under DATASET_DIR (default data/dataset). Simulated mode keeps them
+ * in memory unless DATASET_DIR is set. The directory is only touched when
+ * first used.
+ */
+export function defaultDatasetStore(
+  mode: ServerMode,
+  env: NodeJS.ProcessEnv = process.env,
+): DatasetStore {
+  const dir = env.DATASET_DIR?.trim();
+  if (mode === "simulated" && !dir) return new InMemoryDatasetStore();
+  return new JsonlDatasetStore(resolve(dir || DEFAULT_DATASET_DIR));
 }
 
 const ERROR_STATUS: Record<ApiErrorCode, number> = {
@@ -133,6 +153,7 @@ export function buildApi(options: ApiServerOptions): FastifyInstance {
     fightNumberStart: options.fightNumberStart,
     startingBalance: options.startingBalance,
     evaluationStore: options.evaluationStore ?? defaultEvaluationStore(mode),
+    datasetStore: options.datasetStore ?? defaultDatasetStore(mode),
   });
   const hub = new SseHub(options.ssePingMs ?? SSE_PING_MS);
   const now = options.now ?? (() => Date.now());
@@ -214,6 +235,7 @@ export function buildApi(options: ApiServerOptions): FastifyInstance {
     showSabotageUpfront: options.showSabotageUpfront ?? true,
     throttles: { ...DEFAULT_STREAM_THROTTLES, ...options.streamThrottles },
   });
+  registerDatasetRoutes(app, { store: registry.datasets, now, mode });
 
   // -------------------------------------------------------- browser sessions
 

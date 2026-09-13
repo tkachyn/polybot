@@ -1,5 +1,5 @@
 import type { Page } from "playwright";
-import type { BlockedBy, CursorPosition } from "../api/dto.js";
+import type { BlockedBy, CursorPosition, DatasetAction, DecisionIssue, StepObservation } from "../api/dto.js";
 import type { RaceEvent } from "../domain/types.js";
 
 export type RacerSessionHandle = {
@@ -35,9 +35,26 @@ export type AgentActionReport = {
   /** Stable key for loop detection. Defaults to `text`. */
   signature?: string;
   error?: string;
+  /** The same failure as the model was shown in its history: no call log, nothing hidden. */
+  modelError?: string;
   at?: number;
   /** What the browser reported about this step, independent of the model's claim. */
   evidence?: ActionEvidence;
+  /** What the model saw when it chose this step. */
+  observation?: StepObservation;
+  /** The exact tool call, with text typed into password fields redacted. */
+  action?: DatasetAction;
+  /** The model's stated reason for this step, when it gave one. */
+  reasoning?: string;
+  /** When the observation was taken, and when the model answered. */
+  observedAt?: number;
+  decidedAt?: number;
+  /** When the prompt was sent: after the screenshot and any rate-limit pause. */
+  promptedAt?: number;
+  /** How long the provider's rate limit held the prompt back. */
+  rateLimitWaitMs?: number;
+  /** Set when the decision was not one valid tool call on the first try. */
+  decisionIssue?: DecisionIssue;
 };
 
 /**
@@ -60,6 +77,8 @@ export type ActionEvidence = {
   cursor?: CursorPosition;
   /** The page URL changed as a result of the action. */
   navigated?: boolean;
+  /** An arena sabotage was active before the action and none is after it. */
+  clearedSabotage?: boolean;
 };
 
 /** A periodic capture of a racer's browser. */
@@ -67,6 +86,8 @@ export type CapturedFrame = {
   contentType: "image/jpeg" | "image/png" | "image/svg+xml";
   body: Buffer | string;
   capturedAt?: number;
+  /** Set on the screenshot taken with this step's observation. */
+  step?: number;
 };
 
 export type CompetitorContext = {

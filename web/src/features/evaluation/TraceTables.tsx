@@ -1,7 +1,7 @@
 /**
  * Collapsible traces: the Steel trace excerpt around one hit, and an agent's
- * full action trace. Tables render only while open, and scroll in their own
- * container.
+ * full action trace with the model's reasoning for each step. Tables render
+ * only while open, and scroll in their own container.
  */
 import { useMemo, useState, type ReactNode, type SyntheticEvent } from "react";
 import type { AgentEvaluation, SteelTraceEntry, TraceEntry } from "@contract";
@@ -10,7 +10,7 @@ import { cx } from "../../lib/cx";
 import { EMPTY, formatNumber } from "../../lib/format";
 import { BLOCKED_BY_DESCRIPTION, BLOCKED_BY_LABEL, HAZARD_LABEL } from "../../lib/labels";
 import { formatFightTime, formatOffset } from "./format";
-import { STEEL_EXCERPT_RADIUS_MS, interleaveHits, steelTraceAround, traceTotals } from "./trace";
+import { STEEL_EXCERPT_RADIUS_MS, interleaveHits, steelTraceAround, traceReasoning, traceTotals } from "./trace";
 import styles from "./Trace.module.css";
 
 function plural(n: number, one: string, many: string): string {
@@ -142,6 +142,9 @@ export function FullTrace({ agent, startedAt }: FullTraceProps) {
           Full action trace · <span className="num">{plural(totals.steps, "step", "steps")}</span>
           {totals.errors > 0 && <span className="num"> · {plural(totals.errors, "error", "errors")}</span>}
           {totals.decoys > 0 && <span className={cx("num", styles.summaryAlert)}> · {plural(totals.decoys, "decoy click", "decoy clicks")}</span>}
+          {totals.cleared > 0 && (
+            <span className={cx("num", styles.summaryPositive)}> · {plural(totals.cleared, "sabotage cleared", "sabotages cleared")}</span>
+          )}
         </>
       }
     >
@@ -160,11 +163,49 @@ function TargetCell({ entry }: { entry: TraceEntry }) {
   );
 }
 
+/** The model's stated reason: two lines, with the full text in the title. */
+function ReasoningCell({ entry }: { entry: TraceEntry }) {
+  const reasoning = traceReasoning(entry);
+  if (reasoning === null) return <span className={styles.none}>{EMPTY}</span>;
+  return (
+    <span className={cx("clamp-2", styles.reasoning)} title={reasoning}>
+      {reasoning}
+    </span>
+  );
+}
+
+/** What the step did to the run: cleared a sabotage, clicked a decoy, or was blocked. */
+function ResultCell({ entry }: { entry: TraceEntry }) {
+  if (!entry.clearedSabotage && !entry.decoy && !entry.blockedBy) return <span className={styles.none}>{EMPTY}</span>;
+  return (
+    <span className={styles.flags}>
+      {entry.clearedSabotage && (
+        <Tag tone="positive" title="This step cleared the active sabotage">
+          Cleared sabotage
+        </Tag>
+      )}
+      {entry.decoy && (
+        <Tag tone="sabotage" title="The target was a planted decoy">
+          Decoy
+        </Tag>
+      )}
+      {entry.blockedBy && (
+        <Tag tone="neutral" title={BLOCKED_BY_DESCRIPTION[entry.blockedBy]}>
+          Blocked · {BLOCKED_BY_LABEL[entry.blockedBy]}
+        </Tag>
+      )}
+    </span>
+  );
+}
+
+/** Columns in the full trace; the sabotage marker rows span all of them. */
+const TRACE_COLUMNS = 6;
+
 function FullTraceTable({ agent, startedAt }: FullTraceProps) {
   const rows = useMemo(() => interleaveHits(agent.trace, agent.sabotage), [agent.trace, agent.sabotage]);
   return (
     <div className={cx(styles.scroll, styles.scrollTall)}>
-      <table className={cx(tableStyles.table, tableStyles.compact, styles.table)}>
+      <table className={cx(tableStyles.table, tableStyles.compact, styles.table, styles.traceTable)}>
         <thead>
           <tr>
             <th scope="col" className={tableStyles.num}>
@@ -175,15 +216,19 @@ function FullTraceTable({ agent, startedAt }: FullTraceProps) {
             </th>
             <th scope="col">Action</th>
             <th scope="col">Target</th>
-            <th scope="col">Decoy</th>
-            <th scope="col">Blocked by</th>
+            <th scope="col" title="The model’s stated reason for the step">
+              Reasoning
+            </th>
+            <th scope="col" title="Cleared a sabotage, clicked a decoy, or was blocked">
+              Result
+            </th>
           </tr>
         </thead>
         <tbody>
           {rows.map((row, index) =>
             row.kind === "hit" ? (
               <tr key={`hit-${row.reaction.stepId}-${index}`} className={styles.hitRow}>
-                <td colSpan={6}>
+                <td colSpan={TRACE_COLUMNS}>
                   <span className={styles.hitMarker}>
                     <SabotageTag>Sabotage {row.reaction.stepIndex}</SabotageTag>
                     <span className={styles.hitText}>
@@ -194,29 +239,26 @@ function FullTraceTable({ agent, startedAt }: FullTraceProps) {
                 </td>
               </tr>
             ) : (
-              <tr key={`step-${row.entry.step}-${index}`} className={cx(tableStyles.row, row.entry.kind === "error" && styles.errorRow)}>
+              <tr
+                key={`step-${row.entry.step}-${index}`}
+                className={cx(tableStyles.row, row.entry.kind === "error" && styles.errorRow, row.entry.clearedSabotage && styles.clearedRow)}
+              >
                 <td className={tableStyles.num}>{formatNumber(row.entry.step)}</td>
                 <td className={cx(tableStyles.num, styles.time)}>{formatFightTime(row.entry.at, startedAt)}</td>
-                <td className={styles.text} title={row.entry.url ?? undefined}>
+                <td className={styles.actionCell} title={row.entry.url ?? undefined}>
                   <span className={cx(row.entry.kind === "error" && styles.errorText, row.entry.kind === "note" && styles.noteText)}>
                     {row.entry.kind !== "action" && <span className={styles.kind}>{row.entry.kind === "error" ? "Error" : "Note"} </span>}
                     {row.entry.text}
                   </span>
                 </td>
-                <td>
+                <td className={styles.targetCell}>
                   <TargetCell entry={row.entry} />
                 </td>
                 <td>
-                  <DecoyFlag decoy={row.entry.decoy} />
+                  <ReasoningCell entry={row.entry} />
                 </td>
                 <td>
-                  {row.entry.blockedBy ? (
-                    <Tag tone="neutral" title={BLOCKED_BY_DESCRIPTION[row.entry.blockedBy]}>
-                      {BLOCKED_BY_LABEL[row.entry.blockedBy]}
-                    </Tag>
-                  ) : (
-                    <span className={styles.none}>{EMPTY}</span>
-                  )}
+                  <ResultCell entry={row.entry} />
                 </td>
               </tr>
             ),

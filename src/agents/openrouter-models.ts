@@ -9,9 +9,11 @@ import {
   COMPETITOR_TOOL_DESCRIPTION,
   COMPETITOR_TOOL_NAME,
   COMPETITOR_TOOL_SCHEMA,
+  competitorPromptInput,
   parseDecision,
 } from "./competitor-decision.js";
 import type { MasterPolicyModel } from "./master-obstacle-provider.js";
+import type { DecisionIssue } from "../api/dto.js";
 import type { DisruptionCommand, SabotageTier } from "../domain/types.js";
 import { validateDisruptionCommand } from "../infra/cdp-obstacle-provider.js";
 import {
@@ -35,6 +37,12 @@ type OpenRouterModelOptions = {
   maxOutputTokens?: number;
   rateLimiter?: OpenRouterModelRateLimiter;
 };
+
+/**
+ * Room for a whole tool call, reasoning included. Truncated tool arguments
+ * cannot be parsed, so this errs on the generous side.
+ */
+export const OPENROUTER_DEFAULT_MAX_OUTPUT_TOKENS = 400;
 
 export type OpenRouterUsageSnapshot = {
   limitUsd: number;
@@ -198,11 +206,13 @@ abstract class OpenRouterModelBase {
   protected readonly client: OpenAI;
   protected readonly maxOutputTokens: number;
   private capacityReserved = false;
+  /** Malformed tool payloads in the latest call; the provider is asked once more after the first. */
+  protected malformedAttempts = 0;
 
   constructor(protected readonly options: OpenRouterModelOptions) {
     if (!options.model) throw new Error("OpenRouter model is required");
     this.client = createClient(options.apiKey);
-    this.maxOutputTokens = options.maxOutputTokens ?? 150;
+    this.maxOutputTokens = options.maxOutputTokens ?? OPENROUTER_DEFAULT_MAX_OUTPUT_TOKENS;
   }
 
   async prepareForCall(signal?: AbortSignal): Promise<RateLimitWait> {
@@ -222,6 +232,7 @@ abstract class OpenRouterModelBase {
       | ReturnType<typeof sabotageSequenceTool>,
     signal?: AbortSignal,
   ): Promise<unknown> {
+    this.malformedAttempts = 0;
     for (let attempt = 0; attempt < 2; attempt += 1) {
       this.options.budget?.assertAvailable();
       if (!this.capacityReserved) {
@@ -252,7 +263,9 @@ abstract class OpenRouterModelBase {
       try {
         return parseToolArguments(call.function.arguments);
       } catch (error) {
-        if (!(error instanceof OpenRouterToolArgumentsError) || attempt === 1) throw error;
+        if (!(error instanceof OpenRouterToolArgumentsError)) throw error;
+        this.malformedAttempts += 1;
+        if (attempt === 1) throw error;
       }
     }
     throw new OpenRouterToolArgumentsError();
@@ -336,6 +349,16 @@ export class OpenRouterCompetitorDecisionModel
     return super.prepareForCall(signal);
   }
 
+  /** How the latest decision arrived, when not as one valid tool call. */
+  private issue: DecisionIssue | null = null;
+
+  /** The latest decision's issue, if any. Cleared on read, so it never leaks into the next step. */
+  takeDecisionIssue(): DecisionIssue | null {
+    const issue = this.issue;
+    this.issue = null;
+    return issue;
+  }
+
   async decide(input: {
     task: string;
     racerId: string;
@@ -343,25 +366,38 @@ export class OpenRouterCompetitorDecisionModel
     history: Array<{ decision: AgentDecision; error?: string }>;
     signal?: AbortSignal;
   }): Promise<AgentDecision> {
+    this.issue = null;
     let value: unknown;
     try {
+      // Only the model-facing input goes in the prompt; the signal goes to the request.
       value = await this.call(
         COMPETITOR_SYSTEM_PROMPT,
-        input,
+        competitorPromptInput(input),
         browserActionTool,
         input.signal,
       );
     } catch (error) {
-      if (error instanceof OpenRouterToolArgumentsError) return { type: "inspect" };
+      if (error instanceof OpenRouterToolArgumentsError) return this.fallback();
       throw error;
     }
     try {
-      return parseDecision(value);
+      const decision = parseDecision(value);
+      if (this.malformedAttempts > 0) {
+        this.issue = { malformedAttempts: this.malformedAttempts, fallback: false };
+      }
+      return decision;
     } catch {
       // A malformed tool payload is recoverable: inspect again so the agent
       // can make progress on the next turn instead of terminating the racer.
-      return { type: "inspect" };
+      this.malformedAttempts += 1;
+      return this.fallback();
     }
+  }
+
+  /** The runner inspects instead, and the step records that the model gave no usable call. */
+  private fallback(): AgentDecision {
+    this.issue = { malformedAttempts: this.malformedAttempts, fallback: true };
+    return { type: "inspect" };
   }
 }
 

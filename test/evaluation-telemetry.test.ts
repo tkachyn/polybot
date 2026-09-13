@@ -45,6 +45,8 @@ test("keeps a bounded evaluation trace with sanitised browser evidence", () => {
       targetText: "Continue",
       decoy: true,
       blockedBy: "modal",
+      reasoning: null,
+      clearedSabotage: false,
     },
     {
       step: 5,
@@ -56,6 +58,8 @@ test("keeps a bounded evaluation trace with sanitised browser evidence", () => {
       targetText: null,
       decoy: false,
       blockedBy: null,
+      reasoning: null,
+      clearedSabotage: false,
     },
     {
       step: 5,
@@ -67,6 +71,8 @@ test("keeps a bounded evaluation trace with sanitised browser evidence", () => {
       targetText: null,
       decoy: false,
       blockedBy: null,
+      reasoning: null,
+      clearedSabotage: false,
     },
   ]);
   assert.deepEqual(telemetry.traceStats("racer-1"), { errors: 1, loops: 0 });
@@ -82,6 +88,25 @@ test("keeps a bounded evaluation trace with sanitised browser evidence", () => {
   assert.equal(telemetry.trace("racer-2")[0].text, "step 21");
   // The spectator log stays bounded separately.
   assert.equal(telemetry.racer("racer-2").log.length, 60);
+});
+
+test("the trace keeps the model's reasoning, clipped, and marks steps that cleared a sabotage", () => {
+  const telemetry = new RaceTelemetry(racers, 3);
+  telemetry.recordAction("racer-1", report({
+    step: 1,
+    reasoning: " Close the\n overlay first. ",
+    evidence: { target: { role: "dismiss-overlay", text: "Close", decoy: false }, clearedSabotage: true },
+  }), 1_000);
+  telemetry.recordAction("racer-1", report({ step: 2, reasoning: "y".repeat(450) }), 2_000);
+  telemetry.recordAction("racer-1", report({
+    step: 3,
+    reasoning: "   ",
+    evidence: { clearedSabotage: "yes" as unknown as boolean },
+  }), 3_000);
+  assert.deepEqual(
+    telemetry.trace("racer-1").map((entry) => [entry.reasoning, entry.clearedSabotage]),
+    [["Close the overlay first.", true], [`${"y".repeat(399)}…`, false], [null, false]],
+  );
 });
 
 test("counts loop episodes once per run of three or more identical steps", () => {

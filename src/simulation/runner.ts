@@ -13,7 +13,10 @@ import {
   stepCaption,
   type ScriptHazard,
   type ScriptStep,
+  type SimStepContext,
 } from "./script.js";
+
+type StepTiming = Omit<SimStepContext, "brand">;
 import type { SimulatedWorld } from "./world.js";
 
 type PrepareContext = Omit<CompetitorContext, "reportCheckpoint" | "reportFinish">;
@@ -153,9 +156,14 @@ export class SimulatedCompetitorRunner implements CompetitorAgentRunner {
     const plan = this.planFor(racerId);
     const script = new SimRacerScript(plan, template, new Rng(`${this.options.seed}/run/${racerId}`));
 
-    const report = (entry: ScriptStep, page: SimPage, stageNumber: number): void => {
-      context.reportAction?.(actionReport(entry, page, script.steps, this.maxSteps));
-      this.reportFrame(context, page, stageNumber, script.steps, stepCaption(entry), entry.disruption, "working");
+    const report = (entry: ScriptStep, page: SimPage, stageNumber: number, timing: StepTiming): void => {
+      context.reportAction?.(
+        actionReport(entry, page, script.steps, this.maxSteps, { brand: template.brand, ...timing }),
+      );
+      // The page as the agent read it for this step, tagged with the step.
+      this.reportFrame(
+        context, page, stageNumber, script.steps, stepCaption(entry), entry.disruption, "working", true,
+      );
     };
 
     for (;;) {
@@ -174,8 +182,11 @@ export class SimulatedCompetitorRunner implements CompetitorAgentRunner {
         continue;
       }
 
+      // The agent reads the page, thinks for the step's delay, then acts.
+      const observedAt = world.now();
       await sleep(script.nextDelay() / timeScale, signal);
       if (signal.aborted) return;
+      const timing: StepTiming = { observedAt, decidedAt: world.now() };
       const page = script.page;
       const stageNumber = script.stageNumber;
 
@@ -192,12 +203,12 @@ export class SimulatedCompetitorRunner implements CompetitorAgentRunner {
         return;
       }
       if (plan.failAtStep !== null && script.steps + 1 >= plan.failAtStep) {
-        report(script.crash(), page, stageNumber);
+        report(script.crash(), page, stageNumber, timing);
         this.reportFrame(context, page, stageNumber, script.steps, "browser context lost", null, "failed");
         throw new Error("simulated agent crashed: browser context lost");
       }
       const entry = script.next(this.activeHazard(racerId, page), world.now());
-      report(entry, page, stageNumber);
+      report(entry, page, stageNumber, timing);
       if (entry?.recovered) {
         world.clear(racerId);
         await context.reportRecovery?.();
@@ -239,6 +250,8 @@ export class SimulatedCompetitorRunner implements CompetitorAgentRunner {
     action: string,
     disruption: { hazardType: HazardType; effectLabel: string } | null,
     status: "working" | "finished" | "failed" | "idle",
+    /** The frame shows the page the agent read for `step`: tag it with the step. */
+    forStep = false,
   ): void {
     if (!context.reportFrame) return;
     const agent = this.options.agents[context.racerId];
@@ -260,6 +273,7 @@ export class SimulatedCompetitorRunner implements CompetitorAgentRunner {
         disruption,
         status,
       }),
+      ...(forStep ? { step } : {}),
     });
   }
 }

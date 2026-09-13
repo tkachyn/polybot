@@ -4,8 +4,6 @@ import {
   MATRIX_DEFAULT_DAYS,
   MATRIX_MAX_DAYS,
   buildRobustnessMatrix,
-  selectFinalEvaluations,
-  toExportRows,
   type MatrixMode,
 } from "../evaluation/matrix.js";
 import type {
@@ -68,12 +66,11 @@ export type SpectatorContext = {
 const FIGHT_STATUSES: readonly FightStatus[] = ["upcoming", "live", "resolved"];
 const EVALUATION_MODES: readonly MatrixMode[] = ["live", "simulated", "all"];
 const DAY_MS = 86_400_000;
-export const EVALUATION_EXPORT_FILENAME = "sabotage-markets-evaluations.jsonl";
 
 type EvaluationQuery = { days?: string; mode?: string };
 
-/** `days`: an integer from 1 to 365, default 30. */
-function parseDays(value: unknown): number {
+/** `days`: an integer from 1 to 365, default 30. Anything else is DomainError `invalid`. */
+export function parseDays(value: unknown): number {
   if (value === undefined || value === "") return MATRIX_DEFAULT_DAYS;
   const days = typeof value === "string" && /^\d+$/.test(value) ? Number(value) : Number.NaN;
   if (!Number.isSafeInteger(days) || days < 1 || days > MATRIX_MAX_DAYS) {
@@ -82,8 +79,8 @@ function parseDays(value: unknown): number {
   return days;
 }
 
-/** `mode`: live, simulated or all; default the server's mode. */
-function parseEvaluationMode(value: unknown, fallback: ServerMode): MatrixMode {
+/** `mode`: live, simulated or all; default the server's mode. Anything else is DomainError `invalid`. */
+export function parseEvaluationMode(value: unknown, fallback: ServerMode): MatrixMode {
   if (value === undefined || value === "") return fallback;
   if (typeof value === "string" && (EVALUATION_MODES as readonly string[]).includes(value)) {
     return value as MatrixMode;
@@ -423,14 +420,5 @@ export function registerSpectatorRoutes(app: FastifyInstance, context: Spectator
     },
   );
 
-  app.get<{ Querystring: EvaluationQuery }>("/api/evaluations/export.jsonl", async (request, reply) => {
-    const { mode, since, stored } = await windowed(request.query, now());
-    const rows = toExportRows(selectFinalEvaluations(stored, { since, mode }));
-    const body = rows.map((row) => `${JSON.stringify(row)}\n`).join("");
-    return reply
-      .header("Content-Type", "application/x-ndjson")
-      .header("Content-Disposition", `attachment; filename="${EVALUATION_EXPORT_FILENAME}"`)
-      .header("Cache-Control", "no-store")
-      .send(body);
-  });
+  // The training dataset export is /api/datasets/* (dataset-routes.ts).
 }

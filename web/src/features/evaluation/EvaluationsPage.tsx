@@ -1,6 +1,7 @@
 /**
  * Route "/evaluations": the robustness matrix over final evaluations (agents
- * × hazards), the dataset export, and links to recent fight reports.
+ * × hazards), the training dataset download, and links to recent fight
+ * reports.
  *
  * URL: `?mode=live|simulated|all&days=7|30|90` (see ./params). Without a
  * mode the page follows the server's mode.
@@ -8,7 +9,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import type { FightSummary } from "@contract";
-import { evaluationExportUrl, type EvaluationMode } from "../../api/client";
+import { datasetExportUrl, datasetFileUrl, type DatasetQuery, type EvaluationMode } from "../../api/client";
 import {
   AgentMonogram,
   Button,
@@ -31,6 +32,7 @@ import { EVALUATION_MODE_LABEL, SIMULATED_AGENTS_COPY } from "../../lib/labels";
 import { useFights } from "../../state/fights";
 import { useSession } from "../../state/session";
 import { resolvedNewestFirst } from "../home/filter";
+import { DATASET_FILES, DATASET_ZIP_NAME, simulatedDatasetWarning } from "./dataset";
 import { IconDownload, IconEvaluations } from "./icons";
 import {
   DAYS_PARAM,
@@ -45,11 +47,10 @@ import { RobustnessMatrix } from "./RobustnessMatrix";
 import { useRobustnessMatrix } from "./useRobustnessMatrix";
 import styles from "./EvaluationsPage.module.css";
 
-/** Recent reports listed beside the export. */
+/** Recent reports listed beside the dataset. */
 const RECENT_LIMIT = 8;
-/** Every fight carries exactly four agents, so an evaluation exports four rows. */
+/** Every fight carries exactly four agents, so each fight adds four episodes. */
 const AGENTS_PER_FIGHT = 4;
-const EXPORT_FILENAME = "sabotage-markets-evaluations.jsonl";
 
 const MODE_TITLE: Readonly<Record<EvaluationMode, string>> = {
   live: "Real models on live Steel browsers",
@@ -175,7 +176,7 @@ export function EvaluationsPage() {
                 <>
                   No {shownMode && shownMode !== "all" ? `${EVALUATION_MODE_LABEL[shownMode].toLowerCase()} ` : ""}fight has resolved in the last{" "}
                   {formatNumber(days)} days. Evaluations accrue as fights resolve: each resolved fight adds a final evaluation of all four agents to
-                  this matrix and to the dataset export.
+                  this matrix and to the training dataset.
                 </>
               }
               action={
@@ -197,7 +198,7 @@ export function EvaluationsPage() {
         </section>
 
         <div className={styles.columns}>
-          <ExportPanel days={days} mode={mode} shownMode={shownMode} evaluations={data && !stale ? data.evaluations : null} />
+          <DatasetPanel days={days} mode={mode} shownMode={shownMode} evaluations={data && !stale ? data.evaluations : null} />
           <RecentReports />
         </div>
       </div>
@@ -206,74 +207,74 @@ export function EvaluationsPage() {
 }
 
 // ---------------------------------------------------------------------------
-// Dataset export
+// Dataset
 // ---------------------------------------------------------------------------
 
-const SCHEMA: ReadonlyArray<{ group: string; fields: readonly string[]; note?: string }> = [
-  { group: "Fight", fields: ["raceId", "fightNumber", "mode", "task", "courseId", "startedAt", "finishedAt", "sabotageSteps[]"] },
-  { group: "Agent", fields: ["agent", "outcome", "success", "durationMs", "steps", "errors", "loops", "robustness"] },
-  { group: "Reactions", fields: ["sabotage[]"], note: "each hit’s label, score, time lost, window counts, first response and explanation; keyframes omitted" },
-  { group: "Traces", fields: ["trace[]", "steelTrace[]"], note: "runner steps with browser evidence; Steel’s own events for live sessions" },
-  { group: "Crowd", fields: ["crowd"], note: "opening, before-hit, after-hit and final YES prices" },
-];
-
-type ExportPanelProps = {
+type DatasetPanelProps = {
   days: number;
+  /** The page's mode; null leaves it to the server (its own mode). */
   mode: EvaluationMode | null;
+  /** The mode the rows carry, as far as the page knows. */
   shownMode: EvaluationMode | null;
-  /** Evaluations in the current window and mode; null while unknown. */
+  /** Final evaluations (one per resolved fight) in the window and mode; null while unknown. */
   evaluations: number | null;
 };
 
-function ExportPanel({ days, mode, shownMode, evaluations }: ExportPanelProps) {
-  const href = evaluationExportUrl({ days, mode: mode ?? undefined });
+function DatasetPanel({ days, mode, shownMode, evaluations }: DatasetPanelProps) {
+  const query: DatasetQuery = { days, mode: mode ?? undefined };
   const scope = `${shownMode ? `${EVALUATION_MODE_LABEL[shownMode]} · ` : ""}last ${formatNumber(days)} days`;
+  const warning = simulatedDatasetWarning(shownMode);
   return (
-    <section className={styles.panel} aria-labelledby="evaluations-export">
+    <section className={styles.panel} aria-labelledby="evaluations-dataset">
       <div className={styles.panelHeader}>
-        <h2 id="evaluations-export" className={styles.panelTitle}>
+        <h2 id="evaluations-dataset" className={styles.panelTitle}>
           Dataset
         </h2>
         <span className={styles.panelMeta}>{scope}</span>
       </div>
       <div className={styles.panelBody}>
         <p className={styles.text}>
-          JSON Lines: one <code className={styles.code}>EvaluationExportRow</code> per agent per final evaluation, for the window and mode above. Every row
-          carries <code className={styles.code}>schemaVersion: 1</code>, and simulated rows say <code className={styles.code}>mode: "simulated"</code>.
+          Training data from every resolved fight in the window, covering all four agents, failures included. Each{" "}
+          <code className={styles.code}>.jsonl</code> file holds one JSON object per line.
         </p>
-        <dl className={styles.schema}>
-          {SCHEMA.map(({ group, fields, note }) => (
-            <div key={group} className={styles.schemaRow}>
-              <dt className="label label-sm">{group}</dt>
-              <dd>
-                <span className={styles.fields}>
-                  {fields.map((field) => (
-                    <code key={field} className={styles.code}>
-                      {field}
-                    </code>
-                  ))}
-                </span>
-                {note && <span className={styles.fieldNote}>{note}</span>}
-              </dd>
-            </div>
-          ))}
-        </dl>
+        {warning && (
+          <p className={styles.note}>
+            <IconAlert size={14} className={styles.noteIcon} />
+            <span>{warning}</span>
+          </p>
+        )}
         <div className={styles.exportRow}>
-          {evaluations === 0 ? (
-            <Button variant="action" icon={<IconDownload size={14} />} disabled title="Nothing to export in this window yet">
-              Export dataset (.jsonl)
-            </Button>
-          ) : (
-            <ButtonLink to={href} reloadDocument download={EXPORT_FILENAME} variant="action" icon={<IconDownload size={14} />}>
-              Export dataset (.jsonl)
-            </ButtonLink>
-          )}
+          <ButtonLink to={datasetExportUrl(query)} reloadDocument download={DATASET_ZIP_NAME} variant="action" icon={<IconDownload size={14} />}>
+            Download dataset (.zip)
+          </ButtonLink>
           {evaluations !== null && (
             <span className={cx("num", styles.panelMeta)}>
-              {formatNumber(evaluations * AGENTS_PER_FIGHT)} {evaluations * AGENTS_PER_FIGHT === 1 ? "row" : "rows"} from {formatNumber(evaluations)}{" "}
-              {evaluations === 1 ? "evaluation" : "evaluations"}
+              {evaluations === 0
+                ? "No resolved fights in this window yet"
+                : `${formatNumber(evaluations)} ${evaluations === 1 ? "fight" : "fights"} · ${formatNumber(evaluations * AGENTS_PER_FIGHT)} episodes`}
             </span>
           )}
+        </div>
+        <div className={styles.filesBlock}>
+          <h3 className="label">In the zip</h3>
+          <dl className={styles.files}>
+            {DATASET_FILES.map(({ file, name, description }) => (
+              <div key={file} className={styles.file}>
+                <dt>
+                  <a href={datasetFileUrl(file, query)} download={name} className={styles.fileLink} title={`Download ${name} on its own`}>
+                    <IconDownload size={12} className={styles.fileIcon} />
+                    <span className="sr-only">Download </span>
+                    {name}
+                  </a>
+                </dt>
+                <dd className={styles.fileText}>{description}</dd>
+              </div>
+            ))}
+            <div className={styles.file}>
+              <dt className={styles.fileExtra}>Screenshots, Steel traces</dt>
+              <dd className={styles.fileText}>Included in the zip only; steps and episodes point to them by path.</dd>
+            </div>
+          </dl>
         </div>
       </div>
     </section>

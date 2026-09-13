@@ -10,6 +10,7 @@
 import type {
   AccountResponse,
   ApiErrorCode,
+  DatasetFile,
   EnsureUserRequest,
   FightDetailResponse,
   FightEvaluationResponse,
@@ -288,9 +289,35 @@ export function getRobustnessMatrix(params: EvaluationQuery = {}, signal?: Abort
   return request<RobustnessMatrixResponse>("/api/evaluations/matrix", { query: { days: params.days, mode: params.mode }, signal });
 }
 
-/** GET /api/evaluations/export.jsonl?days=&mode= — NDJSON attachment, one EvaluationExportRow per line. */
-export function evaluationExportUrl(params: EvaluationQuery = {}): string {
-  return `${API_BASE}${withQuery("/api/evaluations/export.jsonl", { days: params.days, mode: params.mode })}`;
+// ---------------------------------------------------------------------------
+// Training dataset (docs/training-data.md): download links, not fetches
+// ---------------------------------------------------------------------------
+
+/**
+ * Which fights the dataset covers. `days` is 1–365 (the server default is
+ * 30); omit `mode` for the server's own mode.
+ */
+export type DatasetQuery = EvaluationQuery;
+
+function datasetPath(name: string, params: DatasetQuery): string {
+  return `${API_BASE}${withQuery(`/api/datasets/${name}`, { days: params.days, mode: params.mode })}`;
+}
+
+/**
+ * GET /api/datasets/export.zip?days=&mode= — the whole dataset as a zip
+ * attachment: manifest.json, the four JSON Lines files, screenshots and raw
+ * Steel traces.
+ */
+export function datasetExportUrl(params: DatasetQuery = {}): string {
+  return datasetPath("export.zip", params);
+}
+
+/**
+ * GET /api/datasets/manifest.json or /api/datasets/{file}.jsonl?days=&mode= —
+ * one file of the dataset, for the same window and mode as the zip.
+ */
+export function datasetFileUrl(file: DatasetFile | "manifest", params: DatasetQuery = {}): string {
+  return datasetPath(file === "manifest" ? "manifest.json" : `${file}.jsonl`, params);
 }
 
 // ---------------------------------------------------------------------------
@@ -330,7 +357,8 @@ export const api = {
   evidenceFrameUrl,
   replayUrl,
   getRobustnessMatrix,
-  evaluationExportUrl,
+  datasetExportUrl,
+  datasetFileUrl,
   fightsStreamUrl,
   fightStreamUrl,
   userStreamUrl,

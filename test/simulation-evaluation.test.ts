@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { strFromU8, unzipSync } from "fflate";
 import type {
-  EvaluationExportRow,
+  DatasetEpisode,
+  DatasetManifest,
+  DatasetStep,
   FightDetailResponse,
   FightEvaluation,
   FightEvaluationResponse,
@@ -134,19 +137,39 @@ test("simulated fights close with final evaluations that feed the matrix and the
       .json() as RobustnessMatrixResponse;
     assert.deepEqual([liveOnly.evaluations, liveOnly.rows], [0, []]);
 
-    // The dataset export: one row per agent per final evaluation, newest first.
-    const exported = await app.inject({ method: "GET", url: "/api/evaluations/export.jsonl" });
-    assert.equal(exported.statusCode, 200);
-    assert.match(String(exported.headers["content-type"]), /^application\/x-ndjson/);
-    assert.match(String(exported.headers["content-disposition"]), /filename="sabotage-markets-evaluations\.jsonl"/);
-    const rows = exported.body.trimEnd().split("\n").map((line) => JSON.parse(line) as EvaluationExportRow);
-    assert.equal(rows.length % 4, 0);
-    assert.ok(rows.length >= matrix.evaluations * 4);
-    assert.ok(rows.every((row) => row.schemaVersion === 1 && row.mode === "simulated"));
-    assert.ok(rows.some((row) => row.raceId === settled?.raceId));
-    assert.ok(rows.some((row) => row.sabotage.length > 0 && row.trace.some((entry) => entry.targetRole !== null)));
-    const finishes = rows.filter((_, index) => index % 4 === 0).map((row) => row.finishedAt ?? 0);
-    assert.deepEqual(finishes, [...finishes].sort((left, right) => right - left), "newest fights first");
+    // The training dataset: the server's mode by default, every closed fight in the window.
+    const zipped = await app.inject({ method: "GET", url: "/api/datasets/export.zip" });
+    assert.equal(zipped.statusCode, 200);
+    assert.equal(zipped.headers["content-type"], "application/zip");
+    assert.match(
+      String(zipped.headers["content-disposition"]),
+      /filename="sabotage-markets-dataset-\d{4}-\d{2}-\d{2}\.zip"/,
+    );
+    const bundle = unzipSync(new Uint8Array(zipped.rawPayload));
+    function lines<T>(name: string): T[] {
+      return strFromU8(bundle[name]).split("\n").filter(Boolean).map((line) => JSON.parse(line) as T);
+    }
+    const manifest = JSON.parse(strFromU8(bundle["manifest.json"])) as DatasetManifest;
+    const episodes = lines<DatasetEpisode>("episodes.jsonl");
+    const steps = lines<DatasetStep>("steps.jsonl");
+    assert.deepEqual([manifest.filters.mode, manifest.filters.days], ["simulated", 30]);
+    assert.ok(manifest.counts.fights >= matrix.evaluations, `${manifest.counts.fights} fights`);
+    assert.deepEqual([manifest.counts.episodes, manifest.counts.steps], [episodes.length, steps.length]);
+    assert.ok(episodes.every((episode) => episode.schemaVersion === 1 && episode.mode === "simulated"));
+    const settledId = settled.raceId;
+    assert.deepEqual(
+      episodes.filter((episode) => episode.raceId === settledId).map((episode) => episode.racerId),
+      ["racer-1", "racer-2", "racer-3", "racer-4"],
+      "the resolved fight exports four episodes",
+    );
+    const settledSteps = steps.filter((step) => step.raceId === settledId);
+    assert.ok(settledSteps.length > 0, "the resolved fight has steps");
+    assert.ok(settledSteps.some((step) => step.observation !== null), "steps carry what the agent saw");
+    assert.ok(settledSteps.some((step) => step.reasoning !== null), "steps carry the agent's reasoning");
+    const shots = steps.filter((step) => step.screenshot !== null);
+    assert.ok(shots.length > 0, "steps link the screenshots their observations were taken with");
+    for (const step of shots) assert.ok(bundle[step.screenshot as string], `${step.screenshot} is in the zip`);
+    assert.equal(manifest.counts.screenshots, new Set(shots.map((step) => step.screenshot)).size);
   } finally {
     await app.close();
   }

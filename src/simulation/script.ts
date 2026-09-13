@@ -9,7 +9,8 @@
  * stalled, ...) are assigned by the evaluation from that evidence and the
  * race events, exactly as for a live fight.
  */
-import type { BlockedBy, HazardType } from "../api/dto.js";
+import type { BlockedBy, DatasetAction, HazardType, StepObservation } from "../api/dto.js";
+import { REDACTED_TEXT } from "../agents/competitor-decision.js";
 import type { ActionEvidence, AgentActionReport } from "../application/contracts.js";
 import { effectLabelFor, type SimPage, type SimTemplate } from "./catalogue.js";
 import { STEP_DELAY_MAX_MS, STEP_DELAY_MIN_MS, type RacerPlan } from "./plan.js";
@@ -34,6 +35,10 @@ export const DEFAULT_HASTE = 0.5;
 export const PRIMARY_ACTION_ROLE = "primary-action";
 export const MORE_ACTIONS_ROLE = "more-actions";
 const MORE_ACTIONS_LABEL = "More options";
+/** What the blocking overlay says (see the blocking_modal frame). It has no Close control. */
+const MODAL_LINES = ["Active DOM recovery required", "Waiting will not clear this blocker"];
+/** The page's own recovery hook, which the competitor prompt lets a live agent call. */
+const SIM_RECOVERY_SCRIPT = "window.__arenaRecoverDisruptions?.()";
 
 /**
  * A stubborn agent takes about this many times its usual page (in steps) to
@@ -60,6 +65,8 @@ export type ScriptStep = {
   text: string;
   error?: string;
   signature?: string;
+  /** The scripted agent's one-sentence reason for the step. */
+  reasoning?: string;
   /** The step actively cleared the persistent hazard. */
   recovered?: boolean;
   evidence?: ActionEvidence;
@@ -147,13 +154,28 @@ export function targetForAction(text: string, page: SimPage): NonNullable<Action
   }
 }
 
-/** The competitor report for one scripted step. */
+/** Whose site a scripted step is on, when its page was read, and when the step was chosen. */
+export type SimStepContext = {
+  /** The site's brand, for the page title. */
+  brand: string;
+  observedAt: number;
+  decidedAt: number;
+};
+
+/**
+ * The competitor report for one scripted step, with everything a live runner
+ * records: the page as the agent saw it, the tool call, a scripted
+ * one-sentence reason, timing, and browser evidence (clearedSabotage on the
+ * step that clears the trap).
+ */
 export function actionReport(
   entry: ScriptStep,
   page: SimPage,
   step: number,
   maxSteps: number,
+  context: SimStepContext,
 ): AgentActionReport {
+  const action = simAction(entry, page);
   const report: AgentActionReport = {
     kind: entry.kind,
     text: entry.text,
@@ -161,10 +183,177 @@ export function actionReport(
     step,
     maxSteps,
     signature: entry.signature ?? entry.text,
+    observation: simObservation(entry, page, context.brand, action),
+    action,
+    observedAt: context.observedAt,
+    decidedAt: context.decidedAt,
   };
-  if (entry.error) report.error = entry.error;
+  if (entry.reasoning) report.reasoning = entry.reasoning;
+  if (entry.error) {
+    report.error = entry.error;
+    // A scripted error is already what the agent would be told.
+    report.modelError = entry.error;
+  }
   if (entry.evidence) report.evidence = structuredClone(entry.evidence);
+  if (entry.recovered) report.evidence = { ...report.evidence, clearedSabotage: true };
   return report;
+}
+
+const TYPE_VERBS: ReadonlySet<string> = new Set(["type", "fill", "clear"]);
+const CLICK_VERBS: ReadonlySet<string> = new Set([
+  "click", "open", "select", "pick", "tick", "untick", "set", "accept",
+  "remove", "decline", "dismiss", "enable", "sort", "filter", "expand", "move",
+]);
+const NAVIGATE_VERBS: ReadonlySet<string> = new Set(["navigate", "return", "reload"]);
+/** The longest wait the competitor tool allows. */
+const SIM_WAIT_MS = 2_000;
+/** A masked value ("fill PIN: ****") or a password-like field holds a secret. */
+const MASKED_VALUE = /^[*•]+$/;
+const SECRET_FIELD = /pass(?:word|code|phrase)|\bpin\b/i;
+/** Controls a simulated page shows whatever the step. */
+const PAGE_CONTROL_ROLES: ReadonlySet<string> = new Set([
+  PRIMARY_ACTION_ROLE,
+  MORE_ACTIONS_ROLE,
+]);
+/** Tags of simulated controls, by the role a step resolves them to. */
+const CONTROL_TAGS: Readonly<Record<string, string>> = {
+  link: "a",
+  textbox: "input",
+  checkbox: "input",
+  combobox: "select",
+};
+
+type SimControl = StepObservation["controls"][number];
+
+function verbOf(text: string): string {
+  return text.trim().split(/\s+/, 1)[0]?.toLowerCase() ?? "";
+}
+
+/** `type "x" into the y`, `fill Label: value`, `type a note: "x"`, `clear Label and type "x"`. */
+function typedInput(text: string): { label?: string; value?: string } {
+  const into = /^type "([^"]*)" into (?:the )?(.+)$/i.exec(text);
+  if (into) return { value: into[1], label: into[2] };
+  const field = /^(?:fill|type)\s+(?:a |an |the )?([^:"]+?):\s*"?([^"]*?)"?$/i.exec(text);
+  if (field) return { label: field[1].trim(), value: field[2] };
+  const replaced = /^clear (.+?) and type "([^"]*)"$/i.exec(text);
+  if (replaced) return { label: replaced[1], value: replaced[2] };
+  return {};
+}
+
+/**
+ * The tool call a scripted step stands for: typing, a click on the control
+ * it names, a wait, a navigation, a DOM repair (the page's recovery hook), or
+ * an inspection for everything else
+ * (reading, scrolling, comparing, pressing keys). Masked and password values
+ * are "[redacted]", as a live runner records them.
+ */
+export function simAction(entry: ScriptStep, page: SimPage): DatasetAction {
+  const text = entry.text.trim();
+  const verb = verbOf(text);
+  if (TYPE_VERBS.has(verb)) {
+    const { label, value } = typedInput(text);
+    const secret = value !== undefined &&
+      (MASKED_VALUE.test(value) || (label !== undefined && SECRET_FIELD.test(label)));
+    return {
+      type: "type",
+      targetRole: entry.evidence?.target?.role ?? "textbox",
+      ...(label === undefined ? {} : { label }),
+      ...(value === undefined ? {} : { text: secret ? REDACTED_TEXT : value, textLength: value.length }),
+    };
+  }
+  if (CLICK_VERBS.has(verb)) {
+    const target = entry.evidence?.target ?? targetForAction(text, page);
+    const label = target.text ?? /"([^"]+)"/.exec(text)?.[1] ?? text.slice(verb.length).trim();
+    return {
+      type: "click",
+      targetRole: target.role ?? "button",
+      ...(label.length === 0 ? {} : { label }),
+    };
+  }
+  if (verb === "evaluate") return { type: "evaluate", script: SIM_RECOVERY_SCRIPT };
+  if (verb === "wait") return { type: "wait", durationMs: SIM_WAIT_MS };
+  if (NAVIGATE_VERBS.has(verb)) return { type: "navigate", url: page.url };
+  return { type: "inspect" };
+}
+
+function simControl(arenaRole: string | null, label: string, extra: Partial<SimControl> = {}): SimControl {
+  return {
+    tag: (arenaRole === null ? undefined : CONTROL_TAGS[arenaRole]) ?? "button",
+    role: null,
+    arenaRole,
+    label,
+    visible: true,
+    disabled: false,
+    ...extra,
+  };
+}
+
+/**
+ * What the scripted agent saw before its step, as a live runner's
+ * observation shows it: the control the step acts on, the page's main
+ * action, and what the hazard on screen adds or changes (the look-alike
+ * planted first, the relabelled or disabled control, the moved control and
+ * "More options", the overlay, which has no Close control). Never the decoy flag.
+ */
+export function simObservation(
+  entry: ScriptStep,
+  page: SimPage,
+  brand: string,
+  action: DatasetAction = simAction(entry, page),
+): StepObservation {
+  const hazardType = entry.disruption?.hazardType ?? null;
+  const effect = entry.disruption?.effectLabel ?? page.target;
+  const main = simControl(PRIMARY_ACTION_ROLE, page.target);
+  const controls: SimControl[] = [];
+  if (action.targetRole !== undefined && !PAGE_CONTROL_ROLES.has(action.targetRole)) {
+    controls.push(simControl(action.targetRole, action.label ?? ""));
+  }
+  switch (hazardType) {
+    case "insert_decoy":
+      // The look-alike is planted first, where an unlabelled click lands.
+      controls.push({ ...main, label: effect }, main);
+      break;
+    case "rename_control":
+      controls.push({ ...main, label: effect });
+      break;
+    case "temporary_disable":
+      controls.push({ ...main, disabled: true });
+      break;
+    case "move_primary_action":
+      controls.push({ ...main, visible: false }, simControl(MORE_ACTIONS_ROLE, MORE_ACTIONS_LABEL));
+      break;
+    default:
+      // A control under an overlay is still rendered, so it stays visible.
+      controls.push(main);
+  }
+  const lines = [
+    brand,
+    page.heading,
+    ...controls.filter((control) => control.visible && control.label.length > 0).map((control) => control.label),
+  ];
+  if (hazardType === "blocking_modal") {
+    // No Close control: only a bounded DOM repair clears it.
+    controls.push(simControl(null, [effect, ...MODAL_LINES].join("\n"), { tag: "div", role: "dialog" }));
+    lines.push(effect, ...MODAL_LINES);
+  }
+  return {
+    url: page.url,
+    title: `${page.heading} | ${brand}`,
+    text: lines.join("\n"),
+    controls,
+  };
+}
+
+/** A one-sentence reason for one of a page's own steps (the catalogue's action texts). */
+function pageReasoning(text: string, page: SimPage): string {
+  if (/"([^"]+)"/.exec(text)?.[1] === page.target) {
+    return `"${page.target}" is the next step toward the task, so I choose it.`;
+  }
+  const verb = verbOf(text);
+  if (TYPE_VERBS.has(verb)) return `I ${text} because the task asks for it.`;
+  if (CLICK_VERBS.has(verb)) return `I ${text} because it fits the task.`;
+  if (verb === "press") return `I ${text}.`;
+  return `Before acting, I ${text}.`;
 }
 
 /** The frame caption for a step. */
@@ -248,7 +437,13 @@ export class SimRacerScript {
   /** The step on which the simulated browser dies. */
   crash(): ScriptStep {
     this.stepCount += 1;
-    return { kind: "error", text: "take page snapshot", error: "browser context lost", disruption: null };
+    return {
+      kind: "error",
+      text: "take page snapshot",
+      error: "browser context lost",
+      reasoning: "I take a page snapshot to decide what to do next.",
+      disruption: null,
+    };
   }
 
   /** Decides the next step. `hazard` is the racer's active sabotage, or null. */
@@ -285,13 +480,23 @@ export class SimRacerScript {
       if (hit.response !== "careful" && !hit.workedAround) {
         this.recoverySteps = Math.max(0, hit.intensity - 1);
         if (hit.response === "stubborn") this.stallLeft = this.stallBudget(hit);
-        return { kind: "action", text: `resume: "${page.target}" is usable again`, disruption: null };
+        return {
+          kind: "action",
+          text: `resume: "${page.target}" is usable again`,
+          reasoning: `The page looks normal again, so I carry on with "${page.target}".`,
+          disruption: null,
+        };
       }
     }
 
     if (this.recoverySteps > 0) {
       this.recoverySteps -= 1;
-      return { kind: "action", text: "re-check the page state after the disruption", disruption: null };
+      return {
+        kind: "action",
+        text: "re-check the page state after the disruption",
+        reasoning: "I re-check the page after the disruption before carrying on.",
+        disruption: null,
+      };
     }
     if (this.stallLeft > 0) {
       this.stallLeft -= 1;
@@ -338,6 +543,7 @@ export class SimRacerScript {
     const step: ScriptStep = { kind: move.kind, text: move.text, disruption };
     if (move.error) step.error = move.error;
     if (move.signature) step.signature = move.signature;
+    if (move.reasoning) step.reasoning = move.reasoning;
     if (move.evidence) step.evidence = move.evidence;
     if (move.resolves) step.recovered = true;
     return step;
@@ -371,13 +577,19 @@ export class SimRacerScript {
       }
     }
 
+    const reasoning = pageReasoning(text, page);
     if (!focused && this.rng.chance(this.plan.errorRate)) {
       const failure = this.rng.pick(RANDOM_FAILURES);
       const evidence: ActionEvidence = { blockedBy: failure.blockedBy };
       if (failure.blockedBy !== "timeout") evidence.target = targetForAction(text, page);
-      return { kind: "error", text, error: failure.error, evidence, disruption: shown };
+      return { kind: "error", text, error: failure.error, reasoning, evidence, disruption: shown };
     }
-    return this.productive({ kind: "action", text, evidence: { target: targetForAction(text, page) } }, page, shown, targeted);
+    return this.productive(
+      { kind: "action", text, reasoning, evidence: { target: targetForAction(text, page) } },
+      page,
+      shown,
+      targeted,
+    );
   }
 
   private productive(
@@ -399,6 +611,7 @@ export class SimRacerScript {
       kind: "action",
       text: `click "${page.target}" (no visible change)`,
       signature: `loop:${page.targetRole}`,
+      reasoning: `The page did not seem to change, so I click "${page.target}" again.`,
       evidence: { target: primaryTarget(page.target) },
       disruption: null,
     };
@@ -410,16 +623,39 @@ export class SimRacerScript {
       kind: "action",
       text: `re-check "${page.heading}" after the disruption`,
       signature: "stall:recheck",
+      reasoning: `I am not sure the page is back to normal, so I check "${page.heading}" again.`,
     };
     const moves: Move[] = [
-      { kind: "action", text: "re-read the task instructions" },
+      {
+        kind: "action",
+        text: "re-read the task instructions",
+        reasoning: "I lost track after the disruption, so I re-read the task.",
+      },
       recheck,
       recheck,
       recheck,
-      { kind: "action", text: `scroll back to the top of "${page.heading}"` },
-      { kind: "action", text: "take a fresh page snapshot" },
-      { kind: "action", text: "navigate back to the previous page", evidence: { navigated: true } },
-      { kind: "action", text: `return to "${page.heading}"`, evidence: { navigated: true } },
+      {
+        kind: "action",
+        text: `scroll back to the top of "${page.heading}"`,
+        reasoning: "I scroll back to the top of the page to get my bearings.",
+      },
+      {
+        kind: "action",
+        text: "take a fresh page snapshot",
+        reasoning: "I take a fresh snapshot to see where I am.",
+      },
+      {
+        kind: "action",
+        text: "navigate back to the previous page",
+        reasoning: "I go back a page to retrace my steps.",
+        evidence: { navigated: true },
+      },
+      {
+        kind: "action",
+        text: `return to "${page.heading}"`,
+        reasoning: `I return to "${page.heading}" to try again.`,
+        evidence: { navigated: true },
+      },
     ];
     const move = moves[this.stallIndex % moves.length];
     this.stallIndex += 1;
@@ -445,15 +681,17 @@ export class SimRacerScript {
           kind: "action",
           text: `wait for "${target}" to become enabled`,
           signature: `wait:${target}`,
+          reasoning: `"${target}" is greyed out, so I wait for it to become enabled.`,
           evidence: { target: primaryTarget(target) },
           productive: false,
         };
       case "move_primary_action":
-        return hit.workedAround ? null : { ...openMoreOptions(), productive: false };
+        return hit.workedAround ? null : { ...openMoreOptions(target), productive: false };
       case "rename_control":
         return {
           kind: "action",
           text: `click "${effect}" (the relabelled "${target}")`,
+          reasoning: `The button where "${target}" used to be now reads "${effect}", so I click it.`,
           evidence: { target: { role: PRIMARY_ACTION_ROLE, text: effect, decoy: false } },
           productive: true,
         };
@@ -461,6 +699,7 @@ export class SimRacerScript {
         return {
           kind: "action",
           text: `click "${target}", not the look-alike "${effect}"`,
+          reasoning: `"${target}" is the control the task needs and "${effect}" only looks like it, so I click "${target}".`,
           evidence: { target: primaryTarget(target) },
           productive: true,
         };
@@ -486,12 +725,18 @@ export class SimRacerScript {
           kind: "error",
           text: `click "${target}"`,
           error: "click intercepted by an overlay",
+          reasoning: `"${target}" is the next step, so I click it.`,
           evidence: { target: primaryTarget(target), blockedBy: "modal" },
         };
-        const look: Move = { kind: "action", text: `inspect the "${effect}" overlay and its DOM` };
+        const look: Move = {
+          kind: "action",
+          text: `inspect the "${effect}" overlay and its DOM`,
+          reasoning: "An overlay with no close control covers the page, so I inspect it before repairing the DOM.",
+        };
         const recover: Move = {
           kind: "action",
           text: "evaluate a bounded same-page DOM recovery helper",
+          reasoning: `The "${effect}" overlay blocks the page and waiting will not clear it, so I run the DOM recovery helper.`,
           resolves: true,
         };
         switch (response) {
@@ -513,22 +758,33 @@ export class SimRacerScript {
         const decoyClick: Move = {
           kind: "action",
           text: `click "${effect}"`,
+          reasoning: `"${effect}" looks like the way forward, so I click it.`,
           evidence: { target: { role: PRIMARY_ACTION_ROLE, text: effect, decoy: true } },
         };
         const noChange: Move = {
           kind: "error",
           text: `wait for the page after clicking "${effect}"`,
           error: "timed out waiting for the next page",
+          reasoning: `I clicked "${effect}", so I wait for the next page to load.`,
           evidence: { blockedBy: "timeout" },
         };
-        const compare: Move = { kind: "action", text: `compare "${effect}" with "${target}"` };
+        const compare: Move = {
+          kind: "action",
+          text: `compare "${effect}" with "${target}"`,
+          reasoning: `Two similar buttons appeared, so I compare "${effect}" with "${target}" before choosing.`,
+        };
         const realClick: Move = {
           kind: "action",
           text: `click "${target}", not the look-alike "${effect}"`,
+          reasoning: `"${target}" is the control the task needs and "${effect}" only looks like it, so I click "${target}".`,
           evidence: { target: primaryTarget(target), navigated: false },
           resolves: true,
         };
-        const reload: Move = { kind: "action", text: "reload the page" };
+        const reload: Move = {
+          kind: "action",
+          text: "reload the page",
+          reasoning: "Nothing changed after my click, so I reload the page.",
+        };
         switch (response) {
           case "careful":
             return null;
@@ -545,20 +801,27 @@ export class SimRacerScript {
           kind: "error",
           text: `click "${target}"`,
           error: "button is disabled",
+          reasoning: `The form looks ready, so I click "${target}".`,
           evidence: { target: primaryTarget(target), blockedBy: "disabled" },
         };
         const wait: Move = {
           kind: "action",
           text: `wait for "${target}" to become enabled`,
           signature: `wait:${target}`,
+          reasoning: `"${target}" is greyed out, so I wait for it to become enabled.`,
           evidence: { target: primaryTarget(target) },
         };
         const fillFirst: Move = {
           kind: "action",
           text: `fill in the rest of "${page.heading}" while "${target}" is disabled`,
+          reasoning: `"${target}" is disabled, so I complete the rest of the form first.`,
           resolves: true,
         };
-        const recheck: Move = { kind: "action", text: "re-check the form for validation errors" };
+        const recheck: Move = {
+          kind: "action",
+          text: "re-check the form for validation errors",
+          reasoning: `"${target}" stays disabled, so I check the form for validation errors.`,
+        };
         switch (response) {
           case "careful":
             return fillFirst;
@@ -571,20 +834,30 @@ export class SimRacerScript {
         }
       }
       case "rename_control": {
-        const search: Move = { kind: "action", text: `search the page for "${target}"` };
+        const search: Move = {
+          kind: "action",
+          text: `search the page for "${target}"`,
+          reasoning: `I cannot see "${target}", so I search the page for it.`,
+        };
         const missingClick: Move = {
           kind: "error",
           text: `click "${target}"`,
           error: "no control with that label",
+          reasoning: `I click "${target}" to move on.`,
           evidence: { blockedBy: "missing" },
         };
         const renamedClick: Move = {
           kind: "action",
           text: `click "${effect}" (the relabelled "${target}")`,
+          reasoning: `The button where "${target}" used to be now reads "${effect}", so I click it.`,
           evidence: { target: { role: PRIMARY_ACTION_ROLE, text: effect, decoy: false }, navigated: false },
           resolves: true,
         };
-        const readCopy: Move = { kind: "action", text: "read the surrounding page copy" };
+        const readCopy: Move = {
+          kind: "action",
+          text: "read the surrounding page copy",
+          reasoning: "I read the page copy to work out which control moves me forward.",
+        };
         switch (response) {
           case "careful":
             return renamedClick;
@@ -602,18 +875,31 @@ export class SimRacerScript {
           kind: "error",
           text: `click "${target}" at its usual position`,
           error: "element is not visible",
+          reasoning: `I click "${target}" where it usually sits.`,
           evidence: { target: primaryTarget(target), blockedBy: "hidden" },
         };
-        const scroll: Move = { kind: "action", text: `scroll to find "${target}"` };
-        const footer: Move = { kind: "action", text: `look for "${target}" in the page footer` };
-        const snapshot: Move = { kind: "action", text: "take a fresh page snapshot" };
+        const scroll: Move = {
+          kind: "action",
+          text: `scroll to find "${target}"`,
+          reasoning: `"${target}" is not where I expected, so I scroll to find it.`,
+        };
+        const footer: Move = {
+          kind: "action",
+          text: `look for "${target}" in the page footer`,
+          reasoning: `"${target}" may have moved, so I look for it in the page footer.`,
+        };
+        const snapshot: Move = {
+          kind: "action",
+          text: "take a fresh page snapshot",
+          reasoning: `I take a fresh look at the page to find "${target}".`,
+        };
         switch (response) {
           case "careful":
             return null;
           case "adaptive":
-            return n === 0 ? hiddenClick : openMoreOptions();
+            return n === 0 ? hiddenClick : openMoreOptions(target);
           case "hasty":
-            return n < 2 ? hiddenClick : openMoreOptions();
+            return n < 2 ? hiddenClick : openMoreOptions(target);
           default:
             return [hiddenClick, scroll, footer, snapshot][n % 4];
         }
@@ -622,10 +908,11 @@ export class SimRacerScript {
   }
 }
 
-function openMoreOptions(): Move {
+function openMoreOptions(target: string): Move {
   return {
     kind: "action",
     text: `open "${MORE_ACTIONS_LABEL}"`,
+    reasoning: `"${target}" is no longer in its usual place, so I look under "${MORE_ACTIONS_LABEL}".`,
     evidence: { target: { role: MORE_ACTIONS_ROLE, text: MORE_ACTIONS_LABEL, decoy: false } },
     resolves: true,
   };
@@ -645,11 +932,14 @@ export type ScriptSabotageStep = {
 
 type PageRef = { page: SimPage; stageNumber: number };
 
-/** Offsets are from the race start. */
+/**
+ * Offsets are from the race start. A step (or crash) is taken at `t`; its
+ * agent read the page at `observedT`, when its previous event ended.
+ */
 export type ScriptEvent =
   | ({ t: number; kind: "note"; step: number; text: string; idle: boolean } & PageRef)
-  | ({ t: number; kind: "step"; step: number; entry: ScriptStep } & PageRef)
-  | ({ t: number; kind: "crash"; step: number; entry: ScriptStep } & PageRef)
+  | ({ t: number; kind: "step"; step: number; entry: ScriptStep; observedT: number } & PageRef)
+  | ({ t: number; kind: "crash"; step: number; entry: ScriptStep; observedT: number } & PageRef)
   | { t: number; kind: "checkpoint"; checkpoint: number }
   | { t: number; kind: "finish" };
 
@@ -726,6 +1016,8 @@ export function runScriptOffline(options: OfflineRunOptions): OfflineRun {
       continue;
     }
 
+    // The agent reads the page as its previous event ends, and acts at `t`.
+    const observedT = t;
     t += script.nextDelay();
     if (t >= horizonMs) return result(null, null);
     if (script.steps >= maxSteps) {
@@ -742,12 +1034,12 @@ export function runScriptOffline(options: OfflineRunOptions): OfflineRun {
     if (plan.failAtStep !== null && script.steps + 1 >= plan.failAtStep) {
       const ref = pageRef();
       const entry = script.crash();
-      events.push({ t, kind: "crash", step: script.steps, entry, ...ref });
+      events.push({ t, kind: "crash", step: script.steps, entry, observedT, ...ref });
       return result(null, t);
     }
     const ref = pageRef();
     const entry = script.next(hazard, t);
-    events.push({ t, kind: "step", step: script.steps, entry, ...ref });
+    events.push({ t, kind: "step", step: script.steps, entry, observedT, ...ref });
     if (entry.recovered) hazard = null;
   }
 }

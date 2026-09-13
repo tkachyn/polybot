@@ -4,6 +4,7 @@ import {
   COMPETITOR_TOOL_DESCRIPTION,
   COMPETITOR_TOOL_NAME,
   COMPETITOR_TOOL_SCHEMA,
+  competitorUserMessage,
   parseDecision,
   type CompetitorDecisionInput,
 } from "./competitor-decision.js";
@@ -90,14 +91,15 @@ export class AnthropicCompetitorDecisionModel implements CompetitorDecisionModel
       model: this.options.model,
       max_tokens: 500,
       system: COMPETITOR_SYSTEM_PROMPT,
-      messages: [{ role: "user", content: JSON.stringify(input) }],
+      // Only the model-facing input goes in the prompt; the signal goes to the request.
+      messages: [{ role: "user", content: competitorUserMessage(input) }],
       tools: [{
         name: COMPETITOR_TOOL_NAME,
         description: COMPETITOR_TOOL_DESCRIPTION,
         input_schema: structuredClone(COMPETITOR_TOOL_SCHEMA),
       }],
       tool_choice: { type: "tool", name: COMPETITOR_TOOL_NAME },
-    });
+    }, input.signal ? { signal: input.signal } : undefined);
     return parseDecision(toolInput(response, COMPETITOR_TOOL_NAME));
   }
 }

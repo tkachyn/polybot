@@ -4,11 +4,13 @@
  * navigation) and the HLS recording. Every failure resolves to null. Nothing
  * is logged, and the key only ever travels in the `steel-api-key` header.
  */
-import type { SteelTraceEntry } from "../api/dto.js";
+import type { DatasetSteelEvent, SteelTraceEntry } from "../api/dto.js";
 
 export const STEEL_API_BASE_URL = "https://api.steel.dev/v1";
-/** At most this many trace events are kept per session, oldest first. */
+/** At most this many normalised trace events are kept per session, oldest first. */
 export const STEEL_TRACE_LIMIT = 300;
+/** At most this many raw Agent Traces events are kept per session, oldest first. */
+export const STEEL_RAW_TRACE_LIMIT = 2_000;
 export const STEEL_REQUEST_TIMEOUT_MS = 5_000;
 /** Planted decoys carry `id="arena-decoy-…"` (see the insert_decoy hazard). */
 export const DECOY_ID_PREFIX = "arena-decoy-";
@@ -35,6 +37,11 @@ export type SteelRequestOptions = {
 export type SteelEvidence = {
   /** Oldest first, at most 300 events; null when the traces could not be read. */
   trace: SteelTraceEntry[] | null;
+  /**
+   * The Agent Traces events exactly as Steel returned them, oldest first, at
+   * most 2,000; null when the traces could not be read.
+   */
+  raw: unknown[] | null;
   /** The HLS playlist could be read. */
   replayAvailable: boolean;
   /** The recording's first EXT-X-PROGRAM-DATE-TIME, epoch ms. */
@@ -108,6 +115,90 @@ export function normalizeSteelTraceEvent(event: unknown): SteelTraceEntry | null
   };
 }
 
+function finite(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+/** `boundingBox: { x, y, width, height }` → [x, y, width, height] in CSS pixels. */
+function boundingBoxOf(value: unknown): [number, number, number, number] | null {
+  if (!isRecord(value)) return null;
+  const x = finite(value.x);
+  const y = finite(value.y);
+  const width = finite(value.width);
+  const height = finite(value.height);
+  return x === null || y === null || width === null || height === null ? null : [x, y, width, height];
+}
+
+/** DOM MouseEvent.button codes, for traces that report the button as a number. */
+const POINTER_BUTTONS: readonly string[] = ["left", "middle", "right"];
+
+/** `pointer: { x, y, button, clickCount }` → { x, y, button }. */
+function pointerOf(value: unknown): DatasetSteelEvent["pointer"] {
+  if (!isRecord(value)) return null;
+  const x = finite(value.x);
+  const y = finite(value.y);
+  if (x === null || y === null) return null;
+  const code = finite(value.button);
+  const button = code === null ? cleanText(value.button, 20) : POINTER_BUTTONS[code] ?? String(code);
+  return { x, y, button };
+}
+
+/** `value: { inputType, valueLength, redacted? }`: a typing episode, never its characters. */
+function typingOf(value: unknown): DatasetSteelEvent["input"] {
+  if (!isRecord(value) || !("inputType" in value || "valueLength" in value || "redacted" in value)) {
+    return null;
+  }
+  return {
+    inputType: cleanText(value.inputType, 40),
+    length: finite(value.valueLength),
+    redacted: value.redacted === true,
+  };
+}
+
+/**
+ * `keyboard: { key, code }` for special keys. A single-character key would be
+ * a typed character, so it is never kept.
+ */
+function keyOf(value: unknown): DatasetSteelEvent["key"] {
+  if (!isRecord(value) || typeof value.key !== "string") return null;
+  const key = value.key.trim();
+  if (key.length <= 1 || key.length > 40) return null;
+  return { key, code: cleanText(value.code, 40) };
+}
+
+/**
+ * One Agent Traces event in full, for the dataset: the target's label, role,
+ * tag, selector and box, the pointer, the typing episode (input type and
+ * length only) and special keys. `endAt` comes from `endTimestamp`, and a
+ * navigation's own URL wins over the page's. Null when malformed.
+ */
+export function normalizeSteelDatasetEvent(raw: unknown): DatasetSteelEvent | null {
+  if (!isRecord(raw)) return null;
+  const at = parseSteelTimestamp(raw.timestamp);
+  const type = cleanText(raw.type, 40);
+  if (at === null || type === null) return null;
+  const target = isRecord(raw.target) ? raw.target : null;
+  const selector = target && isRecord(target.selector) ? target.selector : null;
+  const attributes = target && isRecord(target.attributes) ? target.attributes : null;
+  const page = isRecord(raw.page) ? raw.page : null;
+  const navigation = isRecord(raw.navigation) ? raw.navigation : null;
+  return {
+    at,
+    endAt: parseSteelTimestamp(raw.endTimestamp),
+    type,
+    label: cleanText(target?.accessibleName) ?? cleanText(target?.text),
+    role: cleanText(target?.role, 80),
+    tag: cleanText(target?.tagName, 40)?.toLowerCase() ?? null,
+    selector: cleanText(selector?.css, 400),
+    url: cleanText(navigation?.url, 2_000) ?? cleanText(page?.url, 2_000),
+    bbox: boundingBoxOf(target?.boundingBox),
+    pointer: pointerOf(raw.pointer),
+    input: typingOf(raw.value),
+    key: keyOf(raw.keyboard),
+    decoy: isDecoyId(attributes?.id) || isDecoyId(selector?.id),
+  };
+}
+
 function requestSignal(options: SteelRequestOptions): AbortSignal {
   const timeout = AbortSignal.timeout(options.timeoutMs ?? STEEL_REQUEST_TIMEOUT_MS);
   return options.signal ? AbortSignal.any([timeout, options.signal]) : timeout;
@@ -141,18 +232,27 @@ async function steelGet(
   }
 }
 
+/** One session's Agent Traces. */
+export type SteelAgentTraces = {
+  /** Normalised for the evaluation: oldest first, at most 300 events. */
+  trace: SteelTraceEntry[];
+  /** The events exactly as Steel returned them: oldest first, at most 2,000. */
+  raw: unknown[];
+};
+
 /**
  * GET /v1/sessions/:id/agent-traces, paginated while `hasMore` with
- * `startTime` just after the last event. Oldest first, capped at 300. Null
- * when the first page cannot be read.
+ * `startTime` just after the last event, until 2,000 raw events. An event
+ * without a readable timestamp can be neither ordered nor paged past, so it
+ * is left out. Null when the first page cannot be read.
  */
 export async function fetchSteelAgentTraces(
   credentials: SteelSessionCredentials,
   options: SteelRequestOptions = {},
-): Promise<SteelTraceEntry[] | null> {
-  const entries: SteelTraceEntry[] = [];
+): Promise<SteelAgentTraces | null> {
+  const events: Array<{ at: number; raw: unknown }> = [];
   let startTime: number | null = null;
-  for (let page = 0; page < MAX_TRACE_PAGES && entries.length < STEEL_TRACE_LIMIT; page += 1) {
+  for (let page = 0; page < MAX_TRACE_PAGES && events.length < STEEL_RAW_TRACE_LIMIT; page += 1) {
     const response = await steelGet(
       credentials,
       "/agent-traces",
@@ -171,18 +271,26 @@ export async function fetchSteelAgentTraces(
     }
     let last: number | null = null;
     for (const raw of body.events) {
-      const entry = normalizeSteelTraceEvent(raw);
+      const at = isRecord(raw) ? parseSteelTimestamp(raw.timestamp) : null;
       // Anything before the requested start is page overlap.
-      if (!entry || (startTime !== null && entry.at < startTime)) continue;
-      entries.push(entry);
-      if (last === null || entry.at > last) last = entry.at;
+      if (at === null || (startTime !== null && at < startTime)) continue;
+      events.push({ at, raw });
+      if (last === null || at > last) last = at;
     }
     if (body.hasMore !== true || last === null) break;
     startTime = last + 1;
   }
-  return entries
+  const raw = events
     .sort((left, right) => left.at - right.at)
-    .slice(0, STEEL_TRACE_LIMIT);
+    .slice(0, STEEL_RAW_TRACE_LIMIT)
+    .map((event) => event.raw);
+  const trace: SteelTraceEntry[] = [];
+  for (const event of raw) {
+    if (trace.length >= STEEL_TRACE_LIMIT) break;
+    const entry = normalizeSteelTraceEvent(event);
+    if (entry) trace.push(entry);
+  }
+  return { trace, raw };
 }
 
 /** GET /v1/sessions/:id/hls: the recording's playlist text, or null. */
@@ -227,22 +335,23 @@ export async function collectSteelEvidence(
   options: SteelEvidenceOptions = {},
 ): Promise<SteelEvidence> {
   const attempts = Math.max(1, Math.floor(options.attempts ?? 1));
-  let trace: SteelTraceEntry[] | null = null;
+  let traces: SteelAgentTraces | null = null;
   let playlist: string | null = null;
-  let evidence: SteelEvidence = { trace: null, replayAvailable: false, replayStart: null };
+  let evidence: SteelEvidence = { trace: null, raw: null, replayAvailable: false, replayStart: null };
   try {
     for (let attempt = 1; ; attempt += 1) {
-      [trace, playlist] = await Promise.all([
-        trace ?? fetchSteelAgentTraces(credentials, options),
+      [traces, playlist] = await Promise.all([
+        traces ?? fetchSteelAgentTraces(credentials, options),
         playlist ?? fetchSteelHlsPlaylist(credentials, options),
       ]);
       evidence = {
-        trace,
+        trace: traces?.trace ?? null,
+        raw: traces?.raw ?? null,
         replayAvailable: playlist !== null,
         replayStart: playlist === null ? null : parseHlsReplayStart(playlist),
       };
       options.onProgress?.(evidence);
-      if ((trace !== null && playlist !== null) || attempt >= attempts) return evidence;
+      if ((traces !== null && playlist !== null) || attempt >= attempts) return evidence;
       if (!(await pause(options.retryMs ?? STEEL_EVIDENCE_RETRY_MS, options.signal))) return evidence;
     }
   } catch {

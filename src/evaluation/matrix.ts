@@ -1,13 +1,12 @@
 /**
  * Pure aggregation of final fight evaluations into the robustness matrix
- * (GET /api/evaluations/matrix) and the dataset export
- * (GET /api/evaluations/export.jsonl). Rules: docs/frontend-contract.md,
+ * (GET /api/evaluations/matrix). Rules: docs/frontend-contract.md,
  * "Evaluation"; shapes: src/api/dto.ts. Nothing here mutates its inputs.
+ * The training dataset export is src/dataset.
  */
 import type {
   AgentEvaluation,
   AgentIdentity,
-  EvaluationExportRow,
   FightEvaluation,
   HazardType,
   ReactionLabel,
@@ -30,7 +29,6 @@ export const MATRIX_HAZARDS: readonly HazardType[] = [
   "blocking_modal",
 ];
 
-export const EXPORT_SCHEMA_VERSION = 1 as const;
 export const MATRIX_DEFAULT_DAYS = 30;
 export const MATRIX_MAX_DAYS = 365;
 
@@ -273,46 +271,4 @@ export function buildRobustnessMatrix(
     rows,
     evaluations: included.length,
   };
-}
-
-// ---------------------------------------------------------------------------
-// Dataset export
-// ---------------------------------------------------------------------------
-
-function exportRow(evaluation: FightEvaluation, agent: AgentEvaluation): EvaluationExportRow {
-  return {
-    schemaVersion: EXPORT_SCHEMA_VERSION,
-    raceId: evaluation.raceId,
-    fightNumber: evaluation.number,
-    mode: evaluation.mode,
-    task: evaluation.task,
-    courseId: evaluation.courseId,
-    startedAt: evaluation.startedAt,
-    finishedAt: evaluation.finishedAt,
-    sabotageSteps: evaluation.sabotageSteps.map((step) => ({ ...step })),
-    agent: { ...agent.agent },
-    outcome: agent.outcome,
-    success: agent.success,
-    durationMs: agent.durationMs,
-    steps: agent.steps,
-    errors: agent.errors,
-    loops: agent.loops,
-    robustness: agent.robustness,
-    sabotage: agent.sabotage.map((reaction) => {
-      const { evidence: _evidence, ...rest } = reaction;
-      return { ...rest };
-    }),
-    trace: agent.trace.map((entry) => ({ ...entry })),
-    steelTrace: agent.steel.trace.map((entry) => ({ ...entry })),
-    crowd: { ...agent.crowd },
-  };
-}
-
-/**
- * One row per agent per final evaluation (fights that started, one
- * evaluation per raceId), newest fights first, racer order within a fight.
- */
-export function toExportRows(evaluations: readonly FightEvaluation[]): EvaluationExportRow[] {
-  return selectFinalEvaluations(evaluations).flatMap((evaluation) =>
-    evaluation.agents.map((agent) => exportRow(evaluation, agent)));
 }

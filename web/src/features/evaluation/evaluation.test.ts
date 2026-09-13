@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest";
 import type { ReactionLabel, RobustnessCell, SabotageReaction, SteelTraceEntry, TraceEntry } from "@contract";
-import { evaluationExportUrl, evidenceFrameUrl, replayUrl } from "../../api/client";
+import { datasetExportUrl, datasetFileUrl, evidenceFrameUrl, replayUrl } from "../../api/client";
 import { EMPTY, MINUS } from "../../lib/format";
 import { AGENT_OUTCOME_LABEL, BLOCKED_BY_LABEL, EVALUATION_MODE_LABEL, EVALUATION_STATUS_LABEL, REACTION_DESCRIPTION, REACTION_LABEL } from "../../lib/labels";
+import { DATASET_FILES, simulatedDatasetWarning } from "./dataset";
 import {
   cellCountsText,
   describeHitOffset,
@@ -18,7 +19,7 @@ import {
 } from "./format";
 import { parseEvaluationMode, parseEvaluationWindow } from "./params";
 import { EVALUATION_STATUS_TONE, OUTCOME_TONE, REACTION_TONE, TONE_COLOR_VAR } from "./tones";
-import { interleaveHits, steelTraceAround, traceTotals } from "./trace";
+import { interleaveHits, steelTraceAround, traceReasoning, traceTotals } from "./trace";
 
 // ---------------------------------------------------------------------------
 // Fixtures (tests only)
@@ -47,6 +48,8 @@ const step = (n: number, at: number, extra: Partial<TraceEntry> = {}): TraceEntr
   targetText: null,
   decoy: false,
   blockedBy: null,
+  reasoning: null,
+  clearedSabotage: false,
   ...extra,
 });
 
@@ -237,11 +240,43 @@ describe("evaluation filters", () => {
     expect(parseEvaluationWindow(null)).toBe(30);
   });
 
-  it("builds evidence, replay and export URLs", () => {
+  it("builds evidence and replay URLs", () => {
     expect(evidenceFrameUrl("race 1", "racer-2", "before/1")).toBe("/api/fights/race%201/agents/racer-2/evidence/before%2F1");
     expect(replayUrl("race-1", "racer-3")).toBe("/api/fights/race-1/agents/racer-3/replay.m3u8");
-    expect(evaluationExportUrl({ days: 30, mode: "all" })).toBe("/api/evaluations/export.jsonl?days=30&mode=all");
-    expect(evaluationExportUrl({ days: 7 })).toBe("/api/evaluations/export.jsonl?days=7");
+  });
+});
+
+describe("dataset downloads", () => {
+  it("builds the zip URL for the page's window and mode", () => {
+    expect(datasetExportUrl({ days: 30, mode: "all" })).toBe("/api/datasets/export.zip?days=30&mode=all");
+    expect(datasetExportUrl({ days: 7 })).toBe("/api/datasets/export.zip?days=7");
+    expect(datasetExportUrl()).toBe("/api/datasets/export.zip");
+  });
+
+  it("builds single-file URLs: JSON Lines files, and manifest.json", () => {
+    expect(datasetFileUrl("manifest", { days: 90, mode: "live" })).toBe("/api/datasets/manifest.json?days=90&mode=live");
+    expect(datasetFileUrl("steps", { days: 30, mode: "simulated" })).toBe("/api/datasets/steps.jsonl?days=30&mode=simulated");
+    expect(datasetFileUrl("episodes", { days: 7 })).toBe("/api/datasets/episodes.jsonl?days=7");
+    expect(datasetFileUrl("sft")).toBe("/api/datasets/sft.jsonl");
+    expect(datasetFileUrl("preferences", { mode: "all" })).toBe("/api/datasets/preferences.jsonl?mode=all");
+  });
+
+  it("describes every file once, in one line, under the name it downloads as", () => {
+    expect(DATASET_FILES.map((f) => f.file)).toEqual(["steps", "episodes", "sft", "preferences", "manifest"]);
+    for (const { file, name, description } of DATASET_FILES) {
+      expect(datasetFileUrl(file)).toBe(`/api/datasets/${name}`);
+      expect(description.trim().length).toBeGreaterThan(0);
+      expect(description).not.toMatch(/\n/);
+    }
+  });
+
+  it("warns against training on simulated rows whenever the download includes them", () => {
+    expect(simulatedDatasetWarning("live")).toBeNull();
+    expect(simulatedDatasetWarning(null)).toBeNull();
+    for (const mode of ["simulated", "all"] as const) {
+      expect(simulatedDatasetWarning(mode)).toMatch(/scripted agents, not real models, and shouldn’t be used for training/);
+    }
+    expect(simulatedDatasetWarning("all")).toMatch(/filter them out/);
   });
 });
 
@@ -256,8 +291,14 @@ describe("trace helpers", () => {
     expect(rows.map((r) => (r.kind === "hit" ? `hit${r.reaction.stepIndex}` : `s${r.entry.step}`))).toEqual(["s1", "hit1", "s2", "hit2", "s3", "hit3"]);
   });
 
-  it("counts errors, decoy clicks and blocked steps", () => {
-    const trace = [step(1, 1, { kind: "error", blockedBy: "modal" }), step(2, 2, { decoy: true }), step(3, 3)];
-    expect(traceTotals(trace)).toEqual({ steps: 3, errors: 1, decoys: 1, blocked: 1 });
+  it("counts errors, decoy clicks, blocked steps and cleared sabotage", () => {
+    const trace = [step(1, 1, { kind: "error", blockedBy: "modal" }), step(2, 2, { decoy: true }), step(3, 3, { clearedSabotage: true }), step(4, 4)];
+    expect(traceTotals(trace)).toEqual({ steps: 4, errors: 1, decoys: 1, blocked: 1, cleared: 1 });
+  });
+
+  it("reads the model's reasoning, trimmed, or null when it gave none", () => {
+    expect(traceReasoning(step(1, 1, { reasoning: "  Two primary buttons; the task needs Add to cart.\n" }))).toBe("Two primary buttons; the task needs Add to cart.");
+    expect(traceReasoning(step(2, 2))).toBeNull();
+    expect(traceReasoning(step(3, 3, { reasoning: "   " }))).toBeNull();
   });
 });
