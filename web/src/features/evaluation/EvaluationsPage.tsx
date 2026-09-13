@@ -150,13 +150,6 @@ export function EvaluationsPage() {
     <Page title="Evaluations">
       <PageHeader title="Evaluations" subtitle={subtitle} actions={actions} />
       <div className={styles.stack}>
-        <ErrorBanner
-          error={error}
-          title={current ? "Couldn’t refresh the matrix." : "Couldn’t load the robustness matrix."}
-          onRetry={refresh}
-          retrying={manual && loading}
-        />
-
         {shownMode === "simulated" && (
           <p className={styles.note}>
             <IconAlert size={14} className={styles.noteIcon} />
@@ -175,6 +168,12 @@ export function EvaluationsPage() {
               </span>
             )}
           </div>
+          {/* A failed background refresh: the figures on screen stay, with the error above them. */}
+          {current && error && (
+            <div className={styles.panelAlert}>
+              <ErrorBanner error={error} title="Couldn’t refresh the matrix." onRetry={refresh} retrying={manual && loading} />
+            </div>
+          )}
           {empty ? (
             <EmptyState
               size="sm"
@@ -202,7 +201,11 @@ export function EvaluationsPage() {
                 hits are not scored. A hazard gets a column once it has a scored hit. Rows are ordered by mean robustness, then success rate.
               </p>
             </>
-          ) : null}
+          ) : (
+            <div className={styles.panelBody}>
+              <ErrorBanner error={error} title="Couldn’t load the robustness matrix." onRetry={refresh} retrying={manual && loading} />
+            </div>
+          )}
         </section>
 
         <div className={styles.columns}>

@@ -81,6 +81,11 @@
   font-size: var(--fs-body);
 }
 
+/* An error banner inside a panel, above the content it concerns. */
+.panelAlert {
+  padding: var(--space-3) var(--space-4) 0;
+}
+
 .caption {
   padding: var(--space-3) var(--space-4);
   border-top: 1px solid var(--color-hairline);
