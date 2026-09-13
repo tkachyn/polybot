@@ -13,6 +13,7 @@ import { AgentPane } from "./AgentPane";
 import { gridRows, isEditableTarget, leaderView, sabotageMarkers, visualFor, type RosterVisuals } from "./fightView";
 import { FocusView } from "./FocusView";
 import { useArenaLayout, type ArenaLayout } from "./useArenaLayout";
+import { ViewerConcealedContext, ViewerLayer, ViewerLayerContext } from "./viewerLayer";
 import styles from "./Arena.module.css";
 
 export type ArenaProps = {
@@ -157,8 +158,10 @@ export type ArenaStageProps = {
 };
 
 /**
- * The base layout stays mounted while focus is open. Hiding it with CSS keeps
- * each LiveCapture iframe (and its Steel WebSocket) alive during focus changes.
+ * The base layout stays mounted while focus is open, hidden with CSS. Each
+ * racer's live-view iframe lives in the stage's viewer layer and is only laid
+ * over the grid pane or the focus view, so its Steel stream never reloads when
+ * focus opens or closes.
  */
 export function ArenaStage({
   fight,
@@ -173,41 +176,56 @@ export function ArenaStage({
   onClose,
   buttonRef,
 }: ArenaStageProps) {
+  const layerRef = useRef<HTMLDivElement>(null);
+  const [layer, setLayer] = useState<ViewerLayer | null>(null);
+  useEffect(() => {
+    const root = layerRef.current;
+    if (!root) return;
+    const created = new ViewerLayer(root);
+    setLayer(created);
+    return () => {
+      created.destroy();
+      setLayer(null);
+    };
+  }, []);
+
   return (
-    <>
-      <div
-        className={cx(
-          layout === "grid" ? styles.grid : styles.lanes,
-          focused && styles.stageContentHidden,
-        )}
-        style={layout === "grid" ? rowsStyle : laneStyle}
-        aria-hidden={focused ? true : undefined}
-      >
-        {layout === "grid"
-          ? fight.agents.map((agent) => (
-              <AgentPane
-                key={agent.racerId}
-                fight={fight}
-                agent={agent}
-                visual={visualFor(roster, agent)}
-                slip={slip}
-                markers={markers}
-                onOpen={onOpen}
-                buttonRef={buttonRef}
-              />
-            ))
-          : fight.agents.map((agent) => (
-              <AgentLane
-                key={agent.racerId}
-                fight={fight}
-                agent={agent}
-                visual={visualFor(roster, agent)}
-                slip={slip}
-                onOpen={onOpen}
-                buttonRef={buttonRef}
-              />
-            ))}
-      </div>
+    <ViewerLayerContext.Provider value={layer}>
+      <ViewerConcealedContext.Provider value={focused !== null}>
+        <div
+          className={cx(
+            layout === "grid" ? styles.grid : styles.lanes,
+            focused && styles.stageContentHidden,
+          )}
+          style={layout === "grid" ? rowsStyle : laneStyle}
+          aria-hidden={focused ? true : undefined}
+        >
+          {layout === "grid"
+            ? fight.agents.map((agent) => (
+                <AgentPane
+                  key={agent.racerId}
+                  fight={fight}
+                  agent={agent}
+                  visual={visualFor(roster, agent)}
+                  slip={slip}
+                  markers={markers}
+                  onOpen={onOpen}
+                  buttonRef={buttonRef}
+                />
+              ))
+            : fight.agents.map((agent) => (
+                <AgentLane
+                  key={agent.racerId}
+                  fight={fight}
+                  agent={agent}
+                  visual={visualFor(roster, agent)}
+                  slip={slip}
+                  onOpen={onOpen}
+                  buttonRef={buttonRef}
+                />
+              ))}
+        </div>
+      </ViewerConcealedContext.Provider>
       {focused && (
         <div className={styles.focusOverlay}>
           <FocusView
@@ -220,6 +238,7 @@ export function ArenaStage({
           />
         </div>
       )}
-    </>
+      <div ref={layerRef} className={styles.viewerLayer} aria-hidden="true" />
+    </ViewerLayerContext.Provider>
   );
 }

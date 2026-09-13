@@ -105,6 +105,8 @@
 
 .overlay {
   position: absolute;
+  /* Above the arena's viewer layer (Arena.module.css), which paints the live iframe. */
+  z-index: 2;
   top: var(--space-1-5);
   left: var(--space-1-5);
   right: var(--space-1-5);

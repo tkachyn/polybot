@@ -67,6 +67,27 @@
   min-height: 0;
   overflow: hidden;
   position: relative;
+  /* Keeps the viewer layer's z-index inside the stage. */
+  isolation: isolate;
+}
+
+/* The live-view iframes (viewerLayer.ts), each laid over the capture that shows it. */
+.viewerLayer {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.viewerLayer > iframe {
+  position: absolute;
+  top: 0;
+  left: 0;
+  border: 0;
+  border-radius: var(--radius-md);
+  pointer-events: none;
+  user-select: none;
 }
 
 .grid {

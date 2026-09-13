@@ -8,7 +8,7 @@
  * faster than they download, the newest wanted seq is fetched next and the
  * ones in between are skipped.
  */
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import type { BrowserView, FightStatus, FrameInfo } from "@contract";
 import { fightFrameUrl } from "../../api/client";
 import { cx } from "../../lib/cx";
@@ -16,6 +16,7 @@ import { formatLogTime } from "../../lib/format";
 import { useNow } from "../../state/clock";
 import { STALE_FRAME_MS, frameAgeLabel } from "./fightView";
 import { ClockCountdown } from "./ClockCountdown";
+import { ViewerConcealedContext, ViewerLayerContext, type ViewerHandle, type ViewerLayer, type ViewerOptions } from "./viewerLayer";
 import styles from "./LiveCapture.module.css";
 
 export type LiveCaptureProps = {
@@ -47,14 +48,6 @@ export function LiveCapture(props: LiveCaptureProps) {
 }
 
 type Shown = { src: string; seq: number; capturedAt: number };
-
-type PersistentViewer = {
-  iframe: HTMLIFrameElement;
-  hosts: Set<HTMLElement>;
-};
-
-/** One Steel iframe per racer, moved between compact and focused views. */
-const persistentViewers = new Map<string, PersistentViewer>();
 
 function CaptureSurface({
   raceId,
@@ -99,59 +92,66 @@ function CaptureSurface({
   );
 }
 
-function PersistentViewer({
-  viewerKey,
-  viewerUrl,
-  title,
-  onError,
-}: {
+type ViewerProps = {
   viewerKey: string;
   viewerUrl: string;
   title: string;
   onError: () => void;
-}) {
+};
+
+/**
+ * Inside an arena the Steel iframe lives in the arena's viewer layer
+ * (viewerLayer.ts) and is only laid over this host, so switching between the
+ * grid and the focus view never reloads it. Elsewhere the view owns its iframe.
+ */
+function PersistentViewer(props: ViewerProps) {
+  const layer = useContext(ViewerLayerContext);
+  const concealed = useContext(ViewerConcealedContext);
+  if (layer === undefined) {
+    return (
+      <iframe
+        className={styles.viewer}
+        src={props.viewerUrl}
+        title={props.title}
+        allow="autoplay; fullscreen"
+        tabIndex={-1}
+        aria-hidden="true"
+        onError={props.onError}
+      />
+    );
+  }
+  return <LayeredViewer {...props} layer={layer} concealed={concealed} />;
+}
+
+function LayeredViewer({
+  viewerKey,
+  viewerUrl,
+  title,
+  onError,
+  layer,
+  concealed,
+}: ViewerProps & { layer: ViewerLayer | null; concealed: boolean }) {
   const hostRef = useRef<HTMLDivElement>(null);
+  const handle = useRef<ViewerHandle | null>(null);
   const onErrorRef = useRef(onError);
   onErrorRef.current = onError;
+  const options = useRef<ViewerOptions>({ url: viewerUrl, title, concealed, onError: () => onErrorRef.current() });
+  options.current = { ...options.current, url: viewerUrl, title, concealed };
 
   useEffect(() => {
     const host = hostRef.current;
-    if (!host) return;
-
-    let viewer = persistentViewers.get(viewerKey);
-    if (!viewer) {
-      const iframe = document.createElement("iframe");
-      iframe.className = styles.viewer ?? "viewer";
-      iframe.title = title;
-      iframe.setAttribute("aria-label", title);
-      iframe.allow = "autoplay; fullscreen";
-      iframe.tabIndex = -1;
-      viewer = { iframe, hosts: new Set() };
-      persistentViewers.set(viewerKey, viewer);
-    }
-
-    const iframe = viewer.iframe;
-    iframe.title = title;
-    iframe.setAttribute("aria-label", title);
-    if (iframe.src !== viewerUrl) iframe.src = viewerUrl;
-    const handleError = () => onErrorRef.current();
-    iframe.addEventListener("error", handleError);
-    viewer.hosts.add(host);
-    host.appendChild(iframe);
-
+    if (!layer || !host) return;
+    const attached = layer.attach(viewerKey, host, options.current);
+    handle.current = attached;
     return () => {
-      iframe.removeEventListener("error", handleError);
-      viewer?.hosts.delete(host);
-      if (iframe.parentElement === host) {
-        const fallback = [...(viewer?.hosts ?? [])].at(-1);
-        fallback?.appendChild(iframe);
-      }
-      if (viewer && viewer.hosts.size === 0) {
-        iframe.remove();
-        persistentViewers.delete(viewerKey);
-      }
+      attached.release();
+      handle.current = null;
     };
-  }, [title, viewerKey, viewerUrl]);
+  }, [layer, viewerKey]);
+
+  useEffect(() => {
+    handle.current?.update(options.current);
+  }, [viewerUrl, title, concealed]);
 
   return (
     <div
