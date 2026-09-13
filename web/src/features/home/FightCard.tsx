@@ -5,7 +5,7 @@
  *   title    the task (2 lines) · SABOTAGE + summary (1 line)
  *   agents   one row per agent: mark, name over a progress rule, chance
  *            (once resolved: what one YES share paid, $1.00 or $0.00)
- *   footer   volume / traders / checkpoints · resolution · View
+ *   footer   volume / traders / sabotages · resolution · View
  *
  * Shared by the Fights (home) and Resolved screens.
  */
@@ -115,8 +115,19 @@ export function SabotageLine({ sabotage }: { sabotage: SabotageSummary | null })
   );
 }
 
+export const DISPLAYED_SABOTAGE_COUNT = 2;
+
+/** Number of sequence steps that have fired, including steps already recovered. */
+export function sabotageProgress(sabotage: SabotageSummary | null): number {
+  if (!sabotage) return 0;
+  return Math.min(
+    DISPLAYED_SABOTAGE_COUNT,
+    sabotage.steps.filter((step) => step.state === "fired" || step.state === "recovered").length,
+  );
+}
+
 function CardMeta({ fight }: { fight: FightSummary }) {
-  const count = fight.checkpointCount;
+  const fired = sabotageProgress(fight.sabotage);
   return (
     <div className={styles.meta}>
       <span className={styles.metaItem}>
@@ -126,10 +137,10 @@ function CardMeta({ fight }: { fight: FightSummary }) {
         <span className={cx("num", styles.metaFigure)}>{formatNumber(fight.traders)}</span>
         {fight.traders === 1 ? " trader" : " traders"}
       </span>
-      <span className={styles.metaItem} title="Highest checkpoint cleared by any agent">
-        <span className={styles.metaLabel}>Checkpoint</span>
+      <span className={styles.metaItem} title="Sabotages triggered in this fight">
+        <span className={styles.metaLabel}>Sabotages</span>
         <span className={cx("num", styles.metaFigure)}>
-          {formatNumber(fight.leaderCheckpoint)}/{formatNumber(count)}
+          {formatNumber(fired)}/{formatNumber(DISPLAYED_SABOTAGE_COUNT)}
         </span>
       </span>
     </div>

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { FightDetail } from "@contract";
 import { slipFromParam, formatSlipParam } from "../market/slipParam";
 import { formatChance } from "./FeaturedFightCard";
+import { DISPLAYED_SABOTAGE_COUNT, sabotageProgress } from "./FightCard";
 import {
   DEFAULT_PREVIEW_NUMBER,
   PLACEHOLDER_TEMPLATES,
@@ -48,6 +49,15 @@ describe("placeholder fights", () => {
     expect(resolved!.winnerRacerId).toBe("racer-2");
     expect(voided!.voided).toBe(true);
     expect(voided!.marketStatus).toBe("unresolved");
+  });
+
+  it("shows sabotage progress against the two-step demo limit", () => {
+    const [armedLive, firedLive, upcoming] = fights;
+    expect(DISPLAYED_SABOTAGE_COUNT).toBe(2);
+    expect(sabotageProgress(armedLive!.sabotage)).toBe(0);
+    expect(sabotageProgress(firedLive!.sabotage)).toBe(1);
+    expect(sabotageProgress(upcoming!.sabotage)).toBe(0);
+    expect(sabotageProgress(null)).toBe(0);
   });
 });
 
