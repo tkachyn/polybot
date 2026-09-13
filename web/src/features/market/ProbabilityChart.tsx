@@ -1,6 +1,6 @@
 /**
  * Win-probability chart: one line per agent (identity colour), y axis
- * 0–100¢, time x axis, dashed terracotta line at the sabotage moment, a
+ * adaptive price range, time x axis, dashed terracotta line at the sabotage moment, a
  * legend with current prices and a hover/keyboard crosshair. Inline SVG
  * sized by ResizeObserver. The window is always the whole fight.
  *
@@ -15,7 +15,7 @@ import { cx } from "../../lib/cx";
 import { formatCents, formatCompactMoney, formatLogTime, formatTimeOfDay } from "../../lib/format";
 import { useNow } from "../../state/clock";
 import type { ChartSabotageMarker, ChartTradeMarker } from "./types";
-import { Y_TICKS, buildChartWindow, isMarkerInWindow, linearScale, nearestIndex, seriesPath, timeTicks, tradeMarkerChartPrice, type ChartRange } from "./chart";
+import { buildChartWindow, buildPriceDomain, isMarkerInWindow, linearScale, nearestIndex, priceTicks, seriesPath, timeTicks, tradeMarkerChartPrice, type ChartRange } from "./chart";
 import styles from "./ProbabilityChart.module.css";
 
 /** Structurally satisfied by FightAgentSummary / FightAgentDetail. */
@@ -280,6 +280,15 @@ function Plot({
   const current = useMemo(() => Object.fromEntries(agents.map((a) => [a.racerId, a.yes])), [agents]);
   const moneyFlow = useMoneyFlow(volume, current);
   const win = useMemo(() => buildChartWindow({ history: priceHistory, range, end, current }), [priceHistory, range, end, current]);
+  const yDomain = useMemo(
+    () => buildPriceDomain([
+      ...win.points.flatMap((point) => Object.values(point.prices)),
+      ...Object.values(current),
+      ...tradeMarkers.map((marker) => tradeMarkerChartPrice(marker.side, marker.price)),
+    ]),
+    [current, tradeMarkers, win.points],
+  );
+  const yTicks = priceTicks(yDomain);
 
   const innerW = Math.max(0, width - MARGIN.left - MARGIN.right);
   const innerH = Math.max(0, height - MARGIN.top - MARGIN.bottom);
@@ -288,7 +297,7 @@ function Plot({
   const top = MARGIN.top;
   const bottom = MARGIN.top + innerH;
   const x = linearScale(win.start, win.end, left, right);
-  const y = linearScale(0, 1, bottom, top);
+  const y = linearScale(yDomain[0], yDomain[1], bottom, top);
   const drawable = innerW > 0 && innerH > 0;
 
   // racerId → identity colour, so a flash matches its line.
@@ -385,7 +394,7 @@ function Plot({
           onPointerLeave={() => setHoverX(null)}
         >
           <g>
-            {Y_TICKS.map((v) => (
+            {yTicks.map((v) => (
               <g key={v}>
                 <line className={styles.gridLine} x1={left} x2={right} y1={Math.round(y(v)) + 0.5} y2={Math.round(y(v)) + 0.5} />
                 <text className={styles.axisText} x={right + 6} y={y(v)} dy="0.32em">

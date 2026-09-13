@@ -15,6 +15,12 @@ export type SabotageTrigger = {
   milestone: "first_verified_checkpoint";
 };
 
+/** Course-specific limits for the ordered sabotage schedule. */
+export type SabotageSchedule = {
+  maxSteps: number;
+  includeFinalCheckpoint?: boolean;
+};
+
 export type SabotageStep = {
   stepId: string;
   checkpoint: number;
@@ -54,6 +60,7 @@ export type Race = {
   startedAt?: number;
   targetDurationMs: number;
   absoluteDurationMs: number;
+  sabotageSchedule?: SabotageSchedule;
   targetDurationAt?: number;
   absoluteDeadlineAt?: number;
   sabotagePlan?: SabotagePlan;
@@ -130,6 +137,7 @@ export interface ObstacleProvider {
     courseId: string;
     seed: string;
     checkpointCount: number;
+    sabotageSchedule?: Partial<SabotageSchedule>;
     trigger: SabotageTrigger;
   }): Promise<SabotagePlan | null>;
   getPolicy?(raceId: string, checkpoint: number): Promise<DisruptionCommand | null>;

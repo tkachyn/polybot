@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { PricePoint } from "@contract";
-import { MIN_SPAN_MS, buildChartWindow, isMarkerInWindow, linearScale, lowerBound, nearestIndex, seriesPath, timeTicks, tradeMarkerChartPrice } from "./chart";
+import { MIN_SPAN_MS, buildChartWindow, buildPriceDomain, isMarkerInWindow, linearScale, lowerBound, nearestIndex, seriesPath, timeTicks, tradeMarkerChartPrice } from "./chart";
 
 const p = (t: number, a: number, b = 1 - a): PricePoint => ({ t, prices: { a, b } });
 
@@ -15,6 +15,19 @@ describe("chart event markers", () => {
   it("plots both trade sides on the racer's YES-probability line", () => {
     expect(tradeMarkerChartPrice("yes", 0.35)).toBe(0.35);
     expect(tradeMarkerChartPrice("no", 0.35)).toBe(0.65);
+  });
+
+  it("zooms low prices instead of reserving the full 0–100¢ axis", () => {
+    const domain = buildPriceDomain([0.05, 0.2, 0.25]);
+    expect(domain[0]).toBe(0);
+    expect(domain[1]).toBe(0.3);
+  });
+
+  it("expands the window when a meaningful price move occurs", () => {
+    const low = buildPriceDomain([0.05, 0.2, 0.25]);
+    const moved = buildPriceDomain([0.05, 0.2, 0.6]);
+    expect(moved[1]).toBeGreaterThan(low[1]);
+    expect(moved[1] - moved[0]).toBeGreaterThan(low[1] - low[0]);
   });
 });
 

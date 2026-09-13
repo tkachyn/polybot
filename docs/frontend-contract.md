@@ -31,6 +31,10 @@ The existing fields are unchanged. These optional fields were added and are vali
   taskDetail?: string;           // default: task
   successCondition?: string;     // default: "The course verifier confirms the final task state."
   checkpointLabels?: string[];   // length === checkpointCount. Default: "Checkpoint k"
+  sabotageSchedule?: {            // course-specific schedule; defaults to two steps
+    maxSteps?: number;            // integer from 1 to 8
+    includeFinalCheckpoint?: boolean;
+  };
   sabotage?: {                   // requires obstaclesEnabled: true
     checkpoint: number;          // integer in [1, checkpointCount]
     summary: string;             // ≤ 70 chars
@@ -42,7 +46,9 @@ The existing fields are unchanged. These optional fields were added and are vali
 }
 ```
 
-The operator API enables `obstaclesEnabled` by default; pass `false` to opt out. If sabotage is enabled and `sabotage` is omitted, one single-step plan is armed at checkpoint 1 (or the final checkpoint for a one-checkpoint course). Its summary is generated from the armed hazard and capped at 70 chars.
+The operator API enables `obstaclesEnabled` by default; pass `false` to opt out. If sabotage is enabled and `sabotage` is omitted, the master arms up to two ordered, non-final steps beginning at checkpoint 1. A course can supply a different `sabotageSchedule`; the total checkpoint count remains course-defined. Its summary is generated from the armed hazard and capped at 70 chars.
+
+Checkpoint discovery is intentionally verifier-backed: a new site must provide a course adapter that defines its trusted milestones and completion state. The master model may choose bounded sabotage presets and target roles, but it does not invent completion proof from an arbitrary page.
 
 Engine events (`GET /races/:raceId/events`): `sabotage_armed` once before the start, then independently for each racer after that racer reports verified checkpoint 1: `checkpoint_reached`, `sabotage_triggered`, followed by `sabotage_applied` or `sabotage_misfired`, and `sabotage_recovered` when the agent actively clears an applied sabotage (`metadata.cause` is `manual`; `duration` is retained only for legacy history). A racer in `recovering` cannot report a checkpoint or finish until then. Completion is verifier-backed after every browser action, including browser-action errors; an explicit model `finish` remains a fallback.
 

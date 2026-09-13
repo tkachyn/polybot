@@ -31,7 +31,7 @@ function sequencePlan(): SabotagePlan {
     policy: policies[0],
     selectedAt: 0,
     source: "model",
-    steps: policies.map((policy, index) => ({
+    steps: policies.slice(0, 2).map((policy, index) => ({
       stepId: `preset-${index + 1}`,
       checkpoint: index + 2,
       tier: index === 2 ? "intermediate" : "basic",

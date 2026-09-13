@@ -6,13 +6,16 @@ import type {
   Racer,
   RecoveryCause,
   SabotagePlan,
+  SabotageSchedule,
   SabotageStep,
 } from "./types.js";
+import { normalizeSabotageSchedule } from "./sabotage.js";
 
 export type RaceEngineOptions = {
   targetDurationMs?: number;
   absoluteDurationMs?: number;
   obstacleProvider?: ObstacleProvider;
+  sabotageSchedule?: Partial<SabotageSchedule>;
   idFactory?: () => string;
 };
 
@@ -32,6 +35,7 @@ export class RaceEngine {
       courseId: string;
       seed: string;
       checkpointCount: number;
+      sabotageSchedule?: Partial<SabotageSchedule>;
       now?: number;
     },
     options: RaceEngineOptions = {},
@@ -51,6 +55,7 @@ export class RaceEngine {
       status: "starting",
       targetDurationMs: options.targetDurationMs ?? 180_000,
       absoluteDurationMs: options.absoluteDurationMs ?? 300_000,
+      sabotageSchedule: normalizeSabotageSchedule(input.sabotageSchedule ?? options.sabotageSchedule),
     };
     this.racers = new Map(
       Array.from({ length: 4 }, (_, index) => {
@@ -79,6 +84,10 @@ export class RaceEngine {
       throw new Error("Sabotage plan belongs to a different race");
     }
     const steps = normalizeSabotageSteps(plan);
+    const schedule = normalizeSabotageSchedule(this.race.sabotageSchedule);
+    if (steps.length > schedule.maxSteps) {
+      throw new Error(`Sabotage plan cannot contain more than ${schedule.maxSteps} steps`);
+    }
     for (const step of steps) {
       if (
         !Number.isInteger(step.checkpoint) ||
@@ -86,6 +95,11 @@ export class RaceEngine {
         step.checkpoint > this.race.checkpointCount
       ) {
         throw new Error("Sabotage trigger checkpoint is outside the course");
+      }
+    }
+    for (let index = 1; index < steps.length; index += 1) {
+      if (steps[index]!.checkpoint <= steps[index - 1]!.checkpoint) {
+        throw new Error("Sabotage checkpoints must be strictly increasing");
       }
     }
     if (this.race.sabotagePlan) {
@@ -199,7 +213,7 @@ export class RaceEngine {
       !plan ||
       !step ||
       checkpoint !== step.checkpoint ||
-      checkpoint >= this.race.checkpointCount ||
+      (checkpoint >= this.race.checkpointCount && !this.race.sabotageSchedule?.includeFinalCheckpoint) ||
       this.race.status === "hazards_frozen" ||
       this.race.status === "finishing" ||
       this.claimedSabotage.has(`${racerId}:${step.stepId}`)

@@ -149,3 +149,28 @@ test("uses fallback when master selection times out", async () => {
 
   assert.deepEqual(await provider.getPolicy("race-1", 1), fallback);
 });
+
+test("uses a course schedule to select at most the configured sabotage steps", async () => {
+  const provider = new MasterObstacleProvider(
+    {
+      async selectSabotageSequence(input) {
+        assert.deepEqual(input.checkpoints, [1]);
+        return { presetIds: ["cover-with-modal"] };
+      },
+    },
+    observations,
+    executor,
+  );
+
+  const plan = await provider.armRace?.({
+    raceId: "scheduled-race",
+    courseId: "other-course",
+    seed: "seed",
+    checkpointCount: 4,
+    sabotageSchedule: { maxSteps: 1 },
+    trigger: { kind: "target_opened", checkpoint: 1, milestone: "first_verified_checkpoint" },
+  });
+
+  assert.equal(plan?.steps?.length, 1);
+  assert.equal(plan?.steps?.[0]?.checkpoint, 1);
+});

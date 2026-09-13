@@ -30,6 +30,7 @@ import type {
   RaceEvent,
   Racer,
   SabotagePlan,
+  SabotageSchedule,
   SabotageTier,
   SabotageTrigger,
 } from "../domain/types.js";
@@ -95,6 +96,7 @@ export type CreateRaceInput = {
   courseId: string;
   seed: string;
   checkpointCount: number;
+  sabotageSchedule?: Partial<SabotageSchedule>;
   targetDurationMs?: number;
   absoluteDurationMs?: number;
   /** Model id per racer id, reported in `snapshot().competitors`. */
@@ -346,6 +348,7 @@ export class RaceCoordinator {
         courseId: input.courseId,
         seed: input.seed,
         checkpointCount: input.checkpointCount,
+        sabotageSchedule: input.sabotageSchedule,
         now: this.fightMeta.createdAt,
       },
       {
@@ -1188,6 +1191,7 @@ export class RaceCoordinator {
         courseId: race.courseId,
         seed: race.seed,
         checkpointCount: race.checkpointCount,
+        sabotageSchedule: race.sabotageSchedule,
         trigger,
       });
     }

@@ -42,7 +42,7 @@ fly secrets set --app polybot-api \
   STEEL_API_KEY=ste-... \
   OPENROUTER_API_KEY=sk-or-... \
   MASTER_LLM_MODEL=openai/gpt-5.6-luna \
-  COMPETITOR_LLM_MODELS=openai/gpt-5.6-luna,qwen/qwen3.8-27b,google/gemma-3-27b-it,anthropic/claude-sonnet-4.6 \
+  COMPETITOR_LLM_MODELS=openai/gpt-5.6-luna,qwen/qwen3.8-27b,google/gemma-3-27b-it,anthropic/claude-haiku-4.5 \
   COURSE_BASE_URL=https://polybot-course.fly.dev
 ```
 

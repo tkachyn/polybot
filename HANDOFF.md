@@ -46,7 +46,7 @@ This bit us mid-session: nine real fights disappeared. Fixing it means replay
 on boot, and it is independent of where the log is stored.
 
 **Gemini 3.7 Flash failed in the latest live configuration.** The current
-roster uses `anthropic/claude-sonnet-4.6` for racer 4 instead. Validate the
+roster uses `anthropic/claude-haiku-4.5` for racer 4 instead. Validate the
 model with a cheap smoke fight before relying on it for a demo.
 
 **The OpenRouter account is rate limited to 20 requests/minute per model.**
@@ -142,7 +142,7 @@ shutdown path, and a hard kill strands paid sessions until Steel reaps them.
 2. **Replay the event log into the lobby on boot**, or decide deliberately that
    a fresh lobby per restart is fine. Either is defensible; discovering it at a
    demo is not.
-3. **Validate Claude Sonnet 4.6** in `COMPETITOR_LLM_MODELS` with a cheap
+3. **Validate Claude Haiku 4.5** in `COMPETITOR_LLM_MODELS` with a cheap
    smoke fight before demo day.
 4. **Keep the runner retry behavior covered.** Malformed provider decisions
    are retried without consuming a browser action.

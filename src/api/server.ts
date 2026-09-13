@@ -313,6 +313,7 @@ export function buildApi(options: ApiServerOptions): FastifyInstance {
         taskDetail: body.taskDetail,
         successCondition: body.successCondition,
         checkpointLabels: body.checkpointLabels,
+        sabotageSchedule: body.sabotageSchedule,
         sabotage: body.sabotage,
         agents: body.agents,
         startsAt: body.startsAt,

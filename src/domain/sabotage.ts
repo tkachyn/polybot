@@ -1,4 +1,4 @@
-import type { DisruptionCommand, SabotageTier } from "./types.js";
+import type { DisruptionCommand, SabotageSchedule, SabotageTier } from "./types.js";
 
 // Presentation helpers for the race-wide sabotage. The domain plan itself is
 // `SabotagePlan` in ./types.ts, armed on the engine; the bettor-facing brief
@@ -17,6 +17,35 @@ export const SABOTAGE_DETAIL_MAX = 280;
 
 /** Default trigger checkpoint when a fight names none. */
 export const DEFAULT_SABOTAGE_CHECKPOINT = 1;
+export const DEFAULT_SABOTAGE_MAX_STEPS = 2;
+
+export function normalizeSabotageSchedule(
+  schedule?: Partial<SabotageSchedule> | null,
+): Required<SabotageSchedule> {
+  const maxSteps = schedule?.maxSteps ?? DEFAULT_SABOTAGE_MAX_STEPS;
+  if (!Number.isInteger(maxSteps) || maxSteps < 1 || maxSteps > 8) {
+    throw new Error("sabotage maxSteps must be an integer from 1 to 8");
+  }
+  return {
+    maxSteps,
+    includeFinalCheckpoint: schedule?.includeFinalCheckpoint === true,
+  };
+}
+
+/** Ordered checkpoint candidates for a course's sabotage schedule. */
+export function sabotageCheckpoints(
+  checkpointCount: number,
+  triggerCheckpoint: number,
+  schedule?: Partial<SabotageSchedule> | null,
+): number[] {
+  const normalized = normalizeSabotageSchedule(schedule);
+  const finalCheckpoint = normalized.includeFinalCheckpoint ? checkpointCount : checkpointCount - 1;
+  const available = Math.max(0, finalCheckpoint - triggerCheckpoint + 1);
+  return Array.from(
+    { length: Math.min(normalized.maxSteps, available) },
+    (_, index) => triggerCheckpoint + index,
+  );
+}
 
 /** Tier implied by a policy's intensity (1 basic, 2 intermediate, 3 difficult). */
 export function tierForPolicy(policy: DisruptionCommand): SabotageTier {

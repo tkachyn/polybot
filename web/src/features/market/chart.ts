@@ -127,8 +127,39 @@ export function timeTicks(start: number, end: number, maxTicks = 4, tzOffsetMs =
   return { step, ticks };
 }
 
-/** Y gridlines, in probability units. */
-export const Y_TICKS = [0, 0.25, 0.5, 0.75, 1] as const;
+export type PriceDomain = readonly [min: number, max: number];
+
+/**
+ * Chooses a readable y-axis window from the prices currently visible in the
+ * chart. Low markets stay magnified around 0–25¢; a meaningful move expands
+ * the window automatically so the moved line remains visible.
+ */
+export function buildPriceDomain(values: readonly number[]): PriceDomain {
+  const finite = values.filter((value) => Number.isFinite(value)).map((value) => Math.min(1, Math.max(0, value)));
+  if (finite.length === 0) return [0, 1];
+  const min = Math.min(...finite);
+  const max = Math.max(...finite);
+  const rawSpan = max - min;
+  const minimumSpan = max <= 0.25 ? 0.3 : 0.25;
+  const paddedSpan = Math.max(minimumSpan, rawSpan * 1.3);
+  const center = (min + max) / 2;
+  let lower = center - paddedSpan / 2;
+  let upper = center + paddedSpan / 2;
+  if (lower < 0) {
+    upper -= lower;
+    lower = 0;
+  }
+  if (upper > 1) {
+    lower -= upper - 1;
+    upper = 1;
+  }
+  return [Math.max(0, lower), Math.min(1, upper)];
+}
+
+/** Five evenly spaced y-axis ticks for an adaptive price domain. */
+export function priceTicks([min, max]: PriceDomain): number[] {
+  return Array.from({ length: 5 }, (_, index) => min + ((max - min) * index) / 4);
+}
 
 export type Scale = (value: number) => number;
 

@@ -4,9 +4,11 @@ import type {
   ObstacleProvider,
   RacerStatus,
   SabotagePlan,
+  SabotageSchedule,
   SabotageTier,
   SabotageTrigger,
 } from "../domain/types.js";
+import { sabotageCheckpoints } from "../domain/sabotage.js";
 import { validateDisruptionCommand } from "../infra/cdp-obstacle-provider.js";
 import {
   SABOTAGE_PRESET_IDS,
@@ -113,6 +115,7 @@ export class MasterObstacleProvider implements ObstacleProvider {
     courseId: string;
     seed: string;
     checkpointCount: number;
+    sabotageSchedule?: Partial<SabotageSchedule>;
     trigger: SabotageTrigger;
   }): Promise<SabotagePlan | null> {
     const existing = this.plans.get(input.raceId);
@@ -134,6 +137,7 @@ export class MasterObstacleProvider implements ObstacleProvider {
       // selector one completion checkpoint beyond it; the coordinator's
       // race-aware path rejects a true final checkpoint before this fallback.
       checkpointCount: checkpoint + 1,
+      sabotageSchedule: undefined,
       trigger: { kind: "target_opened", checkpoint: 1, milestone: "first_verified_checkpoint" },
     });
     return plan?.policy ?? null;
@@ -173,16 +177,18 @@ export class MasterObstacleProvider implements ObstacleProvider {
     courseId: string;
     seed: string;
     checkpointCount: number;
+    sabotageSchedule?: Partial<SabotageSchedule>;
     trigger: SabotageTrigger;
   }): Promise<SabotagePlan | null> {
-    const checkpoints = Array.from(
-      { length: Math.min(2, input.checkpointCount - input.trigger.checkpoint) },
-      (_, index) => input.trigger.checkpoint + index,
+    const checkpoints = sabotageCheckpoints(
+      input.checkpointCount,
+      input.trigger.checkpoint,
+      input.sabotageSchedule,
     );
     if (checkpoints.length === 0) return null;
     try {
       const observation = await this.observations.observe(input.raceId, input.trigger.checkpoint);
-      if (this.model.selectSabotageSequence && checkpoints.length >= 2) {
+      if (this.model.selectSabotageSequence && checkpoints.length >= 1) {
         const selected = await this.withTimeout(
           this.model.selectSabotageSequence({
             observation,
@@ -312,7 +318,7 @@ function fallbackTier(seed: string): SabotageTier {
   return (["intermediate", "difficult", "difficult"] as const)[hash % 3];
 }
 
-function fallbackPresetIds(seed: string): [SabotagePresetId, SabotagePresetId, SabotagePresetId] {
+function fallbackPresetIds(seed: string): SabotagePresetId[] {
   const preferred: SabotagePresetId[] = [
     "cover-with-modal",
     "plant-decoy-control",
@@ -320,7 +326,7 @@ function fallbackPresetIds(seed: string): [SabotagePresetId, SabotagePresetId, S
   ];
   const offset = [...seed].reduce((total, character) => total + character.charCodeAt(0), 0) % preferred.length;
   const rotated = [...preferred.slice(offset), ...preferred.slice(0, offset)];
-  return rotated as [SabotagePresetId, SabotagePresetId, SabotagePresetId];
+  return rotated;
 }
 
 function highestTier(tiers: readonly SabotageTier[]): SabotageTier {

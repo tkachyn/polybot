@@ -27,6 +27,8 @@ export type ApiCreateRaceInput = CreateRaceInput & {
   successCondition?: string;
   /** Exactly checkpointCount labels. */
   checkpointLabels?: string[];
+  /** Course-specific sabotage schedule; defaults to two non-final steps. */
+  sabotageSchedule?: { maxSteps?: number; includeFinalCheckpoint?: boolean };
   /** Requires obstaclesEnabled. Presentation brief plus optional fixed policy. */
   sabotage?: SabotageBrief;
   /** Exactly four, unique keys, racer order. */
@@ -111,6 +113,20 @@ export function buildFightMetadata(
   }
   if (input.obstaclesEnabled !== undefined && typeof input.obstaclesEnabled !== "boolean") {
     invalid("obstaclesEnabled must be a boolean");
+  }
+  if (input.sabotageSchedule !== undefined) {
+    const schedule = input.sabotageSchedule;
+    if (schedule === null || typeof schedule !== "object") {
+      invalid("sabotageSchedule must be an object");
+    }
+    if (schedule.maxSteps !== undefined &&
+      (!Number.isInteger(schedule.maxSteps) || schedule.maxSteps < 1 || schedule.maxSteps > 8)) {
+      invalid("sabotageSchedule.maxSteps must be an integer from 1 to 8");
+    }
+    if (schedule.includeFinalCheckpoint !== undefined &&
+      typeof schedule.includeFinalCheckpoint !== "boolean") {
+      invalid("sabotageSchedule.includeFinalCheckpoint must be a boolean");
+    }
   }
   if (input.sabotage !== undefined && input.sabotage !== null && input.obstaclesEnabled !== true) {
     invalid("sabotage requires obstaclesEnabled: true");
