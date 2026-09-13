@@ -17,7 +17,11 @@ import { buildDisruptionScript, DECOY_ID_PREFIX } from "../src/infra/cdp-obstacl
 
 let browser: Browser | undefined;
 try {
-  browser = await chromium.launch({ timeout: 30_000 });
+  const executablePath = process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH;
+  browser = await chromium.launch({
+    timeout: 30_000,
+    ...(executablePath ? { executablePath } : {}),
+  });
 } catch {
   browser = undefined;
 }
