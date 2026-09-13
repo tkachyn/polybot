@@ -697,6 +697,22 @@ test("a browser that dies mid-race fails only its racer, readably, and releases 
   await coordinator.shutdown();
 });
 
+test("a verified finish the race cannot record is logged as a readable cause", async () => {
+  const { coordinator, runner } = setup({ obstacles: new FakeObstacles() });
+  await coordinator.prepareAndStart(Date.now());
+  // The sabotage at checkpoint 1 leaves racer-1 recovering, so the race has
+  // not recorded its last checkpoints when the course reports it finished.
+  await coordinator.recordCheckpoint("racer-1", 1);
+  assert.equal(coordinator.engine.racers.get("racer-1")?.status, "recovering");
+
+  assert.equal(await runner.running.get("racer-1")?.checkFinish?.(), false);
+  const text = coordinator.telemetry.racer("racer-1").log.at(-1)?.text;
+  assert.equal(text, "Verified completion could not be finalized: its progress could not be verified");
+  // Not the raw engine error, which names the racer and the engine rule.
+  assert.doesNotMatch(text ?? "", /racer-1|final checkpoint/);
+  await coordinator.shutdown();
+});
+
 test("resolution settles through the shared ledger and records closedAt", async () => {
   const { coordinator, ledger } = setup();
   await coordinator.prepareAndStart(1_000);

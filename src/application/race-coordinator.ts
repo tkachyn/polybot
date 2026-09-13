@@ -13,7 +13,7 @@ import type {
 import { captureFightDataset, type FightCaptureInput } from "../dataset/capture.js";
 import type { DatasetStore } from "../dataset/store.js";
 import { DomainError } from "../domain/errors.js";
-import { closeReasonText, failureCause } from "../domain/failure-reasons.js";
+import { closeReasonText, failureCause, failureProblem } from "../domain/failure-reasons.js";
 import { RaceEngine } from "../domain/race-engine.js";
 import {
   DEFAULT_SABOTAGE_CHECKPOINT,
@@ -601,10 +601,13 @@ export class RaceCoordinator {
       return this.engine.racers.get(racerId)?.status === "finished";
     } catch (error) {
       if (verified) {
-        const reason = error instanceof Error ? error.message : String(error);
+        // Spectators read a short cause, never the raw engine or browser error.
+        const problem = failureProblem(error instanceof Error ? error.message : String(error));
         this.telemetry.appendLog(racerId, {
           kind: "status",
-          text: `Verified completion could not be finalized: ${reason}`,
+          text: problem === null
+            ? "Verified completion could not be finalized"
+            : `Verified completion could not be finalized: ${problem}`,
           at: now,
         });
         this.flush({ ...createChanges(), fight: true });
