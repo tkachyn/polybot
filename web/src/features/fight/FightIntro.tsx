@@ -1,4 +1,7 @@
 import { useEffect, useRef, useState } from "react";
+import { Button } from "../../components";
+import { cx } from "../../lib/cx";
+import { formatFightNumber } from "../../lib/format";
 import { serverNow } from "../../state/clock";
 import { introStartOffset } from "./fightIntroState";
 import { fightIntroSrc } from "./introVideo";
@@ -12,9 +15,15 @@ type FightIntroProps = {
   onUnavailable: () => void;
 };
 
+/**
+ * The intro as a large framed video over the darkened fight screen. The
+ * video stays hidden until it is actually playing, so the frame never shows
+ * a blank or the jump to where it starts.
+ */
 export function FightIntro({ fightNumber, endsAt, onClose, onUnavailable }: FightIntroProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [muted, setMuted] = useState(false);
+  const [playing, setPlaying] = useState(false);
   // Fixed when the intro opens: a new source mid-play would restart it.
   const [src] = useState(fightIntroSrc);
 
@@ -51,28 +60,35 @@ export function FightIntro({ fightNumber, endsAt, onClose, onUnavailable }: Figh
 
   return (
     <div className={styles.backdrop} role="dialog" aria-modal="true" aria-label={`Fight ${fightNumber} intro`}>
-      <video
-        ref={videoRef}
-        className={styles.video}
-        src={src}
-        playsInline
-        preload="auto"
-        onLoadedMetadata={() => void start()}
-        onEnded={onClose}
-        onError={onUnavailable}
-      />
-      <div className={styles.topline}>
-        <span className={styles.kicker}>Fight intro</span>
-        <span className={styles.fightNumber}>Fight #{String(fightNumber).padStart(4, "0")}</span>
+      <div className={styles.panel}>
+        <div className={styles.frame}>
+          <video
+            ref={videoRef}
+            className={cx(styles.video, playing && styles.playing)}
+            src={src}
+            playsInline
+            preload="auto"
+            onLoadedMetadata={() => void start()}
+            onPlaying={() => setPlaying(true)}
+            onEnded={onClose}
+            onError={onUnavailable}
+          />
+        </div>
+        <div className={styles.bar}>
+          <span className={styles.kicker}>Fight intro</span>
+          <span className={cx("num", styles.fightNumber)}>Fight {formatFightNumber(fightNumber)}</span>
+          <span className={styles.actions}>
+            {muted && (
+              <Button variant="ghost" size="sm" onClick={unmute}>
+                Sound on
+              </Button>
+            )}
+            <Button variant="subtle" size="sm" onClick={onClose}>
+              Skip intro
+            </Button>
+          </span>
+        </div>
       </div>
-      {muted && (
-        <button type="button" className={styles.sound} onClick={unmute}>
-          Sound on
-        </button>
-      )}
-      <button type="button" className={styles.skip} onClick={onClose}>
-        Skip intro
-      </button>
     </div>
   );
 }

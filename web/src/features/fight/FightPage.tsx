@@ -36,9 +36,12 @@ export function FightPage({ fight, priceHistory, streamStatus }: FightPageProps)
   const { meta } = useSession();
   const [params, setParams] = useSearchParams();
   const [introAvailable, setIntroAvailable] = useState(true);
-  // "lead-in": timed to end as the fight starts (the agents wait for it); "replay": from the top, on request.
-  const [intro, setIntro] = useState<"lead-in" | "replay" | null>(null);
   const { status, startsAt } = fight;
+  // "lead-in": timed to end as the fight starts (the agents wait for it); "replay": from the top, on request.
+  // A page opened inside the lead-in starts with the intro open, so the fight screen never shows for a frame first.
+  const [intro, setIntro] = useState<"lead-in" | "replay" | null>(() =>
+    !hasSeenFightIntro(fight.raceId) && introOpensIn({ status, startsAt }, serverNow()) === 0 ? "lead-in" : null,
+  );
   useEffect(() => {
     if (!introAvailable || hasSeenFightIntro(fight.raceId)) return undefined;
     const opensIn = introOpensIn({ status, startsAt }, serverNow());
