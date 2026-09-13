@@ -37,12 +37,11 @@ Routes:
 
 | Path | Component |
 | --- | --- |
-| `/` | `features/home/HomePage` (`HomePage`) |
+| `/` | `features/home/HomePage` (`HomePage`): filter row, the featured fight (`featured.ts`), every other fight as a card by status (`lobby.ts`), lobby rail; `?filter=live\|upcoming\|resolved&q=` |
 | `/resolved` | `features/resolved/ResolvedPage` (`ResolvedPage`) |
 | `/fights/:raceId` | `features/fight/FightRoute` (`FightRoute`), renders `features/settled/SettledFight` (with `features/evaluation/EvaluationReport`) for resolved fights and `features/market/MarketRail` in the rail. A fight no longer in the lobby (pruned, or lost to a restart) falls back to `features/settled/ArchivedFight`: its stored final evaluation, read-only (`features/fight/route.ts`) |
 | `/portfolio` | `features/portfolio/PortfolioPage` (`PortfolioPage`) |
 | `/wallet` | `features/wallet/WalletPage` (`WalletPage`), `?tab=deposit\|withdraw` |
-| `/leaderboard` | `features/leaderboard/LeaderboardPage` (`LeaderboardPage`) |
 | `/evaluations` | `features/evaluation/EvaluationsPage` (`EvaluationsPage`): robustness matrix, training dataset download (the zip, or one file at a time), recent reports (the matrix's newest fights, same filters); `?mode=live\|simulated\|all&days=7\|30\|90` |
 | `*` | `app/NotFoundPage` |
 
@@ -158,7 +157,7 @@ rethrow the AbortError; test with `isAbortError`).
 | `useNow(intervalMs = 1000, enabled = true)` (`state/clock.ts`) | server-corrected ms, shared aligned ticks |
 | `serverNow()`, `noteServerTime()`, `getClockOffset()`, `isClockSynced()` | clock |
 | `useSearchQuery()` (`state/search.ts`, re-exported by components) | current `?q=` (untrimmed) |
-| `useSetSearchQuery()`, `SEARCH_PARAM` ("q"), `HOME_STATUS_PARAM` ("status") | the top bar writes `?q=` on "/"; the home screen owns `?status=` |
+| `useSetSearchQuery()`, `SEARCH_PARAM` ("q") | the lobby's search box writes `?q=` on "/", keeping the home screen's `?filter=` (`features/home/filter.ts`) |
 | `useMediaQuery(query)`, `BREAKPOINT_REFLOW`, `BREAKPOINT_COMPACT` (`state/media.ts`) | JS media queries |
 | `getOrCreateUserId()`, `USER_ID_STORAGE_KEY` ("sm.userId"), `isValidUserId`, `createUserId` (`state/userId.ts`) | user id |
 | `readStorage`, `writeStorage`, `removeStorage` (`state/storage.ts`) | safe localStorage |
@@ -221,7 +220,7 @@ Import from `../../components` in feature folders.
 | Component | Props |
 | --- | --- |
 | `AppShell` | layout route element (renders `<Outlet/>`); sidebar, top bar (search, SIMULATED badge, connection, balance, Deposit, avatar) |
-| `Page` | `{ children, scroll?: boolean = true, width?: "default" \| "wide" \| "full", padded?: boolean = true, title?: string, className? }` — `scroll={false}` = full height, no scroll |
+| `Page` | `{ children, scroll?: boolean = true, width?: "default" \| "wide" \| "full", padded?: boolean = true, title?: string, className? }` — `scroll={false}` = full height, no scroll; scrolling pages return to their offset on Back/Forward |
 | `PageHeader` | `{ title, subtitle?, actions?, className? }` |
 | `AgentMonogram` | `{ agent: AgentIdentity \| AgentVisual \| key, size?: "xs" 18 \| "sm" 22 \| "md" 28 \| "lg" 36, className? }` |
 | `StatusPill` | `{ status: "live" \| "upcoming" \| "resolved" \| "voided", label?, size?: "sm" \| "md", className? }`; `fightPillStatus(fight)` maps a fight (voided → "voided") |
