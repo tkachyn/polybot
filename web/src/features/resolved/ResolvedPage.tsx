@@ -45,10 +45,11 @@ export function ResolvedPage() {
       <PageHeader title="Resolved" subtitle={subtitle} />
 
       <div className={styles.body}>
-        {error && (
+        {/* A dropped stream after the first load is the global connection banner's job. */}
+        {error && !loaded && (
           <ErrorBanner
             error={error}
-            title={loaded ? "Live updates interrupted." : "Couldn’t load fights."}
+            title="Couldn’t load fights."
             onRetry={() => void retry()}
             retrying={retrying}
           />
