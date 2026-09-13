@@ -4,7 +4,7 @@
 import type { AgentCheckpointState, FightAgentDetail, FightDetail, FightStatus, RacerPhase, RunStatus } from "@contract";
 import type { ProgressMarker } from "../../components";
 import { agentVisual, rosterVisuals, type AgentVisual } from "../../lib/agents";
-import { EMPTY, formatClock, formatCountdown, formatDuration, formatLogTime, formatNumber } from "../../lib/format";
+import { EMPTY, formatClock, formatCountdown, formatDuration, formatNumber } from "../../lib/format";
 import { RUN_STATUS_LABEL } from "../../lib/labels";
 
 // ---------------------------------------------------------------------------
@@ -118,11 +118,6 @@ export const STALE_FRAME_MS = 15_000;
 export function frameAgeLabel(ageMs: number): string {
   if (!Number.isFinite(ageMs) || ageMs < 1000) return "now";
   return `${formatDuration(ageMs)} ago`;
-}
-
-/** When the sabotage fired: fight clock ("02:14") if the start is known, else time of day. */
-export function sabotageFiredLabel(firedAt: number, startedAt: number | null): string {
-  return startedAt !== null && firedAt >= startedAt ? formatClock(firedAt - startedAt) : formatLogTime(firedAt);
 }
 
 // ---------------------------------------------------------------------------

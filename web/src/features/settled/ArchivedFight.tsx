@@ -7,7 +7,7 @@
  * Rendered by FightRoute inside a scrolling <Page>. Renders no Page of its own.
  */
 import type { FightEvaluation } from "@contract";
-import { ButtonLink, ErrorBanner, IconAlert, IconArrowLeft, Skeleton } from "../../components";
+import { ButtonLink, ErrorBanner, IconArrowLeft, Skeleton, Tag } from "../../components";
 import { formatDateTime, formatDuration } from "../../lib/format";
 import { EvaluationReportView } from "../evaluation/EvaluationReport";
 import type { FightEvaluationState } from "../evaluation/useFightEvaluation";
@@ -41,15 +41,16 @@ export function ArchivedFight({ evaluation, report }: ArchivedFightProps) {
             <ResultNote>No verified winner</ResultNote>
           )
         }
+        badge={
+          <Tag tone="neutral" title="Only the results are kept. The market, keyframes and replays are gone.">
+            Archived
+          </Tag>
+        }
         meta={[
           { label: "Duration", value: formatDuration(duration) },
           { label: "Ended", value: formatDateTime(evaluation.finishedAt) },
         ]}
       />
-      <p className={styles.archivedNote}>
-        <IconAlert size={14} className={styles.archivedIcon} />
-        <span>This fight has left the lobby. Its results are kept; its market, keyframes and replays are not.</span>
-      </p>
       <EvaluationReportView state={report} resolved archived />
     </div>
   );

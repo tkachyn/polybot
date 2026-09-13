@@ -1,14 +1,15 @@
 /**
  * The two header strips of the fight screen: master task, then sabotage.
+ * Each keeps to what a spectator acts on; the details sit in tooltips.
  */
 import type { ReactNode } from "react";
 import type { FightDetail, SabotageDetail } from "@contract";
 import { AgentMonogram, ElapsedClock, SabotageTag, StatusPill, Tag, fightPillStatus } from "../../components";
 import { cx } from "../../lib/cx";
-import { formatCompactMoney, formatDuration, formatFightNumber, formatNumber } from "../../lib/format";
-import { HAZARD_LABEL, SABOTAGE_HIDDEN_COPY } from "../../lib/labels";
-import { finishView, isRaceOver, marketStateView, sabotageFiredLabel, visualFor, type RosterVisuals } from "./fightView";
-import { ClockCountdown, ClockPhrase } from "./ClockCountdown";
+import { formatDuration, formatFightNumber } from "../../lib/format";
+import { SABOTAGE_HIDDEN_COPY } from "../../lib/labels";
+import { finishView, isRaceOver, visualFor, type RosterVisuals } from "./fightView";
+import { ClockCountdown } from "./ClockCountdown";
 import styles from "./FightHeader.module.css";
 
 // ---------------------------------------------------------------------------
@@ -26,34 +27,18 @@ export function MasterStrip({ fight, action }: { fight: FightDetail; action?: Re
         <FightClock fight={fight} />
       </div>
 
+      {/* The title names the task; one line of detail under it (whole in the tooltip). */}
       <div className={styles.task}>
         <h1 className={cx("clamp-2", styles.title)} title={fight.title}>
           {fight.title}
         </h1>
-        <div className={styles.taskLines}>
-          <p className={styles.taskLine} title={fight.taskDetail}>
-            <span className={cx("label label-sm", styles.taskKey)}>Task</span>
-            <span className={cx("clamp-1", styles.taskText)}>{fight.taskDetail}</span>
-          </p>
-          <p className={styles.taskLine} title={fight.successCondition}>
-            <span className={cx("label label-sm", styles.taskKey)}>Success</span>
-            <span className={cx("clamp-1", styles.taskText)}>{fight.successCondition}</span>
-          </p>
-        </div>
+        <p className={cx("clamp-1", styles.taskText)} title={fight.taskDetail}>
+          {fight.taskDetail}
+        </p>
       </div>
 
-      <dl className={styles.stats}>
-        <div className={styles.stat}>
-          <dt className="label label-sm">Volume</dt>
-          <dd className={cx("num", styles.statValue)}>{formatCompactMoney(fight.volume)}</dd>
-        </div>
-        <div className={styles.stat}>
-          <dt className="label label-sm">Traders</dt>
-          <dd className={cx("num", styles.statValue)}>{formatNumber(fight.traders)}</dd>
-        </div>
-        <MarketState fight={fight} />
-        {action && <div className={styles.invite}>{action}</div>}
-      </dl>
+      {/* Volume and the market's state live in the rail's footer. */}
+      {action && <div className={styles.invite}>{action}</div>}
     </section>
   );
 }
@@ -76,34 +61,6 @@ function FightClock({ fight }: { fight: FightDetail }) {
       <span className="label label-sm">Elapsed</span>
       <ElapsedClock from={fight.startedAt} until={fight.finishedAt} className={styles.clockValue} />
     </span>
-  );
-}
-
-function MarketState({ fight }: { fight: FightDetail }) {
-  const market = marketStateView(fight);
-  return (
-    <div className={cx(styles.stat, styles.market)}>
-      <dt className="label label-sm">Market</dt>
-      <dd className={styles.statValue}>
-        <span className={styles.marketValue}>
-          <span className={cx(styles.marketDot, styles[`market_${market.tone}`])} aria-hidden="true" />
-          {market.label}
-        </span>
-        {market.countdown ? (
-          <span className={styles.marketSub}>
-            <ClockPhrase
-              to={market.countdown.to}
-              lead={market.countdown.lead}
-              approximate={market.countdown.approximate}
-              due={market.countdown.due}
-              clockClassName={styles.marketCountdown}
-            />
-          </span>
-        ) : (
-          market.detail && <span className={styles.marketSub}>{market.detail}</span>
-        )}
-      </dd>
-    </div>
   );
 }
 
@@ -147,13 +104,13 @@ export function FinishStrip({ fight, roster }: { fight: FightDetail; roster: Ros
 // Sabotage strip
 // ---------------------------------------------------------------------------
 
+/** What the sabotage is, whether it has fired, and who it hit. The lanes' checkpoint dots mark where. */
 export function SabotageStrip({ fight, roster }: { fight: FightDetail; roster: RosterVisuals }) {
   const sabotage = fight.sabotage;
   if (!sabotage) {
     return (
       <section className={cx(styles.sabotage, styles.sabotageNone)} aria-label="Sabotage">
         <Tag tone="neutral">No sabotage</Tag>
-        <p className={cx("clamp-1", styles.sabSummary, styles.sabMuted)}>This fight runs without environment sabotage.</p>
       </section>
     );
   }
@@ -167,41 +124,8 @@ export function SabotageStrip({ fight, roster }: { fight: FightDetail; roster: R
       <p className={cx("clamp-1", styles.sabSummary, !summary && styles.sabMuted)} title={tooltip || undefined}>
         {summary ?? (sabotage.revealed ? "Details pending" : SABOTAGE_HIDDEN_COPY)}
       </p>
-      {sabotage.revealed && sabotage.hazardType && (
-        <Tag tone="neutral" className={styles.hazard}>
-          {HAZARD_LABEL[sabotage.hazardType]}
-        </Tag>
-      )}
-      <SabotageProgress sabotage={sabotage} />
       <SabotageStateView sabotage={sabotage} fight={fight} roster={roster} />
-      {sabotage.revealed && sabotage.steps.length > 1 && (
-        <div className={styles.sabSteps} aria-label="Ordered sabotage sequence">
-          {sabotage.steps.map((step) => (
-            <span
-              key={step.stepId}
-              className={cx(styles.sabStep, step.state === "fired" && styles.sabStepFired, step.state === "recovered" && styles.sabStepRecovered)}
-              title={`${step.stepId} at ${step.checkpointLabel}`}
-            >
-              <span className="num">{step.index}</span>
-              <span>{step.checkpointLabel}</span>
-              <span className={styles.sabMuted}>{step.state}</span>
-            </span>
-          ))}
-        </div>
-      )}
     </section>
-  );
-}
-
-function SabotageProgress({ sabotage }: { sabotage: NonNullable<FightDetail["sabotage"]> }) {
-  const fired = sabotage.steps.filter((step) => step.firedAt !== null).length;
-  return (
-    <span className={styles.sabFires} title={`${fired} of ${sabotage.stepCount} sabotage steps fired`}>
-      <span>Sabotages</span>
-      <span className={cx("num", styles.sabCp)}>
-        {fired} of {sabotage.stepCount}
-      </span>
-    </span>
   );
 }
 
@@ -216,12 +140,12 @@ function SabotageStateView({ sabotage, fight, roster }: { sabotage: SabotageDeta
   if (sabotage.state === "expired") {
     return (
       <span className={styles.sabState}>
-        <Tag tone="neutral">Expired</Tag>
-        <span className={styles.sabMuted}>Never triggered</span>
+        <Tag tone="neutral">Never triggered</Tag>
       </span>
     );
   }
 
+  const fired = sabotage.steps.filter((step) => step.firedAt !== null).length;
   const hit = sabotage.hitRacerIds
     .map((id) => fight.agents.find((a) => a.racerId === id))
     .filter((a): a is NonNullable<typeof a> => a !== undefined);
@@ -229,26 +153,18 @@ function SabotageStateView({ sabotage, fight, roster }: { sabotage: SabotageDeta
 
   return (
     <span className={styles.sabState}>
-      <Tag tone="sabotage" solid>
-        Fired
+      <Tag tone="sabotage" solid title={`${fired} of ${sabotage.stepCount} sabotage steps fired`}>
+        Fired{sabotage.stepCount > 1 && <span className="num"> {fired}/{sabotage.stepCount}</span>}
       </Tag>
-      {sabotage.firedAt !== null && <span className="num">at {sabotageFiredLabel(sabotage.firedAt, fight.startedAt)}</span>}
-      <span className={styles.hits} title={hit.length ? `Hit: ${hitNames}` : "No agent hit"}>
-        {hit.length === 0 ? (
-          <span className={styles.sabMuted}>No agent hit</span>
-        ) : (
-          <>
-            <span className="label label-sm">Hit</span>
-            {hit.map((a) => (
-              <span key={a.racerId} className={styles.hit}>
-                <AgentMonogram agent={visualFor(roster, a)} size="xs" />
-                {hit.length <= 2 && <span className={styles.hitName}>{a.agent.name}</span>}
-              </span>
-            ))}
-            {hit.length > 2 && <span className="sr-only">{hitNames}</span>}
-          </>
-        )}
-      </span>
+      {hit.length > 0 && (
+        <span className={styles.hits} title={`Hit: ${hitNames}`}>
+          <span className="label label-sm">Hit</span>
+          {hit.map((a) => (
+            <AgentMonogram key={a.racerId} agent={visualFor(roster, a)} size="xs" />
+          ))}
+          <span className="sr-only">{hitNames}</span>
+        </span>
+      )}
     </span>
   );
 }

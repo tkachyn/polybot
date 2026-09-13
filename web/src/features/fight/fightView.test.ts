@@ -15,7 +15,6 @@ import {
   leaderView,
   marketStateView,
   rosterByRacer,
-  sabotageFiredLabel,
   sabotageMarkers,
   startsFinishHold,
 } from "./fightView";
@@ -143,10 +142,6 @@ describe("figures", () => {
     expect(frameAgeLabel(300)).toBe("now");
     expect(frameAgeLabel(2_400)).toBe("2s ago");
     expect(frameAgeLabel(64_000)).toBe("1m 04s ago");
-  });
-
-  it("labels the sabotage time on the fight clock", () => {
-    expect(sabotageFiredLabel(1_000 + 134_000, 1_000)).toBe("02:14");
   });
 
   it("sizes the quadrant grid", () => {

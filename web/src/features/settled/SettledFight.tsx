@@ -129,6 +129,8 @@ export type ResultHeaderProps = {
   status: PillStatus;
   /** Replaces the pill's text ("Void"). */
   pillLabel?: string;
+  /** Beside the pill, e.g. ArchivedFight's "Archived" tag. */
+  badge?: ReactNode;
   /** The winner (WinnerLine), or why there is none (ResultNote). */
   result: ReactNode;
   /** Figures beside the result, already formatted. */
@@ -136,12 +138,13 @@ export type ResultHeaderProps = {
 };
 
 /** A finished fight's header: number and status, title, then the result beside its figures. Shared with ArchivedFight. */
-export function ResultHeader({ number, title, status, pillLabel, result, meta }: ResultHeaderProps) {
+export function ResultHeader({ number, title, status, pillLabel, badge, result, meta }: ResultHeaderProps) {
   return (
     <header className={styles.header}>
       <div className={styles.headerTop}>
         <span className={cx("label", "label-lg", "num")}>FIGHT {formatFightNumber(number)}</span>
         <StatusPill status={status} label={pillLabel} />
+        {badge}
       </div>
       <h1 className={cx(styles.title, "clamp-2")} title={title}>
         {title}

@@ -165,7 +165,7 @@ function sabotageMarkersFor(fight: FightDetail): ChartSabotageMarker[] {
 
 function MarketFooter({ fight }: { fight: FightDetail }) {
   const status = marketStatusText(fight);
-  // The header's m:ss clock rather than a second format: the freeze while
+  // The screen's m:ss clock rather than a second format: the freeze while
   // trading is open, the end of the fight once it is frozen.
   const countdown = fight.status === "live" ? marketStateView(fight).countdown : null;
   return (

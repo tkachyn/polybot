@@ -46,7 +46,7 @@
 .task {
   display: flex;
   flex-direction: column;
-  gap: var(--space-1-5);
+  gap: var(--space-1);
   min-width: 0;
 }
 
@@ -58,104 +58,15 @@
   color: var(--color-text);
 }
 
-.taskLines {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-0-5);
-  min-width: 0;
-}
-
-.taskLine {
-  display: flex;
-  align-items: baseline;
-  gap: var(--space-2);
+.taskText {
   min-width: 0;
   font-size: var(--fs-body-sm);
   line-height: var(--lh-snug);
   color: var(--color-text-secondary);
 }
 
-.taskKey {
-  flex: 0 0 52px;
-}
-
-.taskText {
-  flex: 1 1 auto;
-  min-width: 0;
-}
-
-.stats {
-  display: flex;
-  align-items: flex-start;
-  gap: var(--space-5);
-  margin: 0;
-}
-
 .invite {
   align-self: center;
-}
-
-.stat {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-1);
-  min-width: 0;
-}
-
-.statValue {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-0-5);
-  margin: 0;
-  font-size: var(--fs-body-lg);
-  font-weight: var(--fw-semibold);
-  line-height: var(--lh-tight);
-  color: var(--color-text);
-  white-space: nowrap;
-}
-
-.market {
-  min-width: 150px;
-}
-
-.marketValue {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-1-5);
-}
-
-.marketDot {
-  width: 6px;
-  height: 6px;
-  flex-shrink: 0;
-  border-radius: 50%;
-}
-
-.market_open {
-  background-color: var(--color-positive);
-}
-
-.market_pre {
-  border: 1.5px solid var(--color-positive);
-}
-
-.market_frozen {
-  border: 1.5px solid var(--color-text-secondary);
-}
-
-.market_closed {
-  background-color: var(--color-text-muted);
-}
-
-.marketSub {
-  font-size: var(--fs-body-sm);
-  font-weight: var(--fw-regular);
-  color: var(--color-text-muted);
-}
-
-.marketCountdown {
-  font-weight: var(--fw-semibold);
-  color: var(--color-text);
 }
 
 /* --- Sabotage strip --------------------------------------------------------- */
@@ -193,35 +104,6 @@
   color: var(--color-text-secondary);
 }
 
-.hazard {
-  max-width: 160px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.sabFires {
-  display: inline-flex;
-  align-items: baseline;
-  gap: var(--space-1-5);
-  flex: 0 1 auto;
-  min-width: 0;
-  max-width: 34%;
-  white-space: nowrap;
-}
-
-.sabCheckpoint {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  font-weight: var(--fw-semibold);
-  color: var(--color-sabotage);
-}
-
-.sabCp {
-  flex-shrink: 0;
-  color: var(--color-text-muted);
-}
-
 .sabState {
   display: inline-flex;
   align-items: center;
@@ -233,47 +115,7 @@
 .hits {
   display: inline-flex;
   align-items: center;
-  gap: var(--space-1-5);
-}
-
-.hit {
-  display: inline-flex;
-  align-items: center;
   gap: var(--space-1);
-  color: var(--color-text);
-}
-
-.sabSteps {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-1);
-  min-width: 0;
-  overflow: hidden;
-}
-
-.sabStep {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-1);
-  padding: 2px var(--space-1-5);
-  border: 1px solid var(--tint-sabotage-border);
-  border-radius: var(--radius-sm);
-  color: var(--color-text);
-  white-space: nowrap;
-}
-
-.sabStepFired {
-  background: var(--tint-sabotage);
-}
-
-.sabStepRecovered {
-  opacity: 0.7;
-}
-
-.hitName {
-  max-width: 110px;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 
 /* --- Finish strip (the finish moment) ---------------------------------------- */
@@ -336,9 +178,8 @@
     gap: var(--space-2-5) var(--space-4);
   }
 
-  .stats {
+  .invite {
     grid-column: 1 / -1;
-    flex-wrap: wrap;
   }
 
   .sabotage {
@@ -347,9 +188,5 @@
 
   .sabSummary {
     flex-basis: 50%;
-  }
-
-  .sabFires {
-    max-width: 100%;
   }
 }
