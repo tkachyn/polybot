@@ -1,4 +1,5 @@
 import { resolve } from "node:path";
+import { envBoolean } from "../env.js";
 import {
   MasterObstacleProvider,
   type RaceObservationSource,
@@ -18,6 +19,8 @@ import {
   DeterministicCourseVerifier,
   HttpCourseStateGateway,
 } from "../course/deterministic-course-verifier.js";
+import { JudgeOnlySiteVerifier } from "./judge-only-site-verifier.js";
+import { isAmazonCheckoutRun } from "./site-modes.js";
 import type { DisruptionCommand, SabotageTier } from "../domain/types.js";
 import { CdpObstacleProvider } from "../infra/cdp-obstacle-provider.js";
 import { raceSessionTimeoutSeconds, SteelSessionManager } from "../infra/steel-session-manager.js";
@@ -228,6 +231,7 @@ export function createProductionRaceCoordinator(
     positiveNumberEnv("RACE_LLM_BUDGET_USD", DEFAULT_RACE_LLM_BUDGET_USD),
   );
   const budgetShares = raceBudgetShares(budget.limitUsd, roster.size);
+  const externalSite = isAmazonCheckoutRun(input);
   const masterModelId = process.env.MASTER_LLM_MODEL;
   // One sliding window per configured model, shared by every caller of that
   // model, racers and master alike. A provider-specific 429 cannot kill a
@@ -257,10 +261,12 @@ export function createProductionRaceCoordinator(
   // race's own safety cap, preparation and release included.
   const sessionManager = new SteelSessionManager({
     sessionTimeoutSeconds: raceSessionTimeoutSeconds(input.absoluteDurationMs),
+    useProxy: envBoolean("STEEL_USE_PROXY", true),
   });
   const agentRunner = new PlaywrightCompetitorRunner({
     task: context.fight.task ?? input.task,
     startUrl: input.startUrl,
+    externalSite,
     // Stops a looping racer; spectators see the budget from the start.
     maxActions: competitorMaxActions(),
     modelForRacer(racerId) {
@@ -269,12 +275,14 @@ export function createProductionRaceCoordinator(
       return model;
     },
   });
-  const courseVerifier = new DeterministicCourseVerifier(
-    new HttpCourseStateGateway(
-      requiredEnv("COURSE_BASE_URL"),
-      process.env.COURSE_VERIFIER_TOKEN,
-    ),
-  );
+  const courseVerifier = externalSite
+    ? new JudgeOnlySiteVerifier()
+    : new DeterministicCourseVerifier(
+        new HttpCourseStateGateway(
+          requiredEnv("COURSE_BASE_URL"),
+          process.env.COURSE_VERIFIER_TOKEN,
+        ),
+      );
   const eventStore = new JsonlRaceEventStore(
     resolve(process.env.RACE_EVENT_FILE ?? "data/race-events.jsonl"),
   );
@@ -325,7 +333,7 @@ export function createProductionRaceCoordinator(
         capacityShare: masterCapacityShare(roster, masterModelId),
       })
     : undefined;
-  if (input.obstaclesEnabled && !masterModel) requiredEnv("MASTER_LLM_MODEL");
+  if ((input.obstaclesEnabled || externalSite) && !masterModel) requiredEnv("MASTER_LLM_MODEL");
   const obstacleProvider = input.obstaclesEnabled
     ? new MasterObstacleProvider(
         masterModel!,

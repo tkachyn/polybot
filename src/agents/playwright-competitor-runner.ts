@@ -91,6 +91,8 @@ export { parseDecision as parseAgentDecision } from "./competitor-decision.js";
 export type PlaywrightCompetitorRunnerOptions = {
   task: string;
   startUrl: string;
+  /** Enables native-role targeting and checkout safety for an external site. */
+  externalSite?: boolean;
   /** One model for every racer. Provide this or `modelForRacer`. */
   model?: CompetitorDecisionModel;
   /** Per-racer model. Wins over `model`. */
@@ -156,6 +158,24 @@ const UNSAFE_EVALUATE_PATTERNS: ReadonlyArray<RegExp> = [
   /\[\s*["'](?:click|submit|requestSubmit)["']\s*\]\s*\(/i,
   /\b(?:setTimeout|setInterval|queueMicrotask)\s*\(/i,
 ];
+const EXTERNAL_NATIVE_ROLES = new Set([
+  "button",
+  "checkbox",
+  "combobox",
+  "link",
+  "listbox",
+  "radio",
+  "searchbox",
+  "slider",
+  "spinbutton",
+  "textbox",
+]);
+const EXTERNAL_ORDER_ACTION_PATTERN =
+  /\b(?:buy\s*now|place(?:\s+(?:your|the))?\s+order|complete\s+(?:purchase|order)|submit\s+order|purchase)\b/i;
+const EXTERNAL_PAYMENT_FIELD_PATTERN =
+  /\b(?:card|credit|debit|cvv|cvc|security\s*code|expiration|expiry|payment|password|passcode|email|phone)\b/i;
+const EXTERNAL_AUTH_ACTION_PATTERN =
+  /\b(?:sign\s*in|log\s*in|create\s+(?:an?\s+)?account|register)\b/i;
 
 type CursorPoint = { x: number; y: number };
 type PageCursorApi = {
@@ -277,9 +297,11 @@ export class PlaywrightCompetitorRunner implements CompetitorAgentRunner {
   private readonly cursorBootstrapped = new WeakSet<Page>();
   private readonly maxActions: number;
   private readonly actionTimeoutMs: number;
+  private readonly externalSite: boolean;
 
   constructor(private readonly options: PlaywrightCompetitorRunnerOptions) {
     this.maxActions = options.maxActions ?? Number.POSITIVE_INFINITY;
+    this.externalSite = options.externalSite ?? false;
     if (!Number.isFinite(this.maxActions) && this.maxActions !== Number.POSITIVE_INFINITY) {
       throw new Error("maxActions must be a positive number");
     }
@@ -687,16 +709,39 @@ export class PlaywrightCompetitorRunner implements CompetitorAgentRunner {
       // Hidden inputs carry form plumbing (run ids, counts), not controls a
       // user could act on, so they stay out of the model's view.
       .locator('a, button, input:not([type="hidden"]), select, textarea, [role]')
-      .evaluateAll((elements) =>
+      .evaluateAll((elements, externalSite) =>
         elements.slice(0, 100).map((element) => {
           const html = element as HTMLElement;
           const control = element as HTMLInputElement;
           const box = element.getBoundingClientRect();
+          const explicitRole = element.getAttribute("role");
+          const type = control.type?.toLowerCase();
+          const hint = [
+            element.getAttribute("aria-label"),
+            element.getAttribute("placeholder"),
+            element.getAttribute("name"),
+            element.getAttribute("id"),
+          ].filter(Boolean).join(" ");
+          const searchField = /\b(?:search|query|keyword)\b/i.test(hint);
+          const inferredRole = explicitRole ??
+            (element.tagName.toLowerCase() === "a" ? "link" :
+              element.tagName.toLowerCase() === "button" ||
+                type === "button" || type === "submit" ? "button" :
+              type === "search" || searchField ? "searchbox" :
+              element.tagName.toLowerCase() === "select" ? "combobox" :
+              element.tagName.toLowerCase() === "textarea" ||
+                (element.tagName.toLowerCase() === "input" &&
+                  !["checkbox", "radio", "range", "submit", "button", "hidden"].includes(type))
+                ? "textbox"
+                : null);
           return {
             tag: element.tagName.toLowerCase(),
-            role: element.getAttribute("role"),
-            arenaRole: element.getAttribute("data-arena-role"),
-            text: (html.innerText || control.value || element.getAttribute("aria-label") || "")
+            role: explicitRole,
+            arenaRole: externalSite
+              ? inferredRole
+              : element.getAttribute("data-arena-role"),
+            text: (html.innerText || control.value || element.getAttribute("aria-label") ||
+              (externalSite ? hint : "") || "")
               .trim()
               .slice(0, 300),
             disabled: ("disabled" in control && Boolean(control.disabled)) ||
@@ -709,6 +754,7 @@ export class PlaywrightCompetitorRunner implements CompetitorAgentRunner {
             masked: control.type === "password" && !html.innerText && Boolean(control.value),
           };
         }),
+        this.externalSite,
       )
       .catch(() => []);
     const controls: BrowserObservation["controls"] = [];
@@ -742,6 +788,9 @@ export class PlaywrightCompetitorRunner implements CompetitorAgentRunner {
         const target = await this.resolveTarget(page, decision.targetRole, decision.label);
         const read = await readTarget(target);
         if (read) evidence.target = read.target;
+        if (this.externalSite && isExternalUnsafeClick(decision, read?.target.text)) {
+          throw new Error("External-site safety blocked an order or sign-in control");
+        }
         const cursor = await this.moveCursorToTarget(page, context.racerId, target, "click");
         if (cursor) evidence.cursor = cursor;
         await target.click({ timeout: this.actionTimeoutMs });
@@ -752,6 +801,9 @@ export class PlaywrightCompetitorRunner implements CompetitorAgentRunner {
         const target = await this.resolveTarget(page, decision.targetRole, decision.label);
         const read = await readTarget(target);
         if (read) evidence.target = read.target;
+        if (this.externalSite && isExternalPaymentField(decision, read?.target.text)) {
+          throw new Error("External-site safety blocked payment-field entry");
+        }
         // Typed text is only recorded from a field known not to be a password.
         facts.password = read ? read.password : true;
         const cursor = await this.moveCursorToTarget(page, context.racerId, target, "type");
@@ -902,6 +954,11 @@ export class PlaywrightCompetitorRunner implements CompetitorAgentRunner {
     const wanted = normalizeLabel(label);
     const all = page.locator(this.roleSelector(targetRole));
     const matches = wanted === undefined ? all : all.filter({ hasText: wanted });
+    if (await matches.count() > 0) return matches.first();
+    if (this.externalSite) {
+      const native = this.resolveExternalTarget(page, targetRole, wanted);
+      if (native && await native.count() > 0) return native.first();
+    }
     if (await matches.count() === 0) {
       throw new ActionBlockedError(
         "missing",
@@ -911,6 +968,19 @@ export class PlaywrightCompetitorRunner implements CompetitorAgentRunner {
       );
     }
     return matches.first();
+  }
+
+  private resolveExternalTarget(
+    page: Page,
+    targetRole: string,
+    wanted: string | undefined,
+  ): Locator | null {
+    const role = normalizeExternalRole(targetRole);
+    if (!role || !EXTERNAL_NATIVE_ROLES.has(role)) return null;
+    const name = wanted === undefined
+      ? undefined
+      : new RegExp(escapeRegExp(wanted), "i");
+    return page.getByRole(role as Parameters<Page["getByRole"]>[0], name === undefined ? {} : { name });
   }
 
   private async bootstrapCursor(page: Page): Promise<void> {
@@ -1193,6 +1263,42 @@ export function stepObservation(
       disabled: control.disabled,
     })),
   };
+}
+
+function normalizeExternalRole(targetRole: string): string | undefined {
+  const role = targetRole.trim().toLowerCase();
+  if (role === "input" || role === "text") return "textbox";
+  return role.length > 0 ? role : undefined;
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function isExternalOrderAction(
+  decision: Extract<AgentDecision, { type: "click" }>,
+  targetText: string | null | undefined,
+): boolean {
+  return EXTERNAL_ORDER_ACTION_PATTERN.test(
+    [decision.targetRole, decision.label ?? "", targetText ?? ""].join(" "),
+  );
+}
+
+function isExternalUnsafeClick(
+  decision: Extract<AgentDecision, { type: "click" }>,
+  targetText: string | null | undefined,
+): boolean {
+  const target = [decision.targetRole, decision.label ?? "", targetText ?? ""].join(" ");
+  return EXTERNAL_ORDER_ACTION_PATTERN.test(target) || EXTERNAL_AUTH_ACTION_PATTERN.test(target);
+}
+
+function isExternalPaymentField(
+  decision: Extract<AgentDecision, { type: "type" }>,
+  targetText: string | null | undefined,
+): boolean {
+  return EXTERNAL_PAYMENT_FIELD_PATTERN.test(
+    [decision.targetRole, decision.label ?? "", targetText ?? ""].join(" "),
+  );
 }
 
 function namesSecret(decision: { targetRole: string; label?: string }): boolean {

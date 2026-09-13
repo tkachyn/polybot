@@ -12,10 +12,10 @@ import {
 
 /** A Steel client that records the options each session was created with. */
 function fakeSteel() {
-  const created: Array<{ timeout?: number }> = [];
+  const created: Array<{ timeout?: number; useProxy?: boolean }> = [];
   const client = {
     sessions: {
-      async create(options: { timeout?: number }) {
+      async create(options: { timeout?: number; useProxy?: boolean }) {
         created.push(options);
         const id = `steel-session-${created.length}`;
         return {
@@ -56,6 +56,7 @@ test("race sessions outlive the race's safety cap by the preparation margin", as
   await sessions.create("racer-3");
   const timeoutMs = created[0]?.timeout ?? 0;
   assert.equal(timeoutMs, 480_000);
+  assert.equal(created[0]?.useProxy, true);
   assert.ok(timeoutMs >= 300_000 + STEEL_SESSION_MARGIN_SECONDS * 1_000);
 
   // Without an explicit timeout the manager still outlives the default race.

@@ -40,6 +40,7 @@ Secrets never go in `fly.toml` — it is committed:
 ```bash
 fly secrets set --app polybot-api \
   STEEL_API_KEY=ste-... \
+  STEEL_USE_PROXY=true \
   OPENROUTER_API_KEY=sk-or-... \
   MASTER_LLM_MODEL=openai/gpt-5.6-luna \
   COMPETITOR_LLM_MODELS=openai/gpt-5.6-luna,qwen/qwen3.8-27b,google/gemma-3-27b-it,anthropic/claude-haiku-4.5 \
@@ -94,6 +95,18 @@ COURSE_BASE_URL=https://polybot-course.fly.dev \
 API_URL=https://polybot-api.fly.dev \
 npm run race:shop
 ```
+
+For a judge-only external-site attempt on Amazon, use the same live API
+without the course server:
+
+```bash
+API_URL=https://polybot-api.fly.dev \
+npm run race:amazon
+```
+
+The Amazon run uses a random product category unless `AMAZON_QUERY` is set,
+stops before order submission, and may stop earlier if Amazon requires
+interactive sign-in or presents a CAPTCHA.
 
 ---
 

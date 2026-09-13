@@ -48,6 +48,8 @@ export type SteelSessionManagerOptions = {
   apiKey?: string;
   /** Keys tried in order; the next one is used once the current one runs out. */
   apiKeys?: string[];
+  /** Route browser traffic through Steel's managed residential proxy network. */
+  useProxy?: boolean;
   /**
    * Steel's timeout for each session. A race passes
    * raceSessionTimeoutSeconds(its absolute duration); the default suits the
@@ -68,6 +70,7 @@ export type SteelSessionManagerOptions = {
 export class SteelSessionManager {
   private readonly keys: SteelKeyPool<Steel>;
   private readonly sessionTimeoutSeconds: number;
+  private readonly useProxy: boolean;
   private readonly connect: (endpointUrl: string) => Promise<Browser>;
   private readonly active = new Map<string, SteelRacerSession>();
   // Sessions must be released with the client whose key created them.
@@ -89,6 +92,7 @@ export class SteelSessionManager {
         ),
     });
     this.sessionTimeoutSeconds = options.sessionTimeoutSeconds ?? raceSessionTimeoutSeconds();
+    this.useProxy = options.useProxy ?? true;
     this.connect = options.connectOverCDP ?? ((endpointUrl) => chromium.connectOverCDP(endpointUrl));
   }
 
@@ -104,6 +108,7 @@ export class SteelSessionManager {
           interactive: false,
           systemCursor: false,
         },
+        useProxy: this.useProxy,
       }),
     );
     let browser: Browser;
