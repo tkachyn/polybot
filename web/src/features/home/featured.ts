@@ -7,7 +7,10 @@
  *   1. The featured fight stays while it is live, with trading open or frozen.
  *   2. When it resolves it stays for FEATURED_RESULT_HOLD_MS, long enough to
  *      read the result, and then the lobby moves on.
- *   3. A fresh pick is the live fight with open trading and the most volume
+ *   3. A fight about to start (inside FEATURED_INTRO_WINDOW_MS of it) takes
+ *      the card from anything but a live featured fight, even a result on
+ *      hold: its intro plays there (./FeaturedIntro).
+ *   4. A fresh pick is the live fight with open trading and the most volume
  *      (ties: the earlier start, then the lower number). Failing that, a
  *      frozen live fight, then the soonest upcoming fight, then the most
  *      recently resolved one.
@@ -17,10 +20,19 @@
 import { useEffect, useState } from "react";
 import type { FightSummary } from "@contract";
 import { serverNow } from "../../state/clock";
+import { FIGHT_INTRO_LEAD_MS, FIGHT_INTRO_PRIME_MS } from "../fight/introVideo";
 import { resolvedNewestFirst } from "./filter";
 
 /** How long a featured fight that has just resolved stays up with its result. */
 export const FEATURED_RESULT_HOLD_MS = 15_000;
+
+/** An upcoming fight takes the card this long before it starts: from when its intro starts loading. */
+export const FEATURED_INTRO_WINDOW_MS = FIGHT_INTRO_LEAD_MS + FIGHT_INTRO_PRIME_MS;
+
+/** Upcoming with its start near. One past its start time is still about to start: the server ticks it live. */
+function inIntroWindow(fight: FightSummary, now: number): boolean {
+  return fight.status === "upcoming" && fight.startsAt !== null && fight.startsAt - now <= FEATURED_INTRO_WINDOW_MS;
+}
 
 function volumeOf(fight: FightSummary): number {
   return Number.isFinite(fight.volume) ? fight.volume : 0;
@@ -37,6 +49,22 @@ function compareLive(a: FightSummary, b: FightSummary): number {
 
 function soonestFirst(a: FightSummary, b: FightSummary): number {
   return (a.startsAt ?? a.createdAt) - (b.startsAt ?? b.createdAt) || a.number - b.number;
+}
+
+/** The soonest upcoming fight about to play its intro, if any. */
+export function introDueFight(fights: readonly FightSummary[], now: number): FightSummary | null {
+  return fights.filter((f) => inIntroWindow(f, now)).sort(soonestFirst)[0] ?? null;
+}
+
+/** When the next upcoming fight comes inside its intro window; null when none is still to. */
+export function nextIntroWindowAt(fights: readonly FightSummary[], now: number): number | null {
+  let next: number | null = null;
+  for (const fight of fights) {
+    if (fight.status !== "upcoming" || fight.startsAt === null) continue;
+    const at = fight.startsAt - FEATURED_INTRO_WINDOW_MS;
+    if (at > now && (next === null || at < next)) next = at;
+  }
+  return next;
 }
 
 /** The fight to feature when nothing is featured yet, or the featured one is done. */
@@ -62,6 +90,8 @@ export function pickFeatured(
 ): FightSummary | null {
   const current = currentId === null ? undefined : fights.find((f) => f.raceId === currentId);
   if (current?.status === "live") return current;
+  const starting = introDueFight(fights, now);
+  if (starting) return starting;
   const best = bestFeaturedCandidate(fights);
   if (!current) return best;
   if (current.status === "resolved" && current.finishedAt !== null && now - current.finishedAt < holdMs) {
@@ -98,6 +128,14 @@ export function useFeaturedFight(fights: readonly FightSummary[]): FightSummary 
     const timer = setTimeout(() => wake((n) => n + 1), delay + 50);
     return () => clearTimeout(timer);
   }, [holdEndsAt]);
+
+  // So must a fight coming inside its intro window.
+  const introAt = nextIntroWindowAt(fights, serverNow());
+  useEffect(() => {
+    if (introAt === null) return;
+    const timer = setTimeout(() => wake((n) => n + 1), Math.max(0, introAt - serverNow()) + 50);
+    return () => clearTimeout(timer);
+  }, [introAt]);
 
   return featured;
 }

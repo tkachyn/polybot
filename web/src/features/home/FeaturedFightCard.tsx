@@ -11,7 +11,8 @@
  *
  * Yes / No open the fight screen with that bet slip preselected. Once the
  * market settles, the chance and Yes / No give way to each agent's result
- * and what one YES share paid ($1.00 or $0.00).
+ * and what one YES share paid ($1.00 or $0.00). As the fight is about to
+ * start, its intro plays over the whole card (./FeaturedIntro).
  */
 import { useId } from "react";
 import { useNavigate } from "react-router-dom";
@@ -24,6 +25,7 @@ import { RUN_STATUS_LABEL } from "../../lib/labels";
 import { useFightStream } from "../fight/useFightStream";
 import { ProbabilityChart } from "../market/ProbabilityChart";
 import { SLIP_PARAM, formatSlipParam } from "../market/slipParam";
+import { FeaturedIntro } from "./FeaturedIntro";
 import {
   CardClock,
   DISPLAYED_SABOTAGE_COUNT,
@@ -280,6 +282,7 @@ export function FeaturedFightCard({ fight }: { fight: FightSummary }) {
           View fight
         </ButtonLink>
       </footer>
+      <FeaturedIntro key={shown.raceId} status={shown.status} startsAt={shown.startsAt} />
     </article>
   );
 }

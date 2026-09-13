@@ -53,7 +53,8 @@ sabotage plan, passes the readiness barrier, then calls `RaceEngine.start` so al
 begin at the same timestamp. `prepare` runs everything before the start on its own (once):
 with `startHoldMs` (`FIGHT_INTRO_HOLD_MS`, 10 s in live mode, 0 simulated) the registry
 prepares a fight created to start now, publishes `startsAt` as ready + hold, and `tickAll`
-starts it then, so the web app's intro video plays before any agent runs. Agent loops then
+starts it then, so the intro video (played over the lobby's featured card) ends before any
+agent runs. Agent loops then
 run detached; a rejected loop marks that racer `failed` rather than failing the race. An
 API-level ticker calls `tick` every second.
 

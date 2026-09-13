@@ -9,9 +9,8 @@ import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import type { FightDetail, PricePoint } from "@contract";
 import type { StreamStatus } from "../../api/stream";
-import { Button, ErrorBanner, Skeleton, SkeletonText } from "../../components";
+import { ErrorBanner, Skeleton, SkeletonText } from "../../components";
 import { cx } from "../../lib/cx";
-import { serverNow } from "../../state/clock";
 import { useSession } from "../../state/session";
 import { MarketRail } from "../market/MarketRail";
 import { SLIP_PARAM, slipFromParam } from "../market/slipParam";
@@ -20,9 +19,6 @@ import { Arena } from "./Arena";
 import { FightInvite } from "../demo/FightInvite";
 import { isRaceOver, rosterByRacer, rosterKey } from "./fightView";
 import { FinishStrip, MasterStrip, SabotageStrip } from "./FightHeader";
-import { FightIntro } from "./FightIntro";
-import { hasSeenFightIntro, introOpensIn, markFightIntroSeen } from "./fightIntroState";
-import { FIGHT_INTRO_MARGIN_MS } from "./introVideo";
 import styles from "./FightPage.module.css";
 
 export type FightPageProps = {
@@ -35,29 +31,6 @@ export function FightPage({ fight, priceHistory, streamStatus }: FightPageProps)
   // Judge invites promise every phone an equal bankroll, which only demo mode provides.
   const { meta } = useSession();
   const [params, setParams] = useSearchParams();
-  const [introAvailable, setIntroAvailable] = useState(true);
-  const { status, startsAt } = fight;
-  // "lead-in": timed to end as the fight starts (the agents wait for it); "replay": from the top, on request.
-  // A page opened inside the lead-in starts with the intro open, so the fight screen never shows for a frame first.
-  const [intro, setIntro] = useState<"lead-in" | "replay" | null>(() =>
-    !hasSeenFightIntro(fight.raceId) && introOpensIn({ status, startsAt }, serverNow()) === 0 ? "lead-in" : null,
-  );
-  useEffect(() => {
-    if (!introAvailable || hasSeenFightIntro(fight.raceId)) return undefined;
-    const opensIn = introOpensIn({ status, startsAt }, serverNow());
-    if (opensIn === null) return undefined;
-    const timer = setTimeout(() => setIntro((open) => open ?? "lead-in"), opensIn);
-    return () => clearTimeout(timer);
-  }, [fight.raceId, status, startsAt, introAvailable]);
-  const closeIntro = () => {
-    markFightIntroSeen(fight.raceId);
-    setIntro(null);
-  };
-  const introUnavailable = () => {
-    markFightIntroSeen(fight.raceId);
-    setIntroAvailable(false);
-    setIntro(null);
-  };
   // `?slip=racer-1:yes` (from the lobby's featured card) opens the order form once.
   const [slip, setSlip] = useState<Slip | null>(() => slipFromParam(fight, params.get(SLIP_PARAM)));
   useEffect(() => {
@@ -78,19 +51,7 @@ export function FightPage({ fight, priceHistory, streamStatus }: FightPageProps)
 
   return (
     <div className={styles.screen}>
-      <MasterStrip
-        fight={fight}
-        action={
-          <span className={styles.headerActions}>
-            {introAvailable && (
-              <Button variant="subtle" size="sm" onClick={() => setIntro("replay")}>
-                Replay intro
-              </Button>
-            )}
-            {meta?.demoMode && <FightInvite raceId={fight.raceId} />}
-          </span>
-        }
-      />
+      <MasterStrip fight={fight} action={meta?.demoMode ? <FightInvite raceId={fight.raceId} /> : undefined} />
       {isRaceOver(fight) ? <FinishStrip fight={fight} roster={roster} /> : <SabotageStrip fight={fight} roster={roster} />}
       <div className={styles.body}>
         <Arena fight={fight} roster={roster} slip={activeSlip} streamStatus={streamStatus} className={styles.arena} />
@@ -98,14 +59,6 @@ export function FightPage({ fight, priceHistory, streamStatus }: FightPageProps)
           <MarketRail fight={fight} priceHistory={priceHistory} slip={activeSlip} onSlipChange={setSlip} />
         </aside>
       </div>
-      {intro && (
-        <FightIntro
-          fightNumber={fight.number}
-          endsAt={intro === "lead-in" && startsAt !== null ? startsAt - FIGHT_INTRO_MARGIN_MS : null}
-          onClose={closeIntro}
-          onUnavailable={introUnavailable}
-        />
-      )}
     </div>
   );
 }

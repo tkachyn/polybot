@@ -6,6 +6,8 @@
  */
 
 .card {
+  /* Positioned for the intro layer (./FeaturedIntro), which covers the whole card. */
+  position: relative;
   container-type: inline-size;
   display: flex;
   flex-direction: column;
@@ -44,7 +46,8 @@
   margin: 0;
   max-width: 42ch;
   font-size: 38px;
-  line-height: 1.1;
+  /* Room for the second line's descenders: the two-line clamp cuts off anything below its line box. */
+  line-height: 1.22;
   color: var(--color-text);
 }
 
