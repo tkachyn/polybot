@@ -4,16 +4,19 @@ import {
   agentStatusView,
   checkpointDot,
   fightEnd,
+  finishView,
   formatCountdownClock,
   formatEta,
   formatStep,
   frameAgeLabel,
   gridRows,
+  isRaceOver,
   leaderView,
   marketStateView,
   rosterByRacer,
   sabotageFiredLabel,
   sabotageMarkers,
+  startsFinishHold,
 } from "./fightView";
 import { parseLayout } from "./useArenaLayout";
 
@@ -83,6 +86,27 @@ describe("leaderView", () => {
   it("prefers the verified winner", () => {
     const agents = [racer("r1", "GPT-5.2", [10, 30, 40]), racer("r2", "Grok 4.1", [12, 20, 35])];
     expect(leaderView({ leaderCheckpoint: 3, checkpointCount: 3, winnerRacerId: "r1", agents })).toMatchObject({ racerId: "r1", title: "GPT-5.2 won" });
+  });
+});
+
+describe("finish moment", () => {
+  it("holds only a fight that resolved while on screen", () => {
+    expect(startsFinishHold("live", "resolved")).toBe(true);
+    expect(startsFinishHold(null, "resolved")).toBe(false);
+    expect(startsFinishHold("upcoming", "resolved")).toBe(false);
+    expect(startsFinishHold("live", "live")).toBe(false);
+  });
+
+  it("knows when the race has its result", () => {
+    expect(isRaceOver({ raceStatus: "finished" })).toBe(true);
+    expect(isRaceOver({ raceStatus: "timed_out" })).toBe(true);
+    expect(isRaceOver({ raceStatus: "hazards_frozen" })).toBe(false);
+  });
+
+  it("describes the winner, or a void", () => {
+    const agents = [racer("r1", "GPT-5.2", [10, 30, 40], 45_000), racer("r2", "Grok 4.1", [12, null, null])];
+    expect(finishView({ winnerRacerId: "r1", startedAt: 1_000, agents })).toEqual({ kind: "winner", racerId: "r1", name: "GPT-5.2", durationMs: 44_000 });
+    expect(finishView({ winnerRacerId: null, startedAt: 1_000, agents })).toEqual({ kind: "void" });
   });
 });
 

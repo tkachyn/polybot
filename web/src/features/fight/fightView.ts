@@ -1,7 +1,7 @@
 /**
  * Pure view helpers for the fight screen. No React.
  */
-import type { AgentCheckpointState, FightAgentDetail, FightDetail, RacerPhase, RunStatus } from "@contract";
+import type { AgentCheckpointState, FightAgentDetail, FightDetail, FightStatus, RacerPhase, RunStatus } from "@contract";
 import type { ProgressMarker } from "../../components";
 import { agentVisual, rosterVisuals, type AgentVisual } from "../../lib/agents";
 import { EMPTY, formatClock, formatCountdown, formatDuration, formatLogTime, formatNumber } from "../../lib/format";
@@ -205,6 +205,34 @@ export function marketStateView(fight: MarketStateInput): MarketStateView {
     default:
       return { tone: "closed", label: "Closed", detail: null, countdown: null };
   }
+}
+
+// ---------------------------------------------------------------------------
+// Finish moment
+// ---------------------------------------------------------------------------
+
+/** The race has its result (a verified winner, or the hard stop), whatever the screen still shows. */
+export function isRaceOver(fight: Pick<FightDetail, "raceStatus">): boolean {
+  return fight.raceStatus === "finished" || fight.raceStatus === "timed_out";
+}
+
+/** Only a fight seen live on this screen gets a finish moment before its settled view. */
+export function startsFinishHold(previous: FightStatus | null, next: FightStatus): boolean {
+  return previous === "live" && next === "resolved";
+}
+
+export type FinishView =
+  | { kind: "winner"; racerId: string; name: string; durationMs: number | null }
+  | { kind: "void" };
+
+/** The result strip shown during the finish moment. */
+export function finishView(
+  fight: Pick<FightDetail, "winnerRacerId" | "startedAt"> & { agents: readonly Pick<FightAgentDetail, "racerId" | "agent" | "finishedAt">[] },
+): FinishView {
+  const winner = fight.agents.find((a) => a.racerId === fight.winnerRacerId);
+  if (!winner) return { kind: "void" };
+  const durationMs = fight.startedAt !== null && winner.finishedAt !== null ? Math.max(0, winner.finishedAt - fight.startedAt) : null;
+  return { kind: "winner", racerId: winner.racerId, name: winner.agent.name, durationMs };
 }
 
 // ---------------------------------------------------------------------------

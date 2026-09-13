@@ -276,6 +276,58 @@
   text-overflow: ellipsis;
 }
 
+/* --- Finish strip (the finish moment) ---------------------------------------- */
+
+/* Takes the sabotage strip's place and height, so the screen does not move. */
+.finish {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2-5);
+  min-width: 0;
+  min-height: 36px;
+  padding: var(--space-1-5) var(--space-3);
+  border: 1px solid var(--tint-positive-border);
+  border-radius: var(--radius-lg);
+  background-color: var(--tint-positive);
+  font-size: var(--fs-body);
+  color: var(--color-text-secondary);
+  animation: finish-in var(--duration-slow) var(--ease-standard);
+}
+
+.finishVoid {
+  border-color: var(--color-divider);
+  background-color: var(--color-surface);
+}
+
+.finishText {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: var(--fs-body-lg);
+  font-weight: var(--fw-semibold);
+  line-height: var(--lh-snug);
+  color: var(--color-text);
+}
+
+.finishMeta {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+@keyframes finish-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .finish {
+    animation: none;
+  }
+}
+
 /* --- Reflow ------------------------------------------------------------------ */
 
 @media (max-width: 999px) {

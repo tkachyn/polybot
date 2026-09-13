@@ -28,22 +28,28 @@ export function AgentPane({ fight, agent, visual, slip, markers, onOpen, buttonR
   const status = agentStatusView(agent);
   const step = formatStep(agent.step, agent.maxSteps);
   const inSlip = slip?.racerId === agent.racerId;
+  const winner = fight.winnerRacerId === agent.racerId;
   const name = agent.agent.name;
 
   return (
     <button
       ref={(el) => buttonRef(agent.racerId, el)}
       type="button"
-      className={cx(styles.pane, inSlip && styles.inSlip)}
+      className={cx(styles.pane, inSlip && styles.inSlip, winner && styles.winner)}
       style={agentStyle(visual)}
       onClick={() => onOpen(agent.racerId)}
-      aria-label={`${name}: ${status.label}, step ${step}, ${agent.checkpoint} of ${fight.checkpointCount} checkpoints, YES ${formatCents(agent.yes)}. Expand browser view`}
+      aria-label={`${name}${winner ? ", winner" : ""}: ${status.label}, step ${step}, ${agent.checkpoint} of ${fight.checkpointCount} checkpoints, YES ${formatCents(agent.yes)}. Expand browser view`}
     >
       <StatusBand view={status} step={step} />
 
       <span className={styles.identity}>
         <AgentMonogram agent={visual} size="sm" />
         <span className={styles.name}>{name}</span>
+        {winner && (
+          <Tag tone="positive" solid className={styles.slipTag}>
+            Winner
+          </Tag>
+        )}
         {inSlip && slip && (
           <Tag tone="edge" className={styles.slipTag}>
             Slip · {SIDE_LABEL[slip.side]}

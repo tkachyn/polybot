@@ -2,6 +2,8 @@
  * Live / upcoming fight screen (handoff 2.2). Never scrolls at 1024x720 and
  * up: header strips on top, arena + 344px market rail beneath, every region
  * floored and clipped. Owns the bet slip and passes it to the rail and arena.
+ * During the finish moment (see useFightStream) the sabotage strip gives its
+ * place to the result.
  */
 import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
@@ -15,8 +17,8 @@ import { SLIP_PARAM, slipFromParam } from "../market/slipParam";
 import type { Slip } from "../market/types";
 import { Arena } from "./Arena";
 import { FightInvite } from "../demo/FightInvite";
-import { rosterByRacer, rosterKey } from "./fightView";
-import { MasterStrip, SabotageStrip } from "./FightHeader";
+import { isRaceOver, rosterByRacer, rosterKey } from "./fightView";
+import { FinishStrip, MasterStrip, SabotageStrip } from "./FightHeader";
 import styles from "./FightPage.module.css";
 
 export type FightPageProps = {
@@ -50,7 +52,7 @@ export function FightPage({ fight, priceHistory, streamStatus }: FightPageProps)
   return (
     <div className={styles.screen}>
       <MasterStrip fight={fight} action={meta?.demoMode ? <FightInvite raceId={fight.raceId} /> : undefined} />
-      <SabotageStrip fight={fight} roster={roster} />
+      {isRaceOver(fight) ? <FinishStrip fight={fight} roster={roster} /> : <SabotageStrip fight={fight} roster={roster} />}
       <div className={styles.body}>
         <Arena fight={fight} roster={roster} slip={activeSlip} streamStatus={streamStatus} className={styles.arena} />
         <aside className={styles.rail} aria-label="Market">
