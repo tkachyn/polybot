@@ -35,6 +35,15 @@ move as they would for a human. Off with `MARKET_CROWD=false`.
 **Deploy config was added** for Vercel (SPA) plus two Fly apps (API, course).
 See `docs/deploy.md`. It is unapplied and partly unverified — see below.
 
+**Live fights got sturdier** after `shop-mtzaxsks-cacac3` ended with no
+winner. Steel sessions were created with a 240 s timeout inside the 300 s
+cap, which closed racer-3's browser at 243.9 s; they now last the cap plus
+180 s. Course races never consult the master judge, whose approvals used to
+skip the course verifier. The master is paced by the racers' rate limiter
+and can no longer cause a racer's 429. Each racer has a 40-step cap and its
+own slice of the budget, so one loop stops only itself. An unchanged page is
+judged once, not after every step.
+
 ---
 
 ## Known issues, in rough priority order
@@ -50,9 +59,12 @@ roster uses `anthropic/claude-haiku-4.5` for racer 4 instead. Validate the
 model with a cheap smoke fight before relying on it for a demo.
 
 **The OpenRouter account is rate limited to 20 requests/minute per model.**
-This kills racers mid-fight with `429 new-account-rpm`, and it is the real
-ceiling on running fights back to back, not anything in this code. It has
-killed both GPT and Claude Haiku in different fights.
+It is the real ceiling on running fights back to back. Within one fight the
+limiter paces every call to a model, the master's included (the master used
+to bypass it and, on `openai/gpt-5.6-luna`, took GPT's racer down with
+`429 new-account-rpm`), and competitor calls retry a 429 with pacing. The
+limiter lives in one race, so two fights running at once can still exceed
+the account's limit between them.
 
 **The Docker image has never been built.** Docker was unavailable on the
 machine where `Dockerfile` was written. It is written against verified facts —
@@ -128,9 +140,13 @@ course is deployed publicly, both become the same URL.
 Cheap validation before spending on a fight: `npm run smoke:steel` opens and
 releases four real sessions.
 
-A fight that wins takes ~40–100s and costs roughly $0.01–0.08 of OpenRouter
-against the `RACE_LLM_BUDGET_USD` soft cap. Four Steel sessions per fight are
-the bigger cost. Never `kill -9` the server mid-race — release happens in the
+A fight that wins takes ~80–150s and costs roughly $0.05–0.15 of OpenRouter
+with the recent roster, mostly Claude Haiku at about $0.0026 a step, against
+the `RACE_LLM_BUDGET_USD` soft cap ($1, shared out 10% to the master and
+equally to the racers); README "Live mode models" has the per-model figures.
+At those rates the calls in `shop-mtzaxsks-cacac3` add up to about $0.24,
+matching its $0.25 budget running out at 242 s. Four Steel sessions per
+fight are the bigger cost. Never `kill -9` the server mid-race — release happens in the
 shutdown path, and a hard kill strands paid sessions until Steel reaps them.
 
 ---

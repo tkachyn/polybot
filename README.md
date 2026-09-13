@@ -197,7 +197,7 @@ The script sends `POST /races` with `courseId: "arena-shop"`, three checkpoints,
 | `OPENROUTER_API_KEY` | none | Live mode: key for all competitor and master model calls |
 | `OPENROUTER_APP_URL` / `OPENROUTER_APP_NAME` | `http://localhost:3001` / `Browser Agent Arena` | OpenRouter attribution headers |
 | `COMPETITOR_LLM_MODELS` | none | Live mode: four comma-separated OpenRouter model ids |
-| `OPENROUTER_MODEL_MAX_CALLS_PER_MINUTE` | `20` | Per-model competitor request window |
+| `OPENROUTER_MODEL_MAX_CALLS_PER_MINUTE` | `20` | Per-model request window, shared by the racers and the master |
 | `OPENROUTER_MODEL_RATE_WINDOW_MS` | `60000` | Duration of the per-model request window |
 | `COMPETITOR_LLM_MAX_OUTPUT_TOKENS` | `512` | Competitor tool-call output budget |
 | `COMPETITOR_MAX_ACTIONS` | `40` | Live mode: browser actions per racer before it is stopped |
