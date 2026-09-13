@@ -3,7 +3,7 @@
  * full action trace with the model's reasoning for each step. Tables render
  * only while open, and scroll in their own container.
  */
-import { useMemo, useState, type ReactNode, type SyntheticEvent } from "react";
+import { useLayoutEffect, useMemo, useRef, useState, type ReactNode, type SyntheticEvent } from "react";
 import type { AgentEvaluation, SabotageReaction, SteelTraceEntry, TraceEntry } from "@contract";
 import { IconChevronRight, SabotageTag, Tag, tableStyles } from "../../components";
 import { cx } from "../../lib/cx";
@@ -163,13 +163,47 @@ function TargetCell({ entry }: { entry: TraceEntry }) {
   );
 }
 
-/** The model's stated reason: two lines, with the full text in the title. */
+/**
+ * The model's stated reason, clamped to two lines. When the clamp hides text,
+ * a click or tap on it opens the whole reason (and closes it again), and a
+ * "Show more" button does the same from the keyboard.
+ */
 function ReasoningCell({ entry }: { entry: TraceEntry }) {
   const reasoning = traceReasoning(entry);
+  const textRef = useRef<HTMLSpanElement>(null);
+  const [expanded, setExpanded] = useState(false);
+  const [clamped, setClamped] = useState(false);
+
+  // Measured while closed, and again whenever the column's width changes.
+  useLayoutEffect(() => {
+    const el = textRef.current;
+    if (!el || expanded) return undefined;
+    const measure = () => setClamped(el.scrollHeight > el.clientHeight + 1);
+    measure();
+    if (typeof ResizeObserver === "undefined") return undefined;
+    const observer = new ResizeObserver(measure);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [reasoning, expanded]);
+
   if (reasoning === null) return <span className={styles.none}>{EMPTY}</span>;
+  const toggleable = clamped || expanded;
+  const toggle = () => setExpanded((open) => !open);
   return (
-    <span className={cx("clamp-2", styles.reasoning)} title={reasoning}>
-      {reasoning}
+    <span className={styles.reasoningCell}>
+      <span
+        ref={textRef}
+        className={cx(!expanded && "clamp-2", styles.reasoning, toggleable && styles.reasoningToggle)}
+        // Selecting text to copy it is not a toggle.
+        onClick={toggleable ? () => !window.getSelection()?.toString() && toggle() : undefined}
+      >
+        {reasoning}
+      </span>
+      {toggleable && (
+        <button type="button" className={styles.reasoningMore} aria-expanded={expanded} onClick={toggle}>
+          {expanded ? "Show less" : "Show more"}
+        </button>
+      )}
     </span>
   );
 }

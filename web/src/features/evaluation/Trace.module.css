@@ -203,12 +203,38 @@
   max-width: 220px;
 }
 
-/* Two lines (.clamp-2); the full text is in the title. */
+/* Two lines (.clamp-2) until opened; "Show more" sits under a clamped reason. */
+.reasoningCell {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+}
+
 .reasoning {
   min-width: 200px;
   max-width: 440px;
   color: var(--color-text-secondary);
   overflow-wrap: anywhere;
+}
+
+.reasoningToggle {
+  cursor: pointer;
+}
+
+.reasoningMore {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--color-edge);
+  font-size: var(--fs-body-sm);
+  font-weight: var(--fw-medium);
+  cursor: pointer;
+}
+
+.reasoningMore:hover {
+  text-decoration: underline;
+  text-underline-offset: 2px;
 }
 
 .flags {
