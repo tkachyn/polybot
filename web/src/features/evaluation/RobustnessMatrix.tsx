@@ -15,12 +15,10 @@ import { matrixCellView } from "./format";
 import styles from "./EvaluationsPage.module.css";
 
 export type RobustnessMatrixProps = {
-  /** Null renders skeleton rows. */
+  /** Null renders skeleton rows (while a window or mode loads). */
   rows: readonly RobustnessRow[] | null;
   /** Hazard columns, in catalogue order (the response's `hazards`). */
   hazards: readonly HazardType[];
-  /** Dims the table while another window or mode loads. */
-  stale?: boolean;
 };
 
 const SKELETON_ROWS = 4;
@@ -29,10 +27,10 @@ function plural(n: number, one: string, many: string): string {
   return `${formatNumber(n)} ${n === 1 ? one : many}`;
 }
 
-export function RobustnessMatrix({ rows, hazards, stale = false }: RobustnessMatrixProps) {
+export function RobustnessMatrix({ rows, hazards }: RobustnessMatrixProps) {
   return (
-    <div className={cx(styles.matrixWrap, stale && styles.stale)}>
-      <table className={cx(tableStyles.table, styles.matrix)} aria-busy={rows === null || stale || undefined}>
+    <div className={styles.matrixWrap}>
+      <table className={cx(tableStyles.table, styles.matrix)} aria-busy={rows === null || undefined}>
         <caption className="sr-only">
           Sabotage robustness by agent and hazard. Each cell gives the mean reaction score (0–100), the survival rate and the number of scored hits.
         </caption>

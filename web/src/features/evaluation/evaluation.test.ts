@@ -17,7 +17,7 @@ import {
   formatSurvival,
   matrixCellView,
 } from "./format";
-import { parseEvaluationMode, parseEvaluationWindow } from "./params";
+import { matchesSelection, parseEvaluationMode, parseEvaluationWindow } from "./params";
 import { EVALUATION_STATUS_TONE, OUTCOME_TONE, REACTION_TONE, TONE_COLOR_VAR } from "./tones";
 import { interleaveHits, steelTraceAround, traceReasoning, traceTotals } from "./trace";
 
@@ -238,6 +238,18 @@ describe("evaluation filters", () => {
     expect(parseEvaluationWindow("90")).toBe(90);
     expect(parseEvaluationWindow("45")).toBe(30);
     expect(parseEvaluationWindow(null)).toBe(30);
+  });
+
+  it("shows a matrix response only for the window and mode on screen", () => {
+    const simulated30 = { windowDays: 30, mode: "simulated" as const };
+    expect(matchesSelection(simulated30, 30, "simulated")).toBe(true);
+    // Switched to Live or to 7 days while the old response is still held: not this selection's figures.
+    expect(matchesSelection(simulated30, 30, "live")).toBe(false);
+    expect(matchesSelection(simulated30, 7, "simulated")).toBe(false);
+    // No mode chosen: the server picks one, so its answer matches.
+    expect(matchesSelection(simulated30, 30, null)).toBe(true);
+    expect(matchesSelection(simulated30, 90, null)).toBe(false);
+    expect(matchesSelection({ windowDays: 7, mode: "all" }, 7, "all")).toBe(true);
   });
 
   it("builds evidence and replay URLs", () => {

@@ -12,6 +12,12 @@
   gap: var(--space-2);
 }
 
+/* Stands in for the figures line while a window or mode loads. */
+.subtitleSkeleton {
+  display: block;
+  margin-block: 3px;
+}
+
 .note {
   display: flex;
   align-items: flex-start;
@@ -97,11 +103,6 @@
   position: relative;
   width: 100%;
   overflow-x: auto;
-  transition: opacity var(--duration-base) var(--ease-standard);
-}
-
-.stale {
-  opacity: 0.55;
 }
 
 .matrix {

@@ -6,7 +6,7 @@
  * URL: `?mode=live|simulated|all&days=7|30|90` (see ./params). Without a
  * mode the page follows the server's mode.
  */
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import type { FightSummary } from "@contract";
 import { datasetExportUrl, datasetFileUrl, type DatasetQuery, type EvaluationMode } from "../../api/client";
@@ -39,6 +39,7 @@ import {
   EVALUATION_MODES,
   EVALUATION_WINDOWS,
   MODE_PARAM,
+  matchesSelection,
   parseEvaluationMode,
   parseEvaluationWindow,
   type EvaluationWindow,
@@ -78,7 +79,10 @@ export function EvaluationsPage() {
   const days = parseEvaluationWindow(params.get(DAYS_PARAM));
   const mode: EvaluationMode | null = parseEvaluationMode(params.get(MODE_PARAM)) ?? meta?.mode ?? null;
   const { data, error, loading, reload } = useRobustnessMatrix(days, mode);
-  const shownMode: EvaluationMode | null = mode ?? data?.mode ?? null;
+  // The resource keeps the previous response while the next one loads. Only a
+  // response for this window and mode is shown, never the old figures.
+  const current = data !== null && matchesSelection(data, days, mode) ? data : null;
+  const shownMode: EvaluationMode | null = mode ?? current?.mode ?? null;
 
   // Only a manual refresh spins the button; background reloads stay quiet.
   const [manual, setManual] = useState(false);
@@ -104,17 +108,21 @@ export function EvaluationsPage() {
     [setParams],
   );
 
-  const stale = loading && data !== null && (data.windowDays !== days || (mode !== null && data.mode !== mode));
-  const empty = data !== null && (data.evaluations === 0 || data.rows.length === 0);
+  const empty = current !== null && (current.evaluations === 0 || current.rows.length === 0);
 
-  const subtitle = data ? (
-    <span className="num">
-      {formatNumber(data.evaluations)} final {data.evaluations === 1 ? "evaluation" : "evaluations"} · last {formatNumber(data.windowDays)} days · since{" "}
-      {formatDate(data.since)}
-    </span>
-  ) : (
-    "How each agent withstands sabotage, by hazard"
-  );
+  let subtitle: ReactNode;
+  if (current) {
+    subtitle = (
+      <span className="num">
+        {formatNumber(current.evaluations)} final {current.evaluations === 1 ? "evaluation" : "evaluations"} · last {formatNumber(current.windowDays)} days ·
+        since {formatDate(current.since)}
+      </span>
+    );
+  } else if (loading) {
+    subtitle = <Skeleton width={280} height={12} className={styles.subtitleSkeleton} />;
+  } else {
+    subtitle = "How each agent withstands sabotage, by hazard";
+  }
 
   const actions = (
     <div className={styles.controls}>
@@ -144,7 +152,7 @@ export function EvaluationsPage() {
       <div className={styles.stack}>
         <ErrorBanner
           error={error}
-          title={data ? "Couldn’t refresh the matrix." : "Couldn’t load the robustness matrix."}
+          title={current ? "Couldn’t refresh the matrix." : "Couldn’t load the robustness matrix."}
           onRetry={refresh}
           retrying={manual && loading}
         />
@@ -161,9 +169,9 @@ export function EvaluationsPage() {
             <h2 id="evaluations-matrix" className={styles.panelTitle}>
               Robustness matrix
             </h2>
-            {data && !empty && (
+            {current && !empty && (
               <span className={styles.panelMeta}>
-                Updated <RelativeTime at={data.serverTime} />
+                Updated <RelativeTime at={current.serverTime} />
               </span>
             )}
           </div>
@@ -185,9 +193,9 @@ export function EvaluationsPage() {
                 </ButtonLink>
               }
             />
-          ) : data || !error ? (
+          ) : current || !error ? (
             <>
-              <RobustnessMatrix rows={data ? data.rows : null} hazards={data ? data.hazards : []} stale={stale} />
+              <RobustnessMatrix rows={current ? current.rows : null} hazards={current ? current.hazards : []} />
               <p className={styles.caption}>
                 The large number is the mean reaction score (0–100) over scored hits. The small line is survival (the share of scored hits after
                 which the agent progressed again: immune, recovered or deceived) and the number of scored hits; hover a cell for the counts. Cut-short
@@ -198,7 +206,7 @@ export function EvaluationsPage() {
         </section>
 
         <div className={styles.columns}>
-          <DatasetPanel days={days} mode={mode} shownMode={shownMode} evaluations={data && !stale ? data.evaluations : null} />
+          <DatasetPanel days={days} mode={mode} shownMode={shownMode} evaluations={current ? current.evaluations : null} />
           <RecentReports />
         </div>
       </div>
