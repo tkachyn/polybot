@@ -11,6 +11,17 @@ function build(options: Partial<Parameters<typeof buildApi>[0]> = {}) {
   return buildApi({ coordinatorFactory: factory, enableTicker: false, startingBalance: 500, ...options });
 }
 
+test("health reports demo readiness without creating a session", async () => {
+  const app = build({ mode: "simulated", demoMode: true });
+  const response = await app.inject({ method: "GET", url: "/api/health" });
+  assert.equal(response.statusCode, 200);
+  assert.deepEqual(
+    { ok: response.json().ok, mode: response.json().mode, demoMode: response.json().demoMode },
+    { ok: true, mode: "simulated", demoMode: true },
+  );
+  await app.close();
+});
+
 test("operator races enable checkpoint-one sabotage by default", async () => {
   const app = build();
   const response = await app.inject({
