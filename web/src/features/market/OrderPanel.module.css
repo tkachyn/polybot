@@ -241,7 +241,7 @@
   text-underline-offset: 2px;
 }
 
-/* The confirm label is the exact order and may need two lines in 344px. */
+/* The confirm label is the exact order and may need two lines in the rail. */
 .cta.cta {
   height: auto;
   min-height: 40px;

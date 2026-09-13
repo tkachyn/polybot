@@ -116,7 +116,7 @@
 
   /* --- Layout (handoff where noted) ------------------------------------- */
   --navbar-height: 60px;
-  --rail-width: 344px; /* handoff: fight detail market rail */
+  --rail-width: 420px; /* fight detail market rail */
   --lobby-rail-width: 300px; /* lobby: resolved fights */
   --card-left-width: 150px; /* handoff: fight card left column */
   --card-right-width: 104px; /* handoff: fight card right column */

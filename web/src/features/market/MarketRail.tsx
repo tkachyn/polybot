@@ -1,5 +1,5 @@
 /**
- * The fight screen's 344px market rail (handoff 2.2 "Market rail", 2.3):
+ * The fight screen's market rail (handoff 2.2 "Market rail", 2.3):
  * win-probability chart, outcome table, then the order form or receipt in
  * place, and a small market footer. The chart stays mounted while an order
  * panel is open so the user can keep seeing the price movement they are
