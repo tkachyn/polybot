@@ -36,7 +36,7 @@ test("racer ETA and estimated resolution follow the contract", () => {
   assert.equal(racerEtaMs({ status: "running", checkpoint: 0, startedAt: 1_000 }, 3, 5_000), null);
   assert.equal(racerEtaMs({ status: "finished", checkpoint: 3, startedAt: 1_000 }, 3, 5_000), null);
   assert.equal(racerEtaMs({ status: "ready", checkpoint: 0 }, 3, 5_000), null);
-  // Capped at the hard stop, like the estimated resolution.
+  // The helper still supports an optional caller-supplied cap.
   assert.equal(racerEtaMs({ status: "running", checkpoint: 1, startedAt: 1_000 }, 3, 5_000, 100_000), 8_000);
   assert.equal(racerEtaMs({ status: "running", checkpoint: 1, startedAt: 1_000 }, 3, 5_000, 5_700), 700);
   assert.equal(racerEtaMs({ status: "running", checkpoint: 1, startedAt: 1_000 }, 3, 5_000, 4_000), 0);
@@ -67,8 +67,8 @@ test("live fight summary derives ETA, change, checkpoints and run status", async
   assert.equal(summary.status, "live");
   assert.equal(summary.number, 1);
   assert.equal(summary.estimatedResolutionAt, 13_000);
-  assert.equal(summary.closesAt, 301_000);
-  assert.equal(summary.freezesAt, 181_000);
+  assert.equal(summary.closesAt, null);
+  assert.equal(summary.freezesAt, null);
   assert.equal(summary.leaderCheckpoint, 1);
   assert.equal(summary.sabotage, null);
   assert.deepEqual(summary.agents.map((agent) => agent.runStatus), ["run", "warn", "warn", "run"]);
@@ -89,10 +89,10 @@ test("live fight summary derives ETA, change, checkpoints and run status", async
   assert.equal(leader.frame, null);
   assert.equal(detail.checkpoints[0].label, "Checkpoint 1");
 
-  // Near the hard stop an agent's ETA is capped at closesAt, like the estimate.
+  // ETA is not capped by an elapsed-time deadline.
   const late = presentFightDetail(race, { ...options, now: 298_000 });
-  assert.equal(late.agents[0].etaMs, 3_000);
-  assert.equal(late.estimatedResolutionAt, 301_000);
+  assert.equal(late.agents[0].etaMs, 594_000);
+  assert.equal(late.estimatedResolutionAt, 892_000);
 });
 
 test("sabotage reveal rule and armed → fired → state", async () => {
@@ -114,7 +114,7 @@ test("sabotage reveal rule and armed → fired → state", async () => {
   assert.equal(hidden.sabotage?.checkpoint, 2);
   assert.equal(hidden.sabotage?.state, "armed");
   assert.equal(hidden.estimatedResolutionAt, null);
-  assert.equal(hidden.closesAt, 310_000);
+  assert.equal(hidden.closesAt, null);
   assert.deepEqual(hidden.checkpoints.map((checkpoint) => checkpoint.isSabotage), [false, true, false]);
 
   const upfront = presentFightSummary(race, { now: 2_000, showSabotageUpfront: true });
@@ -136,7 +136,7 @@ test("sabotage reveal rule and armed → fired → state", async () => {
   assert.equal(live.agents[0].checkpoints[1].sabotageFired, true);
 });
 
-test("unfired sabotage expires when hazards freeze", async () => {
+test("unfired sabotage remains armed after the former freeze threshold", async () => {
   const { factory } = createFactory();
   const registry = new RaceRegistry(factory);
   await registry.create(raceInput("race-e", { obstaclesEnabled: true }), 1_000);
@@ -144,10 +144,10 @@ test("unfired sabotage expires when hazards freeze", async () => {
   assert.equal(presentFightSummary(race, { now: 2_000, showSabotageUpfront: true }).sabotage?.state, "armed");
   await registry.tickAll(181_000);
   const summary = presentFightSummary(race, { now: 181_000, showSabotageUpfront: true });
-  assert.equal(summary.raceStatus, "hazards_frozen");
+  assert.equal(summary.raceStatus, "running");
   assert.equal(summary.status, "live");
-  assert.equal(summary.sabotage?.state, "expired");
-  assert.equal(summary.marketStatus, "frozen");
+  assert.equal(summary.sabotage?.state, "armed");
+  assert.equal(summary.marketStatus, "open");
 });
 
 test("account lifetime realizedPnl, portfolio history and my-fight totals", async () => {

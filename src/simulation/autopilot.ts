@@ -337,6 +337,9 @@ export class SimulationAutopilot {
     }
     if (!isOver(coordinator)) {
       lastAt = startAt + cap + 1;
+      // Historical void fights still need a deterministic close so their
+      // archived evaluations can be generated; live races do not use this cap.
+      coordinator.engine.abort("absolute_deadline", lastAt);
       await coordinator.tick(lastAt);
     }
     this.recordFinalFrames(coordinator, course, lastAt);

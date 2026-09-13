@@ -48,10 +48,7 @@ function manager(sessionTimeoutSeconds?: number) {
   return { sessions, created: steel.created };
 }
 
-test("race sessions outlive the race's safety cap by the preparation margin", async () => {
-  // In shop-mtzaxsks-cacac3 the sessions started 2.5-3.2 s after the race's
-  // start time and Steel closed them 240 s later, inside the 300 s cap: racer-3
-  // died at 243.9 s with "Target page, context or browser has been closed".
+test("race sessions include the provider lifetime and preparation margin", async () => {
   const { sessions, created } = manager(raceSessionTimeoutSeconds(300_000));
   await sessions.create("racer-3");
   const timeoutMs = created[0]?.timeout ?? 0;
@@ -59,19 +56,19 @@ test("race sessions outlive the race's safety cap by the preparation margin", as
   assert.equal(created[0]?.useProxy, true);
   assert.ok(timeoutMs >= 300_000 + STEEL_SESSION_MARGIN_SECONDS * 1_000);
 
-  // Without an explicit timeout the manager still outlives the default race.
+  // Without an explicit timeout the manager uses the default provider lifetime.
   const fallback = manager();
   await fallback.sessions.create("racer-1");
   assert.ok((fallback.created[0]?.timeout ?? 0) > DEFAULT_ABSOLUTE_DURATION_MS + 60_000);
 });
 
-test("the Steel timeout always exceeds the race's absolute duration, with a floor", () => {
+test("the Steel timeout includes the configured duration and margin, with a floor", () => {
   for (const absoluteMs of [1, 30_000, 240_000, 300_000, 301_500, 600_000, 3_600_000]) {
     const seconds = raceSessionTimeoutSeconds(absoluteMs);
     assert.ok(seconds * 1_000 >= absoluteMs + STEEL_SESSION_MARGIN_SECONDS * 1_000, `${absoluteMs} ms`);
     assert.ok(seconds >= MIN_STEEL_SESSION_TIMEOUT_SECONDS, `${absoluteMs} ms`);
   }
-  // A race without its own cap runs the engine's default one.
+  // A race without an explicit duration uses the engine's compatibility default.
   assert.equal(raceSessionTimeoutSeconds(), raceSessionTimeoutSeconds(DEFAULT_ABSOLUTE_DURATION_MS));
   assert.equal(raceSessionTimeoutSeconds(Number.NaN), raceSessionTimeoutSeconds());
 });

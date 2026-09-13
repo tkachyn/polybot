@@ -82,9 +82,7 @@ function isActive(racer: Racer): boolean {
 
 /**
  * Active racer with c ≥ 1 cleared: (now - startedAt) / c × (N - c); c = N
- * (awaiting finish): 0; c = 0 or not active: null. Like the estimated
- * resolution, it never runs past the hard stop: the fight ends at `closesAt`
- * whatever the pace says.
+ * (awaiting finish): 0; c = 0 or not active: null.
  */
 export function racerEtaMs(
   racer: Pick<Racer, "status" | "checkpoint" | "startedAt">,
@@ -101,7 +99,7 @@ export function racerEtaMs(
   return closesAt === null ? eta : Math.min(eta, Math.max(0, closesAt - now));
 }
 
-/** now + fastest ETA, clamped to closesAt; null when unknown or not live. */
+/** now + fastest ETA; null when unknown or not live. */
 export function estimateResolutionAt(
   status: FightStatus,
   etas: Array<number | null>,
@@ -215,16 +213,9 @@ function sabotageDetail(view: FightView): SabotageDetail | null {
   };
 }
 
-/** Freeze and hard stop; before the start, projected from the scheduled start. */
-function deadlines(view: FightView): { freezesAt: number | null; closesAt: number | null } {
-  const race = view.coordinator.engine.race;
-  const projectedStart = race.startedAt ?? view.fight.startsAt;
-  return {
-    freezesAt: race.targetDurationAt ??
-      (projectedStart === null ? null : projectedStart + race.targetDurationMs),
-    closesAt: race.absoluteDeadlineAt ??
-      (projectedStart === null ? null : projectedStart + race.absoluteDurationMs),
-  };
+/** Races have no elapsed-time freeze or hard stop. */
+function deadlines(_view: FightView): { freezesAt: number | null; closesAt: number | null } {
+  return { freezesAt: null, closesAt: null };
 }
 
 function fightBase(view: FightView): Omit<FightSummary, "agents" | "sabotage"> {

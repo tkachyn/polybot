@@ -194,19 +194,21 @@ test("does not recover racers by duration once the race is over", async () => {
   assert.equal(race.racers.get("racer-2")?.status, "recovering");
 });
 
-test("no sabotage fires after hazards freeze", async () => {
+test("sabotage continues after the former hazard-freeze threshold", async () => {
   const provider = new FakeObstacles();
   const race = readyRace(provider);
   race.tick(180_100);
-  await race.reachCheckpoint("racer-1", 1, 180_200);
-  assert.deepEqual(provider.applied, []);
-  assert.equal(eventTypes(race).includes("sabotage_applied"), false);
+  const result = await race.reachCheckpoint("racer-1", 1, 180_200);
+  assert.deepEqual(result, { claimed: true, obstacleApplied: true });
+  assert.deepEqual(provider.applied, ["racer-1"]);
+  assert.equal(eventTypes(race).includes("sabotage_applied"), true);
 });
 
-test("the safety cap records its reason", () => {
+test("the former safety cap does not end a running race", () => {
   const race = readyRace(new FakeObstacles());
   race.tick(300_100);
-  assert.deepEqual(race.events.at(-1)?.metadata, { reason: "absolute_deadline" });
+  assert.equal(race.race.status, "running");
+  assert.equal(race.events.at(-1)?.type, "race_started");
 });
 
 test("abort times out an unstarted race with a reason", () => {

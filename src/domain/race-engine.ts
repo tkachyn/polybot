@@ -11,7 +11,7 @@ import type {
 } from "./types.js";
 import { normalizeSabotageSchedule } from "./sabotage.js";
 
-/** A race's safety cap when it sets none: it times out this long after the start. */
+/** Legacy default retained for session sizing and API compatibility. */
 export const DEFAULT_ABSOLUTE_DURATION_MS = 300_000;
 
 export type RaceEngineOptions = {
@@ -161,8 +161,6 @@ export class RaceEngine {
 
     this.race.status = "running";
     this.race.startedAt = now;
-    this.race.targetDurationAt = now + this.race.targetDurationMs;
-    this.race.absoluteDeadlineAt = now + this.race.absoluteDurationMs;
     for (const racer of this.racers.values()) {
       racer.status = "running";
       racer.startedAt = now;
@@ -367,26 +365,9 @@ export class RaceEngine {
     return false;
   }
 
-  tick(now = Date.now()): void {
-    if (
-      this.race.startedAt === undefined ||
-      this.race.targetDurationAt === undefined ||
-      this.race.absoluteDeadlineAt === undefined
-    ) {
-      return;
-    }
-
-    if (
-      this.race.status === "running" &&
-      now >= this.race.targetDurationAt
-    ) {
-      this.race.status = "hazards_frozen";
-      this.emit({ type: "hazards_frozen", occurredAt: now });
-    }
-
-    if (now >= this.race.absoluteDeadlineAt && !this.isOver()) {
-      this.timeOut(now, "absolute_deadline");
-    }
+  tick(_now = Date.now()): void {
+    // Elapsed time is intentionally not a race-ending condition. The ticker
+    // remains as a lifecycle hook for callers and future non-timing work.
   }
 
   /**

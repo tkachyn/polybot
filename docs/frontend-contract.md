@@ -10,8 +10,8 @@ This document binds the Sabotage Markets UI (`docs/sabotage-markets-handoff.md`)
 | Money | $ balance, deposit/withdraw, methods | Virtual credits only, no cash | The UI keeps $ formatting but every amount is a virtual credit. Deposit and withdraw move virtual credits. The only enabled method is `virtual`; other methods are shown as unavailable. |
 | Wallet scope | One balance across fights | Balance per market | Added a shared `CreditLedger` injected into every market. Settlements pay directly into the wallet. |
 | Sabotage | Two sabotage steps per fight, revealed to bettors upfront, armed → fired | One immutable plan, fired independently per racer after each racer's verified trigger checkpoint | The engine's `SabotagePlan` is the source of truth. The default plan has up to two ordered steps beginning at checkpoint 1; the course still owns the full checkpoint count. The UI reports sabotage progress separately as `0 of 2`, `1 of 2` or `2 of 2`. |
-| Duration | 30-minute cap | 180 s target, 300 s cap | Durations are per race and supplied by the backend (`freezesAt`, `closesAt`). The UI never hard-codes them. |
-| Void | Rules undefined | Cap reached → unresolved, credits returned | A voided fight refunds each open position what it cost. The history shows a `refund` entry. |
+| Duration | 30-minute cap | No elapsed-time freeze or cap | The compatibility fields `freezesAt` and `closesAt` are `null`; races end on a verified winner or explicit abort. |
+| Void | Rules undefined | Explicit abort → unresolved, credits returned | A voided fight refunds each open position what it cost. The history shows a `refund` entry. |
 | Capture | Undecided | Steel viewer URL | Live mode exposes a read-only Steel debug viewer in `agent.browserView` (`interactive=false`, `showControls=false`); the runner injects a pointer-transparent black cursor with a light outline into the course page so its paced movement is captured in live video, periodic screenshots and HLS replay. Click and type telemetry retains the browser pointer position for diagnostics. Simulated mode and viewer failures use periodic frames. The UI must keep the frame path as a fallback and must not reset the viewer iframe while polling. |
 | Agents | GPT Luna 5.6, Qwen3.8 27B, Gemma 3 27B IT, Claude Sonnet 4.6 | One model per live racer | Each fight has a per-race roster (`AgentIdentity` × 4). In live mode each racer is driven by its own OpenRouter model from `COMPETITOR_LLM_MODELS`, and its identity reports `provider: "openrouter"` with that model id. Without an operator `agents` roster, each agent's `name` and `key` are derived from the model it runs, so bettors never see one model under another's name. An operator roster keeps its keys and names. |
 | Selling | Not designed | Supported | Sell is available from the fight's order panel when the selected outcome has an open position, and from the Portfolio open-positions table. |
@@ -126,10 +126,10 @@ Clients treat `snapshot` as a full replace. They append `price` points whose `t`
   - Active racer with `c ≥ 1` checkpoints: `(now - startedAt) / c × (N - c)`.
   - `c = N` (awaiting finish): `0`.
   - `c = 0`, or not active: `null`.
-- **estimatedResolutionAt:** `now + min(ETA)` over active racers, clamped to `closesAt`. `null` if no ETA exists or the fight is not live.
+- **estimatedResolutionAt:** `now + min(ETA)` over active racers. `null` if no ETA exists or the fight is not live.
 - **Sabotage state:**
   - `fired` once an application returns `applied: true`.
-  - `expired` if not fired and the race froze hazards or ended.
+  - `expired` if not fired and the race ended.
   - `armed` otherwise.
   - A misfire (`applied: false`) logs a `sabotage` entry but leaves the agent unhit.
 - **Tier:** `SabotageSummary.tier` is the armed plan's tier (`basic`, `intermediate` or `difficult`); `null` until the plan is armed or while not revealed.
@@ -254,7 +254,7 @@ An agent's `robustness` is the mean of its scored hits, or `null` if it was neve
 - `won`: the verified winner.
 - `finished`: a verified finish, but not first.
 - `failed`: the agent's runner crashed or gave up.
-- `timed_out`: the safety cap was reached.
+- `timed_out`: the fight was explicitly aborted.
 - `stopped`: the fight ended, because another agent won, while this agent was still running.
 
 ### Sabotage that affects a DOM-driven agent

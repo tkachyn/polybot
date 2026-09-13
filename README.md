@@ -6,7 +6,7 @@ Backend features:
 
 - Four independent racer state machines with a readiness barrier and a simultaneous start
 - Semantic checkpoint progression with per-racer idempotency
-- A target duration (hazards and trading freeze) and an absolute safety cap (void and refund)
+- Races remain active until a verified winner or an explicit runner/startup failure
 - One immutable race-wide sabotage plan (basic, intermediate or difficult tier), armed before the fight opens and fired independently at each racer's verified trigger checkpoint (default checkpoint 1)
 - Deterministic fallback sabotage and local course/verifier tests without live keys
 - Virtual YES/NO prediction markets over a shared virtual-credit wallet
@@ -129,7 +129,7 @@ caps each racer's browser actions: winning shop runs took 13–30 steps, while a
 racer stuck in sabotage recovery once took 77. Spectators see the cap from the
 start, and a racer that reaches it stops.
 
-`STEEL_API_KEYS` accepts a comma-separated list. New sessions rotate to the next key when Steel rejects the current key for authentication, credits, quota or rate limits. Live sessions retain the key that created them. Steel closes a session when its timeout passes, so each is created with the race's absolute cap plus 180 s (480 s for the default 300 s race).
+`STEEL_API_KEYS` accepts a comma-separated list. New sessions rotate to the next key when Steel rejects the current key for authentication, credits, quota or rate limits. Live sessions retain the key that created them. Steel still closes a session when its provider timeout passes; this is independent of the race lifecycle.
 
 ### Local course
 
@@ -335,4 +335,6 @@ When `obstaclesEnabled` is `true`, one immutable race-wide single-step sabotage 
 
 ## Timing
 
-At the target duration the coordinator freezes new obstacles and trading, but active racers continue; the first subsequently verified finisher wins. At the absolute cap an unfinished fight is voided and every open position is refunded at its average price.
+There is no elapsed-time hazard, market, or race freeze. The first verified finisher
+wins; a fight closes only when a racer wins or the coordinator explicitly aborts it
+after startup or runner failure.

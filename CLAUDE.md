@@ -59,12 +59,10 @@ exactly as the agents and the market start; scheduled fights keep pre-fight trad
 run detached; a rejected loop marks that racer `failed` rather than failing the race. An
 API-level ticker calls `tick` every second.
 
-Timing is enforced in `RaceEngine.tick`, which is called from `reachCheckpoint`,
-`finishRacer`, and the ticker: at `targetDurationMs` (180 s) the race moves to
-`hazards_frozen` — no new sabotage, market frozen, racers keep going — and at
-`absoluteDurationMs` (300 s) it becomes `timed_out` and the market is marked unresolved.
-The first racer whose finish passes verification wins; the coordinator then freezes and
-resolves the market, stops the other runners, and releases every Steel session.
+The ticker calls `RaceEngine.tick`, but elapsed time no longer freezes hazards or ends
+a race. The first racer whose finish passes verification wins; the coordinator then
+freezes and resolves the market, stops the other runners, and releases every Steel
+session. A race is explicitly aborted if startup fails or all runners fail.
 
 Every method takes an explicit `now` parameter defaulting to `Date.now()`. Tests pass fixed
 timestamps; preserve this when adding time-dependent logic.
@@ -152,10 +150,10 @@ live session must be released with the same client that created it, which is why
 `SteelSessionManager` keeps a per-racer client map.
 
 Steel closes a session once the `timeout` it was created with passes, whatever the race is
-doing. The factory creates a race's sessions with `raceSessionTimeoutSeconds`: the race's
-absolute cap plus 180 s for preparation and release, never below 300 s (480 s for the default
-race). The old fixed 240 s closed every browser inside the 300 s cap. A racer whose browser
-dies anyway fails with a readable cause, and only its own session is released.
+doing. The factory creates a race's sessions with `raceSessionTimeoutSeconds`, using the
+configured duration as a provider-session lifetime plus 180 s for preparation and release,
+never below 300 s (480 s by default). A racer whose browser dies anyway fails with a
+readable cause, and only its own session is released.
 
 Steel browsers run remotely and cannot reach your machine. A live race needs a public
 `startUrl`, though `COURSE_BASE_URL` can stay on localhost because verification is

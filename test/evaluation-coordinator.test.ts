@@ -315,11 +315,12 @@ test("a fight driven through the public API with past timestamps is finalized on
   assert.equal(store.puts, 1);
 });
 
-test("a fight that times out is finalized as voided", async () => {
+test("an explicitly aborted fight is finalized as voided", async () => {
   const store = new CountingStore();
   const { coordinator } = setup({ store, mode: "simulated" });
   await coordinator.prepareAndStart(T);
   await coordinator.recordCheckpoint("racer-3", 1, T + 30_000);
+  coordinator.engine.abort("operator_abort", T + 300_000);
   await coordinator.tick(T + 300_000);
 
   const final = await coordinator.whenEvaluationFinal();
@@ -327,7 +328,10 @@ test("a fight that times out is finalized as voided", async () => {
   assert.equal(final.winnerRacerId, null);
   assert.equal(final.finishedAt, T + 300_000);
   assert.deepEqual(final.agents.map((agent) => agent.outcome), ["timed_out", "timed_out", "timed_out", "timed_out"]);
-  assert.equal(final.findings[0], "No agent finished before the safety cap, so the fight was voided and positions refunded.");
+  assert.equal(
+    final.findings[0],
+    "The fight was stopped (operator abort) before any agent finished, so the fight was voided and positions refunded.",
+  );
   assert.equal(store.puts, 1);
 });
 
@@ -450,6 +454,7 @@ test("simulated fights never read Steel evidence, have no replay and backfill no
     steelBackfillDelaysMs: [0, 5],
   });
   await coordinator.prepareAndStart(T);
+  coordinator.engine.abort("operator_abort", T + 300_000);
   await coordinator.tick(T + 300_000);
   const final = await coordinator.whenEvaluationFinal();
   assert.equal(await coordinator.replayPlaylist("racer-1"), null);
@@ -471,6 +476,7 @@ test("Steel evidence that never arrives is abandoned at the budget", async () =>
     steelEvidenceTimeoutMs: 50,
   });
   await coordinator.prepareAndStart(T);
+  coordinator.engine.abort("operator_abort", T + 300_000);
   const started = Date.now();
   await coordinator.tick(T + 300_000);
   const final = await coordinator.whenEvaluationFinal();

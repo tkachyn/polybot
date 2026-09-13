@@ -194,26 +194,27 @@ test("ends and releases the race when every runner fails", async () => {
   assert.ok(log.every((text) => !text.includes("runner exited") && !text.includes("all_racers_failed")));
 });
 
-test("freezes trading at three minutes but keeps racers active", async () => {
+test("keeps trading and racers active past the former freeze threshold", async () => {
   const { coordinator, sessions } = createCoordinator();
   await coordinator.prepareAndStart(1_000);
   await coordinator.tick(181_000);
 
-  assert.equal(coordinator.engine.race.status, "hazards_frozen");
-  assert.equal(coordinator.market.status, "frozen");
+  assert.equal(coordinator.engine.race.status, "running");
+  assert.equal(coordinator.market.status, "open");
   assert.equal(sessions.released, false);
   await coordinator.shutdown();
 });
 
-test("marks the market unresolved and releases sessions at the safety cap", async () => {
+test("does not close the race at the former safety cap", async () => {
   const { coordinator, sessions, runner } = createCoordinator();
   await coordinator.prepareAndStart(1_000);
   await coordinator.tick(301_000);
 
-  assert.equal(coordinator.engine.race.status, "timed_out");
-  assert.equal(coordinator.market.status, "unresolved");
-  assert.equal(sessions.released, true);
-  assert.equal(runner.stopped.length, 4);
+  assert.equal(coordinator.engine.race.status, "running");
+  assert.equal(coordinator.market.status, "open");
+  assert.equal(sessions.released, false);
+  assert.equal(runner.stopped.length, 0);
+  await coordinator.shutdown();
 });
 
 /** Reports each racer's course progress as the verifier's ground truth. */

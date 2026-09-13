@@ -4,9 +4,9 @@ import { DEFAULT_ABSOLUTE_DURATION_MS } from "../domain/race-engine.js";
 import { SteelKeyPool, steelKeysFromEnv } from "./steel-key-pool.js";
 
 /**
- * What a race's Steel sessions must last beyond the race itself: creating
- * them, preparing every racer before the start, and stopping and releasing
- * them after the safety cap.
+ * What a race's Steel sessions must last beyond preparation and cleanup. The
+ * provider still requires a finite session timeout even though races have no
+ * elapsed-time deadline.
  */
 export const STEEL_SESSION_MARGIN_SECONDS = 180;
 /** No race session is created with a shorter Steel timeout. */
@@ -14,9 +14,9 @@ export const MIN_STEEL_SESSION_TIMEOUT_SECONDS = 300;
 
 /**
  * Steel's timeout for a race's sessions. Steel closes a session when its
- * timeout passes, so a timeout inside the race kills racers mid-fight: it is
- * the race's absolute cap plus the margin, never below the floor. The
- * default 300 s race gets 480 s.
+ * timeout passes, so it must leave room for preparation and cleanup. The
+ * configured duration remains the compatibility input for this provider
+ * lifetime, plus the margin, never below the floor.
  */
 export function raceSessionTimeoutSeconds(
   absoluteDurationMs: number = DEFAULT_ABSOLUTE_DURATION_MS,

@@ -12,7 +12,7 @@ This document covers backend and race logic only. Frontend and spectator UI are 
 
 - Racers: 4
 - Steel sessions: 4, one per racer
-- Course duration: 180-second target with a 300-second absolute safety cap
+- No elapsed-time race freeze; fights end on a verified winner or explicit abort
 - Obstacle stages: 3 logical stages for the first implementation, with support for 5
 - Trigger model: per-agent checkpoint arrival
 - Start model: all racers pass a readiness barrier, then start together
@@ -295,12 +295,9 @@ This prevents duplicate events from injecting the same obstacle twice.
 
 ## Race timing and finish behavior
 
-Three minutes is the target duration, not an automatic race ending. At the three-minute mark, the backend freezes new obstacle creation and injection, but active racers continue solving their current tasks. The race ends when the first active racer passes final verification. A longer absolute cap prevents an indefinitely stuck race.
-
-```ts
-const targetDurationAt = startedAt + 180_000;
-const absoluteDeadlineAt = startedAt + 300_000;
-```
+Elapsed time does not freeze obstacle creation, trading, or active racers. The race
+ends when the first active racer passes final verification, or when the coordinator
+explicitly aborts it after startup or runner failure.
 
 Expected pacing is useful for course design, but should not be the primary obstacle trigger:
 
@@ -311,8 +308,7 @@ Expected pacing is useful for course design, but should not be the primary obsta
 1:25  expected third obstacle stage
 1:55  optional fourth stage
 2:20  optional fifth stage
-3:00  freeze new obstacles; active racers continue
-5:00  absolute safety cap
+3:00  no lifecycle transition; active racers continue
 ```
 
 The actual obstacle rule remains:
@@ -323,16 +319,6 @@ racer reaches checkpoint -> apply that checkpoint's obstacle
 
 A slow racer does not miss an obstacle because it arrived after another racer. A fast racer does not wait for the group.
 
-At the target duration:
-
-```text
-HAZARDS_FROZEN
-  - no new master-agent obstacle decisions
-  - no new CDP injections
-  - active racers continue
-  - first verified finisher wins
-```
-
 Example:
 
 ```text
@@ -341,15 +327,16 @@ Racer 2: still working at 180 seconds
 Racer 3: still working at 180 seconds
 Racer 4: failed at 96 seconds
 
-At 180 seconds:
-  Racer 2 and Racer 3 continue without new obstacles
+After 180 seconds:
+  Racer 2 and Racer 3 continue and receive obstacles normally
 
 Racer 3 finishes at 193 seconds
   Racer 3 wins
   Racer 2 is stopped
 ```
 
-At the absolute safety cap, the orchestrator closes the race even if no racer has finished. The fallback result should be deterministic, for example the racer with the greatest verified checkpoint progress, then the lowest verified elapsed time at that progress. If no meaningful progress exists, mark the race unresolved rather than asking the master LLM to invent a winner.
+If runners fail or startup cannot complete, the coordinator explicitly aborts the
+race and marks it unresolved. Otherwise, the first verified finisher wins.
 
 ## Prediction-market simulation logic
 
@@ -410,8 +397,7 @@ OPEN
   -> accept virtual buy and sell orders
 
 FROZEN
-  -> stop new orders at the 180-second target
-  -> active racers may continue racing
+  -> stop new orders when the race is won or explicitly aborted
 
 RESOLVED
   -> first verified finisher is the winner
@@ -419,7 +405,9 @@ RESOLVED
   -> losing shares resolve to 0.00
 ```
 
-If the race reaches the five-minute absolute safety cap without a verified winner, resolve the market as `unresolved` and return all unsettled virtual credits. Do not ask the master LLM to invent a market result.
+If the coordinator explicitly aborts without a verified winner, resolve the market
+as `unresolved` and return all unsettled virtual credits. Do not ask the master LLM
+to invent a market result.
 
 ### Prediction-market records
 
@@ -505,8 +493,7 @@ MasterObstacleProvider
 - Start one competitor agent per session
 - Implement the readiness barrier and independent racer state machines
 - Implement semantic checkpoint and final-task verification
-- Implement the 180-second target, hazard freeze, and 300-second safety cap
-- Implement winner selection and structured event logging
+- Implement winner selection, explicit abort handling, and structured event logging
 - Implement the virtual prediction-market engine
 - Run against a deterministic mock course or a minimal course with no obstacles
 
@@ -667,7 +654,9 @@ Racer 4: stopped at checkpoint 2
 Racer 2: stopped at checkpoint 2
 ```
 
-If nobody has finished at 180 seconds, active racers continue without new obstacles or market trades until one finishes or the 300-second safety cap is reached.
+If nobody has finished after 180 seconds, active racers continue with normal
+obstacles and market trading until one finishes or the coordinator explicitly
+aborts the fight.
 
 ## Failure handling
 
@@ -702,7 +691,7 @@ Build in this order:
 
 The core success criterion is:
 
-> Four agents start from the same course seed, progress independently, receive equivalent obstacles at their own checkpoint arrival times when obstacles are enabled, and produce a deterministic winner plus a complete event log. At 180 seconds hazards freeze; at 300 seconds the unresolved safety cap applies.
+> Four agents start from the same course seed, progress independently, receive equivalent obstacles at their own checkpoint arrival times when obstacles are enabled, and produce a deterministic winner plus a complete event log without elapsed-time freezes.
 
 ## Implemented backend contract
 
@@ -719,8 +708,7 @@ The repository currently implements:
 - Anthropic tool-based adapters for competitor and master decisions
 - Master timeouts with deterministic fallback policies
 - Virtual prediction-market funding, buying, selling, freezing, and resolution
-- Automatic three-minute hazard and market freeze
-- Five-minute unresolved safety cap
+- Explicit abort handling for startup and runner failures
 - Append-only JSONL race event persistence
 - HTTP routes for the separate frontend
 - Four-session Steel smoke-test command

@@ -530,12 +530,12 @@ test("multi-step sabotage logs name the policy applied at each checkpoint", asyn
   await coordinator.shutdown();
 });
 
-test("sabotage expires once hazards freeze without firing", async () => {
+test("sabotage remains armed past the former hazard-freeze threshold", async () => {
   const { coordinator } = setup({ obstacles: new FakeObstacles() });
   await coordinator.prepareAndStart(1_000);
   await coordinator.tick(181_000);
-  assert.equal(coordinator.sabotage?.state, "expired");
-  assert.equal(coordinator.market.status, "frozen");
+  assert.equal(coordinator.sabotage?.state, "armed");
+  assert.equal(coordinator.market.status, "open");
   await coordinator.shutdown();
 });
 

@@ -137,13 +137,13 @@ export type FightSummary = {
   /** Scheduled start for upcoming fights. */
   startsAt: number | null;
   startedAt: number | null;
-  /** Target duration: hazards and trading freeze here. */
+  /** Reserved for compatibility; races no longer freeze on elapsed time. */
   freezesAt: number | null;
-  /** Absolute safety cap: unresolved fights are voided here. */
+  /** Reserved for compatibility; races no longer close on elapsed time. */
   closesAt: number | null;
-  /** When the fight resolved (winner verified or cap reached). */
+  /** When the fight resolved (winner verified or explicitly aborted). */
   finishedAt: number | null;
-  /** now + fastest agent ETA, clamped to closesAt. Null if unknown. */
+  /** now + fastest agent ETA. Null if unknown. */
   estimatedResolutionAt: number | null;
   /** Credits traded: buy and sell notional. */
   volume: number;

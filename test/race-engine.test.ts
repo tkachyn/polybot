@@ -43,17 +43,18 @@ test("racers reach checkpoints independently", async () => {
   assert.deepEqual(duplicate, { claimed: false, obstacleApplied: false });
 });
 
-test("freezes hazards at the target duration but keeps the race alive", async () => {
+test("does not freeze hazards or end the race at elapsed-time thresholds", async () => {
   const race = readyRace();
   race.tick(180_100);
+  race.tick(300_100);
 
-  assert.equal(race.race.status, "hazards_frozen");
-  const event = await race.reachCheckpoint("racer-1", 1, 180_200);
+  assert.equal(race.race.status, "running");
+  const event = await race.reachCheckpoint("racer-1", 1, 300_200);
   assert.deepEqual(event, { claimed: true, obstacleApplied: false });
-  assert.equal(race.race.status, "hazards_frozen");
+  assert.equal(race.race.status, "running");
 });
 
-test("the first verified finisher wins after the target duration", async () => {
+test("the first verified finisher wins after extended runtime", async () => {
   const race = readyRace();
   race.tick(180_000);
 
@@ -123,10 +124,10 @@ test("never applies sabotage at the final checkpoint", async () => {
   );
 });
 
-test("times out unfinished racers at the absolute safety cap", () => {
+test("does not time out unfinished racers on elapsed time", () => {
   const race = readyRace();
   race.tick(300_101);
 
-  assert.equal(race.race.status, "timed_out");
-  assert.equal(race.racers.get("racer-1")?.status, "timed_out");
+  assert.equal(race.race.status, "running");
+  assert.equal(race.racers.get("racer-1")?.status, "running");
 });

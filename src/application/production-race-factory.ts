@@ -269,8 +269,8 @@ export function createProductionRaceCoordinator(
     ]),
   );
 
-  // Steel closes a session at its timeout, so every browser must outlive the
-  // race's own safety cap, preparation and release included.
+  // Steel closes a session at its timeout, so every browser must outlive
+  // preparation and release, with room for the configured provider lifetime.
   const sessionManager = new SteelSessionManager({
     sessionTimeoutSeconds: raceSessionTimeoutSeconds(input.absoluteDurationMs),
     useProxy: envBoolean("STEEL_USE_PROXY", true),
