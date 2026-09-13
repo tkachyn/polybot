@@ -8,7 +8,7 @@ import { cx } from "../../lib/cx";
 import { formatCompactMoney, formatFightNumber, formatNumber } from "../../lib/format";
 import { HAZARD_LABEL, SABOTAGE_HIDDEN_COPY } from "../../lib/labels";
 import { marketStateView, sabotageFiredLabel, visualFor, type RosterVisuals } from "./fightView";
-import { ClockCountdown } from "./ClockCountdown";
+import { ClockCountdown, ClockPhrase } from "./ClockCountdown";
 import styles from "./FightHeader.module.css";
 
 // ---------------------------------------------------------------------------
@@ -87,16 +87,18 @@ function MarketState({ fight }: { fight: FightDetail }) {
           <span className={cx(styles.marketDot, styles[`market_${market.tone}`])} aria-hidden="true" />
           {market.label}
         </span>
-        {market.detail && (
+        {market.countdown ? (
           <span className={styles.marketSub}>
-            {market.detail}
-            {market.countdownTo !== null && (
-              <>
-                {" "}
-                <ClockCountdown to={market.countdownTo} expiredLabel="now" className={styles.marketCountdown} />
-              </>
-            )}
+            <ClockPhrase
+              to={market.countdown.to}
+              lead={market.countdown.lead}
+              approximate={market.countdown.approximate}
+              due={market.countdown.due}
+              clockClassName={styles.marketCountdown}
+            />
           </span>
+        ) : (
+          market.detail && <span className={styles.marketSub}>{market.detail}</span>
         )}
       </dd>
     </div>

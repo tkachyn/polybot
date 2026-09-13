@@ -11,6 +11,40 @@ export type ClockCountdownProps = {
   className?: string;
 };
 
+export type ClockPhraseProps = {
+  to: number;
+  /** Words before the clock, e.g. "Trading freezes in". */
+  lead: string;
+  /** The target is an estimate: the clock reads "~0:42", and `due` replaces the phrase once it passes. */
+  approximate?: boolean;
+  due?: string;
+  leadClassName?: string;
+  clockClassName?: string;
+};
+
+/**
+ * "<lead> 1:59", ticking and server-corrected. An estimate reads "~0:42" and,
+ * rather than sitting at "~0:00" once it passes, turns into `due`.
+ */
+export function ClockPhrase({ to, lead, approximate = false, due, leadClassName, clockClassName }: ClockPhraseProps) {
+  const now = useNow(1000, true, to);
+  const remaining = to - now;
+  if (approximate && remaining <= 0) return <span className={leadClassName}>{due ?? lead}</span>;
+  return (
+    <>
+      <span className={leadClassName}>{lead}</span>{" "}
+      <time
+        className={cx("num", clockClassName)}
+        dateTime={isoDuration(Math.max(0, remaining))}
+        title={approximate ? "Estimated from the fastest agent’s pace" : undefined}
+      >
+        {approximate && "~"}
+        {formatCountdownClock(remaining)}
+      </time>
+    </>
+  );
+}
+
 /** Ticking m:ss countdown ("4:07"), server-corrected. */
 export function ClockCountdown({ to, expiredLabel = "0:00", className }: ClockCountdownProps) {
   const active = typeof to === "number";

@@ -3,6 +3,7 @@ import type { AgentCheckpointState, FightAgentDetail } from "@contract";
 import {
   agentStatusView,
   checkpointDot,
+  fightEnd,
   formatCountdownClock,
   formatEta,
   formatStep,
@@ -122,12 +123,51 @@ describe("figures", () => {
 });
 
 describe("marketStateView", () => {
+  const times = { freezesAt: 99, closesAt: 199, estimatedResolutionAt: null };
+
   it("covers every market state", () => {
-    expect(marketStateView({ status: "live", marketStatus: "open", freezesAt: 99 })).toMatchObject({ tone: "open", countdownTo: 99 });
-    expect(marketStateView({ status: "live", marketStatus: "open", freezesAt: null })).toMatchObject({ tone: "open", countdownTo: null });
-    expect(marketStateView({ status: "upcoming", marketStatus: "open", freezesAt: 99 })).toMatchObject({ tone: "pre", label: "Pre-fight trading" });
-    expect(marketStateView({ status: "live", marketStatus: "frozen", freezesAt: 99 }).tone).toBe("frozen");
-    expect(marketStateView({ status: "resolved", marketStatus: "resolved", freezesAt: 99 }).tone).toBe("closed");
+    expect(marketStateView({ ...times, status: "live", marketStatus: "open" })).toMatchObject({
+      tone: "open",
+      detail: null,
+      countdown: { to: 99, approximate: false, lead: "Trading freezes in", shortLead: "Open · freezes in" },
+    });
+    expect(marketStateView({ ...times, status: "live", marketStatus: "open", freezesAt: null })).toMatchObject({ tone: "open", detail: "Trading open", countdown: null });
+    expect(marketStateView({ ...times, status: "upcoming", marketStatus: "open" })).toMatchObject({ tone: "pre", label: "Pre-fight trading", countdown: null });
+    expect(marketStateView({ ...times, status: "live", marketStatus: "frozen" }).tone).toBe("frozen");
+    expect(marketStateView({ ...times, status: "resolved", marketStatus: "resolved" })).toMatchObject({ tone: "closed", countdown: null });
+  });
+
+  it("says the agents are still racing and counts down to the hard stop while frozen", () => {
+    expect(marketStateView({ ...times, status: "live", marketStatus: "frozen" })).toEqual({
+      tone: "frozen",
+      label: "Frozen",
+      detail: null,
+      countdown: {
+        to: 199,
+        approximate: false,
+        lead: "Agents racing · ends in",
+        due: "Agents racing · leader finishing",
+        shortLead: "Frozen · ends in",
+        shortDue: "Frozen · leader finishing",
+      },
+    });
+    // The fastest agent's projected finish wins when it is earlier, marked as an estimate.
+    expect(marketStateView({ ...times, status: "live", marketStatus: "frozen", estimatedResolutionAt: 150 }).countdown).toMatchObject({
+      to: 150,
+      approximate: true,
+    });
+    expect(marketStateView({ ...times, status: "live", marketStatus: "frozen", closesAt: null })).toMatchObject({
+      detail: "Agents still racing",
+      countdown: null,
+    });
+  });
+
+  it("ends the fight at the earlier of the hard stop and the estimate", () => {
+    expect(fightEnd({ closesAt: 200, estimatedResolutionAt: null })).toEqual({ to: 200, approximate: false });
+    expect(fightEnd({ closesAt: 200, estimatedResolutionAt: 120 })).toEqual({ to: 120, approximate: true });
+    expect(fightEnd({ closesAt: 200, estimatedResolutionAt: 200 })).toEqual({ to: 200, approximate: false });
+    expect(fightEnd({ closesAt: null, estimatedResolutionAt: 120 })).toEqual({ to: 120, approximate: true });
+    expect(fightEnd({ closesAt: null, estimatedResolutionAt: null })).toEqual({ to: null, approximate: false });
   });
 });
 

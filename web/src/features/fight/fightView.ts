@@ -126,26 +126,84 @@ export function sabotageFiredLabel(firedAt: number, startedAt: number | null): s
 
 export type MarketTone = "open" | "pre" | "frozen" | "closed";
 
+/** A ticking countdown and its copy, for the header and, shorter, the rail footer. */
+export type MarketCountdown = {
+  to: number;
+  /** Runs to an estimate (the fastest agent's projected finish): "~0:42", then `due` once it passes. */
+  approximate: boolean;
+  /** Words before the clock in the header, and what replaces both once an estimate is due. */
+  lead: string;
+  due: string;
+  /** The same for the rail footer, which has less room. */
+  shortLead: string;
+  shortDue: string;
+};
+
 export type MarketStateView = {
   tone: MarketTone;
   label: string;
-  /** Secondary copy; followed by the countdown when `countdownTo` is set. */
+  /** Secondary copy when there is no countdown. */
   detail: string | null;
-  countdownTo: number | null;
+  countdown: MarketCountdown | null;
 };
 
-export function marketStateView(fight: Pick<FightDetail, "status" | "marketStatus" | "freezesAt">): MarketStateView {
+export type FightEnd = { to: number | null; approximate: boolean };
+
+/**
+ * When a live fight ends: the hard stop (`closesAt`), or the fastest agent's
+ * projected finish when that comes first.
+ */
+export function fightEnd(fight: Pick<FightDetail, "closesAt" | "estimatedResolutionAt">): FightEnd {
+  const { closesAt, estimatedResolutionAt: estimate } = fight;
+  if (estimate !== null && Number.isFinite(estimate) && (closesAt === null || estimate < closesAt)) {
+    return { to: estimate, approximate: true };
+  }
+  return { to: closesAt, approximate: false };
+}
+
+type MarketStateInput = Pick<FightDetail, "status" | "marketStatus" | "freezesAt" | "closesAt" | "estimatedResolutionAt">;
+
+export function marketStateView(fight: MarketStateInput): MarketStateView {
   switch (fight.marketStatus) {
     case "open":
       if (fight.status === "upcoming") {
-        return { tone: "pre", label: "Pre-fight trading", detail: "Open before the start", countdownTo: null };
+        return { tone: "pre", label: "Pre-fight trading", detail: "Open before the start", countdown: null };
       }
-      if (fight.freezesAt === null) return { tone: "open", label: "Open", detail: "Trading open", countdownTo: null };
-      return { tone: "open", label: "Open", detail: "Trading freezes in", countdownTo: fight.freezesAt };
-    case "frozen":
-      return { tone: "frozen", label: "Frozen", detail: "Awaiting settlement", countdownTo: null };
+      if (fight.freezesAt === null) return { tone: "open", label: "Open", detail: "Trading open", countdown: null };
+      return {
+        tone: "open",
+        label: "Open",
+        detail: null,
+        countdown: {
+          to: fight.freezesAt,
+          approximate: false,
+          lead: "Trading freezes in",
+          due: "Trading freezes in",
+          shortLead: "Open · freezes in",
+          shortDue: "Open · freezes in",
+        },
+      };
+    case "frozen": {
+      // Trading stops at the freeze but the race does not: say so, and when it
+      // ends. An estimate that comes due means the leader is at the finish.
+      const end = fightEnd(fight);
+      if (end.to === null) return { tone: "frozen", label: "Frozen", detail: "Agents still racing", countdown: null };
+      return {
+        tone: "frozen",
+        label: "Frozen",
+        detail: null,
+        countdown: {
+          to: end.to,
+          approximate: end.approximate,
+          lead: "Agents racing · ends in",
+          due: "Agents racing · leader finishing",
+          shortLead: "Frozen · ends in",
+          shortDue: "Frozen · leader finishing",
+        },
+      };
+    }
     default:
-      return { tone: "closed", label: "Closed", detail: null, countdownTo: null };
+      return { tone: "closed", label: "Closed", detail: null, countdown: null };
   }
 }
 
