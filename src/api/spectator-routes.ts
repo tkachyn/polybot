@@ -147,14 +147,19 @@ export function registerSpectatorRoutes(app: FastifyInstance, context: Spectator
 
   app.get<{ Querystring: { status?: string } }>("/api/fights", async (request) => {
     const status = parseStatus(request.query.status);
-    return presentFightList(registry.list(), { ...present(now()), status });
+    const archived = await registry.evaluations.list({ mode: context.mode });
+    return presentFightList(registry.list(), { ...present(now()), status }, archived);
   });
 
   app.get<{ Querystring: { status?: string } }>("/api/fights/stream", (request, reply) => {
     const status = parseStatus(request.query.status);
     const stream = hub.open(request, reply);
-    const send = () =>
-      stream.send("fights", presentFightList(registry.list(), { ...present(now()), status }));
+    const send = () => {
+      void registry.evaluations.list({ mode: context.mode })
+        .then((archived) =>
+          stream.send("fights", presentFightList(registry.list(), { ...present(now()), status }, archived)))
+        .catch((error) => app.log.error(error));
+    };
     send();
     const throttle = trailingThrottle(send, context.throttles.fightsMs);
     const unsubscribe = registry.subscribe((_raceId, change) => {

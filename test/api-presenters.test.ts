@@ -4,7 +4,9 @@ import {
   estimateResolutionAt,
   presentAccount,
   presentFightDetail,
+  presentFightList,
   presentFightSummary,
+  presentFightSummaryFromEvaluation,
   presentLeaderboard,
   presentMyFight,
   presentPortfolio,
@@ -15,6 +17,7 @@ import {
 } from "../src/api/presenters.js";
 import { RaceRegistry } from "../src/api/race-registry.js";
 import { createFactory, raceInput, winRace } from "./api-fixtures.js";
+import { goldenEvaluation, RACE_ID, T } from "./dataset-fixtures.js";
 
 const DAY = 86_400_000;
 
@@ -257,4 +260,62 @@ test("leaderboard ranks 30-day agents by win rate, then fights", () => {
   assert.equal(grok.sabotageSurvival, null);
   assert.equal(grok.backerRoi, null);
   assert.equal(grok.avgFinishMs, null);
+});
+
+test("a fight summary rebuilt from its stored evaluation carries agents, sabotage and outcome", () => {
+  const summary = presentFightSummaryFromEvaluation(goldenEvaluation());
+  assert.equal(summary.raceId, RACE_ID);
+  assert.equal(summary.status, "resolved");
+  assert.equal(summary.raceStatus, "finished");
+  assert.equal(summary.marketStatus, "resolved");
+  assert.equal(summary.winnerRacerId, "racer-1");
+  assert.equal(summary.voided, false);
+  assert.equal(summary.volume, 0);
+  assert.equal(summary.traders, 0);
+  assert.equal(summary.checkpointCount, 3);
+  assert.equal(summary.leaderCheckpoint, 3);
+
+  assert.equal(summary.agents.length, 4);
+  const [racer1, , , racer4] = summary.agents;
+  assert.equal(racer1.runStatus, "run");
+  assert.equal(racer1.phase, "finished");
+  assert.equal(racer1.yes, 0.1);
+  assert.equal(racer1.no, round(0.9));
+  assert.equal(racer1.change, round(0.1 - 0.25));
+  assert.equal(racer4.runStatus, "bad");
+
+  const sabotage = summary.sabotage;
+  assert.ok(sabotage);
+  assert.equal(sabotage.revealed, true);
+  assert.equal(sabotage.checkpoint, 1);
+  assert.equal(sabotage.tier, "basic");
+  assert.equal(sabotage.stepCount, 1);
+  assert.equal(sabotage.state, "fired");
+  assert.equal(sabotage.steps.length, 1);
+  assert.equal(sabotage.steps[0].state, "fired");
+  assert.deepEqual(sabotage.steps[0].hitRacerIds.sort(), ["racer-1", "racer-2", "racer-3"]);
+  assert.equal(sabotage.steps[0].firedAt, T + 10_000);
+});
+
+test("presentFightList backfills fights the live registry no longer holds from their evaluations", async () => {
+  const { factory } = createFactory();
+  const registry = new RaceRegistry(factory);
+  await registry.create(raceInput("race-live"), 1_000);
+
+  const options = { now: 2_000, showSabotageUpfront: true };
+  const merged = presentFightList(registry.list(), options, [goldenEvaluation()]);
+  assert.deepEqual(merged.fights.map((fight) => [fight.raceId, fight.status]), [
+    ["race-live", "live"],
+    [RACE_ID, "resolved"],
+  ]);
+
+  // A still-live coordinator wins over a stale evaluation for the same raceId.
+  await winRace(registry.get("race-live"), "racer-1", 3_000);
+  const staleEvaluation = { ...goldenEvaluation(), raceId: "race-live", title: "Stale" };
+  const deduped = presentFightList(registry.list(), options, [staleEvaluation]);
+  assert.equal(deduped.fights.length, 1);
+  assert.equal(deduped.fights[0].status, "resolved");
+  assert.notEqual(deduped.fights[0].title, "Stale");
+
+  await registry.shutdown();
 });

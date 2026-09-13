@@ -4,12 +4,19 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { buildApi } from "../src/api/server.js";
+import { InMemoryEvaluationStore } from "../src/evaluation/store.js";
 import { quoteTrade } from "../src/prediction/lmsr.js";
 import { createFactory, raceInput } from "./api-fixtures.js";
 
 function build(options: Partial<Parameters<typeof buildApi>[0]> = {}) {
   const { factory } = createFactory();
-  return buildApi({ coordinatorFactory: factory, enableTicker: false, startingBalance: 500, ...options });
+  return buildApi({
+    coordinatorFactory: factory,
+    enableTicker: false,
+    startingBalance: 500,
+    evaluationStore: new InMemoryEvaluationStore(),
+    ...options,
+  });
 }
 
 test("health reports demo readiness without creating a session", async () => {

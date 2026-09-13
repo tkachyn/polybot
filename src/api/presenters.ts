@@ -14,12 +14,14 @@ import type {
   Account,
   AccountLifetime,
   AgentCheckpointState,
+  AgentEvaluation,
   AgentIdentity,
   CheckpointInfo,
   FightAgentDetail,
   FightAgentSummary,
   FightDetail,
   FightDetailResponse,
+  FightEvaluation,
   FightListResponse,
   FightSettlementLine,
   FightStatus,
@@ -33,8 +35,11 @@ import type {
   Position,
   RaceStatusDTO,
   SabotageDetail,
-  SabotageSummary,
+  SabotageReaction,
+  SabotageState,
+  SabotageStepState,
   SabotageStepSummary,
+  SabotageSummary,
   ServerMeta,
   ServerMode,
   TraderLeaderboardResponse,
@@ -365,12 +370,123 @@ export function compareFights(left: FightSummary, right: FightSummary): number {
   }
 }
 
+function agentSummaryFromEvaluation(agent: AgentEvaluation): FightAgentSummary {
+  const yes = agent.crowd.finalYes;
+  return {
+    racerId: agent.racerId,
+    agent: agent.agent,
+    yes,
+    no: round(1 - yes),
+    change: round(yes - agent.crowd.openingYes),
+    checkpoint: agent.checkpointsReached,
+    runStatus: agent.outcome === "won" || agent.outcome === "finished" ? "run" : "bad",
+    phase: "finished",
+  };
+}
+
+function sabotageSummaryFromEvaluation(evaluation: FightEvaluation): SabotageSummary | null {
+  const planSteps = evaluation.sabotageSteps;
+  if (planSteps.length === 0) return null;
+  const hitsByStep = new Map<string, Array<{ racerId: string; reaction: SabotageReaction }>>();
+  for (const agent of evaluation.agents) {
+    for (const reaction of agent.sabotage) {
+      const hit = { racerId: agent.racerId, reaction };
+      const list = hitsByStep.get(reaction.stepId);
+      if (list) list.push(hit);
+      else hitsByStep.set(reaction.stepId, [hit]);
+    }
+  }
+  const steps: SabotageStepSummary[] = planSteps.map((step) => {
+    const hits = hitsByStep.get(step.stepId) ?? [];
+    const firedAt = hits.length > 0
+      ? Math.min(...hits.map(({ reaction }) => reaction.appliedAt))
+      : null;
+    const recovered = hits.length > 0 &&
+      hits.every(({ reaction }) => reaction.expiredAt !== null || reaction.progressedAt !== null);
+    const recoveredAt = recovered
+      ? Math.max(...hits.map(({ reaction }) => reaction.expiredAt ?? reaction.progressedAt ?? 0))
+      : null;
+    const state: SabotageStepState = hits.length === 0 ? "armed" : recovered ? "recovered" : "fired";
+    return {
+      index: step.index,
+      stepId: step.stepId,
+      checkpoint: step.checkpoint,
+      checkpointLabel: step.checkpointLabel,
+      state,
+      firedAt,
+      recoveredAt,
+      hitRacerIds: hits.map(({ racerId }) => racerId),
+      hazardType: step.hazardType,
+    };
+  });
+  const first = planSteps[0];
+  const state: SabotageState = steps.every((step) => step.state === "armed")
+    ? "armed"
+    : steps.every((step) => step.state !== "fired")
+    ? "expired"
+    : "fired";
+  return {
+    revealed: true,
+    summary: null,
+    checkpoint: first.checkpoint,
+    checkpointLabel: first.checkpointLabel,
+    state,
+    firedAt: steps.find((step) => step.firedAt !== null)?.firedAt ?? null,
+    tier: first.tier,
+    stepCount: planSteps.length,
+    steps,
+  };
+}
+
+/**
+ * A resolved fight's summary rebuilt from its stored evaluation alone, for a
+ * fight the live registry no longer holds (a restart clears it; the
+ * evaluation store outlives the process). Market fields that only the live
+ * coordinator knows (volume, traders, deadlines) are unavailable and zeroed.
+ */
+export function presentFightSummaryFromEvaluation(evaluation: FightEvaluation): FightSummary {
+  return {
+    raceId: evaluation.raceId,
+    number: evaluation.number,
+    status: "resolved",
+    raceStatus: evaluation.voided ? "timed_out" : "finished",
+    marketStatus: evaluation.voided ? "unresolved" : "resolved",
+    title: evaluation.title,
+    sabotage: sabotageSummaryFromEvaluation(evaluation),
+    createdAt: evaluation.startedAt ?? evaluation.generatedAt,
+    startsAt: null,
+    startedAt: evaluation.startedAt,
+    freezesAt: null,
+    closesAt: null,
+    finishedAt: evaluation.finishedAt,
+    estimatedResolutionAt: null,
+    volume: 0,
+    traders: 0,
+    checkpointCount: Math.max(0, ...evaluation.agents.map((agent) => agent.checkpointCount)),
+    leaderCheckpoint: Math.max(0, ...evaluation.agents.map((agent) => agent.checkpointsReached)),
+    agents: evaluation.agents.map(agentSummaryFromEvaluation),
+    winnerRacerId: evaluation.winnerRacerId,
+    voided: evaluation.voided,
+  };
+}
+
+/**
+ * `archivedEvaluations` backfills fights the live registry no longer holds
+ * (see `presentFightSummaryFromEvaluation`); a coordinator still live always
+ * wins over its own stored evaluation.
+ */
 export function presentFightList(
   coordinators: readonly RaceCoordinator[],
   options: PresentOptions & { status?: FightStatus },
+  archivedEvaluations: readonly FightEvaluation[] = [],
 ): FightListResponse {
-  const fights = coordinators
-    .map((coordinator) => presentFightSummary(coordinator, options))
+  const liveIds = new Set(coordinators.map((coordinator) => coordinator.raceId));
+  const fights = [
+    ...coordinators.map((coordinator) => presentFightSummary(coordinator, options)),
+    ...archivedEvaluations
+      .filter((evaluation) => !liveIds.has(evaluation.raceId))
+      .map(presentFightSummaryFromEvaluation),
+  ]
     .filter((fight) => options.status === undefined || fight.status === options.status)
     .sort(compareFights);
   return { serverTime: options.now, fights };

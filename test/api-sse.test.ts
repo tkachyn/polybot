@@ -3,6 +3,7 @@ import { get, type IncomingMessage } from "node:http";
 import type { AddressInfo } from "node:net";
 import test from "node:test";
 import { buildApi } from "../src/api/server.js";
+import { InMemoryEvaluationStore } from "../src/evaluation/store.js";
 import { createFactory, raceInput } from "./api-fixtures.js";
 
 type SseEvent = { event: string; data: any };
@@ -100,7 +101,12 @@ class SseClient {
 
 async function listen(options: { ssePingMs?: number; corsOrigins?: string[] } = {}) {
   const { factory } = createFactory();
-  const app = buildApi({ coordinatorFactory: factory, enableTicker: false, ...options });
+  const app = buildApi({
+    coordinatorFactory: factory,
+    enableTicker: false,
+    evaluationStore: new InMemoryEvaluationStore(),
+    ...options,
+  });
   await app.listen({ port: 0, host: "127.0.0.1" });
   const { port } = app.server.address() as AddressInfo;
   return { app, base: `http://127.0.0.1:${port}` };
