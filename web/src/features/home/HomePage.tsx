@@ -13,17 +13,15 @@
 import { useCallback, useMemo, useState } from "react";
 import { EmptyState, ErrorBanner, Page } from "../../components";
 import { cx } from "../../lib/cx";
+import { serverNow } from "../../state/clock";
 import { useSearchQuery } from "../../state/search";
 import { useFights } from "../../state/fights";
 import { FeaturedFightCard, FeaturedFightEmpty, FeaturedFightSkeleton } from "./FeaturedFightCard";
 import { FightCardList, FightCardListSkeleton } from "./FightCard";
 import { filterFights } from "./filter";
-import { buildPlaceholderFights } from "./placeholders";
+import { buildPlaceholderFights, previewsAllowed } from "./placeholders";
 import { LobbyRail } from "./LobbyRail";
 import styles from "./HomePage.module.css";
-
-/** Number the previews around when the backend has no fight yet. */
-const DEFAULT_FEATURED_NUMBER = 412;
 
 export function HomePage() {
   const { fights, error, loaded, refresh } = useFights();
@@ -41,9 +39,14 @@ export function HomePage() {
 
   // The backend lists live fights first, so the demo's real fight leads.
   const featured = fights[0] ?? null;
-  const featuredNumber = featured?.number ?? DEFAULT_FEATURED_NUMBER;
-  const [anchor] = useState(() => Date.now());
-  const previews = useMemo(() => buildPlaceholderFights(anchor, featuredNumber), [anchor, featuredNumber]);
+  const [anchor] = useState(() => serverNow());
+  // Previews stand in only on a loaded, healthy lobby (never behind a skeleton
+  // or beside an error), numbered clear of every real fight.
+  const allowPreviews = previewsAllowed({ loaded, error });
+  const previews = useMemo(
+    () => (allowPreviews ? buildPlaceholderFights(anchor, fights.map((f) => f.number)) : []),
+    [allowPreviews, anchor, fights],
+  );
 
   const matching = useMemo(() => filterFights(previews, "all", query), [previews, query]);
 
@@ -92,8 +95,8 @@ export function HomePage() {
         <LobbyRail
           upcoming={upcoming}
           resolved={resolved}
-          preview={settled.length === 0}
-          upcomingPreview={scheduled.length === 0}
+          preview={settled.length === 0 && resolved.length > 0}
+          upcomingPreview={scheduled.length === 0 && upcoming.length > 0}
         />
       </div>
     </Page>

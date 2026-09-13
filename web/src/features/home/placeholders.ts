@@ -1,11 +1,16 @@
 /**
- * Hardcoded lobby cards for the demo. Only the featured fight (the first
- * fight from the backend) is real; these fill the list beneath it so the
- * lobby reads like a busy market. They are never fetched, traded or opened.
+ * Preview lobby: hardcoded sample fights that keep the lobby from looking
+ * empty on a fresh backend. They stand in for a status (upcoming, resolved)
+ * only while the backend has no real fight with it, and they are always
+ * marked as previews: a "Preview" tag, and a disabled View that explains why.
+ * They are never fetched, traded or opened.
+ *
+ * Never shown while the lobby is loading or the server is unreachable (see
+ * previewsAllowed): a sample fight next to a skeleton or an error banner
+ * reads as real data.
  *
  * Times are relative to `now` so clocks and countdowns read naturally for
- * the length of a demo. Fight numbers sit around the featured fight's
- * number and never collide with it.
+ * the length of a demo. Fight numbers never collide with a real fight's.
  */
 import type {
   AgentIdentity,
@@ -153,15 +158,49 @@ function round6(value: number): number {
   return Math.round(value * 1_000_000) / 1_000_000;
 }
 
+/** Where preview numbers start when the backend has no fight at all. */
+export const DEFAULT_PREVIEW_NUMBER = 412;
+
 /**
- * Fight numbers around the featured fight. With room below it, live and
- * resolved previews take lower numbers and upcoming ones higher; otherwise
- * every preview sits above it.
+ * One fight number per template, never one a real fight has. Upcoming
+ * previews continue the sequence past the newest real fight; the others sit
+ * below the oldest, or above everything when there is no room below.
  */
-export function placeholderNumbers(featuredNumber: number): number[] {
-  const offsets = featuredNumber > PLACEHOLDER_TEMPLATES.length - 2 ? [-1, -2, 1, 2, -3, -4] : [3, 4, 5, 6, 1, 2];
-  return offsets.map((offset) => featuredNumber + offset);
+export function placeholderNumbers(realNumbers: Iterable<number>): number[] {
+  const taken = new Set<number>();
+  for (const n of realNumbers) if (Number.isInteger(n) && n > 0) taken.add(n);
+  let up = taken.size > 0 ? Math.max(...taken) : DEFAULT_PREVIEW_NUMBER - 1;
+  let down = taken.size > 0 ? Math.min(...taken) : DEFAULT_PREVIEW_NUMBER;
+
+  const above = (): number => {
+    do up += 1;
+    while (taken.has(up));
+    taken.add(up);
+    return up;
+  };
+  const below = (): number => {
+    do down -= 1;
+    while (down > 0 && taken.has(down));
+    if (down <= 0) return above();
+    taken.add(down);
+    return down;
+  };
+  return PLACEHOLDER_TEMPLATES.map((template) => (template.status === "upcoming" ? above() : below()));
 }
+
+/**
+ * Previews may stand in only on a loaded, healthy lobby: never behind a
+ * skeleton, and never next to a "couldn't load" or "interrupted" banner.
+ */
+export function previewsAllowed({ loaded, error }: { loaded: boolean; error: unknown }): boolean {
+  return loaded && (error === null || error === undefined);
+}
+
+/** Tooltip on a preview's disabled View and on preview rail rows. */
+export const PREVIEW_FIGHT_HINT = "Sample fight, shown until real fights are scheduled. It can't be opened or traded.";
+
+/** Tooltip on the Preview tag of the sample standings. */
+export const PREVIEW_STANDINGS_HINT = "Sample standings, shown until the first fight settles.";
 
 function agentsFor(template: PlaceholderTemplate): FightAgentSummary[] {
   const resolved = template.status === "resolved";
@@ -212,10 +251,11 @@ function sabotageFor(template: PlaceholderTemplate, firedAt: number | null): Sab
   };
 }
 
-export function buildPlaceholderFights(now: number, featuredNumber: number): FightSummary[] {
-  const numbers = placeholderNumbers(featuredNumber);
+/** One preview per template, numbered clear of `realNumbers` (every real fight's number). */
+export function buildPlaceholderFights(now: number, realNumbers: Iterable<number>): FightSummary[] {
+  const numbers = placeholderNumbers(realNumbers);
   return PLACEHOLDER_TEMPLATES.map((template, index) => {
-    const number = numbers[index] ?? featuredNumber + index + 1;
+    const number = numbers[index] ?? DEFAULT_PREVIEW_NUMBER + index;
     const live = template.status === "live";
     const upcoming = template.status === "upcoming";
     const voided = template.status === "resolved" && template.winner === undefined;

@@ -312,7 +312,18 @@
   }
 }
 
-/* Hardcoded demo cards: styled like View, but not a link. */
-.viewPreview {
-  cursor: default;
+/* Sample cards (./placeholders): a dashed frame and a View that reads as disabled. */
+.cardPreview,
+.cardPreview:hover,
+.cardPreview:focus-within {
+  border-style: dashed;
+  border-color: var(--color-divider);
+}
+
+.view.viewPreview,
+.view.viewPreview[aria-disabled="true"]:hover {
+  cursor: not-allowed;
+  opacity: 0.45;
+  color: var(--color-text-secondary);
+  border-color: transparent;
 }

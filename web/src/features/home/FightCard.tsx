@@ -26,6 +26,7 @@ import { cx } from "../../lib/cx";
 import { formatChance, formatClock, formatCompactMoney, formatFightNumber, formatNumber, formatTimeOfDay, isoDuration } from "../../lib/format";
 import { RUN_STATUS_LABEL, SABOTAGE_HIDDEN_COPY } from "../../lib/labels";
 import { useNow } from "../../state/clock";
+import { PREVIEW_FIGHT_HINT } from "./placeholders";
 import styles from "./FightCard.module.css";
 
 // ---------------------------------------------------------------------------
@@ -260,7 +261,7 @@ export function Resolution({ fight }: { fight: FightSummary }) {
 export type FightCardProps = {
   fight: FightSummary;
   className?: string;
-  /** A hardcoded demo card (./placeholders): looks real, but View does nothing. */
+  /** A sample card (./placeholders): tagged Preview, with a disabled View. */
   preview?: boolean;
 };
 
@@ -269,12 +270,17 @@ export function FightCard({ fight, className, preview = false }: FightCardProps)
   const number = formatFightNumber(fight.number);
   return (
     <article className={cx(styles.container, className)} aria-labelledby={titleId}>
-      <div className={styles.card}>
+      <div className={cx(styles.card, preview && styles.cardPreview)}>
         <div className={styles.head}>
           <span className={cx("label", styles.number)}>
             Fight <span className="num">{number}</span>
           </span>
           <StatusPill status={fightPillStatus(fight)} size="sm" />
+          {preview && (
+            <Tag tone="edge" title={PREVIEW_FIGHT_HINT}>
+              Preview
+            </Tag>
+          )}
           <CardClock fight={fight} />
         </div>
 
@@ -290,13 +296,16 @@ export function FightCard({ fight, className, preview = false }: FightCardProps)
           <div className={styles.footerEnd}>
             <Resolution fight={fight} />
             {preview ? (
+              // aria-disabled rather than disabled: the button stays hoverable
+              // and focusable, so the reason is reachable as its tooltip.
               <Button
                 variant="subtle"
                 size="sm"
                 className={cx(styles.view, styles.viewPreview)}
                 aria-disabled="true"
-                title="Preview only: this demo runs the featured fight"
-                aria-label={`Fight ${number} is a preview`}
+                title={PREVIEW_FIGHT_HINT}
+                aria-label={`View fight ${number} (preview, unavailable)`}
+                onClick={(event) => event.preventDefault()}
               >
                 View
               </Button>

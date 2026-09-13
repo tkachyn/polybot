@@ -11,29 +11,38 @@
  */
 import { Link } from "react-router-dom";
 import type { FightSummary, LeaderboardRow } from "@contract";
-import { AgentMonogram, IconChevronRight, Skeleton } from "../../components";
+import { AgentMonogram, IconChevronRight, Skeleton, Tag } from "../../components";
 import { useLeaderboard } from "../leaderboard/useLeaderboard";
 import { agentStyle, rosterVisuals } from "../../lib/agents";
 import { cx } from "../../lib/cx";
 import { formatChance, formatCompactMoney, formatNumber, formatPercent, formatTimeOfDay } from "../../lib/format";
-import { buildPlaceholderLeaderboard } from "./placeholders";
+import { PREVIEW_FIGHT_HINT, PREVIEW_STANDINGS_HINT, buildPlaceholderLeaderboard } from "./placeholders";
 import styles from "./LobbyRail.module.css";
 
 /** Rows shown in the rail; the full ranking lives on /leaderboard. */
 const RAIL_ROWS = 5;
 
-/** A card header. With `to`, the whole header leads to that screen. */
-function CardHead({ to, title }: { to?: string; title: string }) {
+/**
+ * A card header. With `to`, the whole header leads to that screen. With
+ * `preview`, the card's rows are samples (./placeholders) and say so.
+ */
+function CardHead({ to, title, preview = null }: { to?: string; title: string; preview?: string | null }) {
+  const main = (
+    <span className={styles.headMain}>
+      <h2 className={styles.headTitle}>{title}</h2>
+      {preview && (
+        <Tag tone="edge" title={preview}>
+          Preview
+        </Tag>
+      )}
+    </span>
+  );
   if (!to) {
-    return (
-      <div className={styles.head}>
-        <h2 className={styles.headTitle}>{title}</h2>
-      </div>
-    );
+    return <div className={styles.head}>{main}</div>;
   }
   return (
     <Link to={to} className={styles.head}>
-      <h2 className={styles.headTitle}>{title}</h2>
+      {main}
       <IconChevronRight size={14} className={styles.headIcon} />
     </Link>
   );
@@ -65,13 +74,15 @@ function LeaderboardRailRow({ row }: { row: LeaderboardRow }) {
 function LeaderboardCard() {
   const { data, error } = useLeaderboard();
   // A backend with no resolved fights yet has no standings; fall back to the
-  // demo ranking so the rail is never an empty box. Real rows always win.
-  const source = data ? (data.rows.length > 0 ? data.rows : buildPlaceholderLeaderboard()) : null;
+  // demo ranking, tagged Preview, so the rail is never an empty box. Real
+  // rows always win.
+  const preview = data !== null && data.rows.length === 0;
+  const source = data ? (preview ? buildPlaceholderLeaderboard() : data.rows) : null;
   const rows = source?.slice(0, RAIL_ROWS) ?? null;
 
   return (
     <section className={styles.card}>
-      <CardHead title="Leaderboard" />
+      <CardHead title="Leaderboard" preview={preview ? PREVIEW_STANDINGS_HINT : null} />
       {error && !data ? (
         <p className={styles.empty}>Standings are unavailable right now.</p>
       ) : rows === null ? (
@@ -128,7 +139,7 @@ function ResolvedRow({ fight, preview }: { fight: FightSummary; preview: boolean
 
   if (preview) {
     return (
-      <li className={cx(styles.row, styles.rowTop)} title="Preview only: this demo runs the featured fight">
+      <li className={cx(styles.row, styles.rowTop)} title={PREVIEW_FIGHT_HINT}>
         {body}
       </li>
     );
@@ -169,7 +180,7 @@ function UpcomingRow({ fight, preview }: { fight: FightSummary; preview: boolean
 
   if (preview) {
     return (
-      <li className={cx(styles.row, styles.rowTop)} title="Preview only: this demo runs the featured fight">
+      <li className={cx(styles.row, styles.rowTop)} title={PREVIEW_FIGHT_HINT}>
         {body}
       </li>
     );
@@ -190,7 +201,7 @@ function UpcomingCard({ fights, preview }: { fights: readonly FightSummary[]; pr
     .slice(0, UPCOMING_ROWS);
   return (
     <section className={styles.card}>
-      <CardHead title="Upcoming" />
+      <CardHead title="Upcoming" preview={preview ? PREVIEW_FIGHT_HINT : null} />
       {shown.length === 0 ? (
         <p className={styles.empty}>Scheduled fights appear here before they open.</p>
       ) : (
@@ -208,7 +219,7 @@ function ResolvedCard({ fights, preview }: { fights: readonly FightSummary[]; pr
   const shown = fights.slice(0, PAST_FIGHT_ROWS);
   return (
     <section className={styles.card}>
-      <CardHead to="/resolved" title="Past fights" />
+      <CardHead to="/resolved" title="Past fights" preview={preview ? PREVIEW_FIGHT_HINT : null} />
       {shown.length === 0 ? (
         <p className={styles.empty}>Settled fights appear here with their winner.</p>
       ) : (
