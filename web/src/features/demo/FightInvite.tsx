@@ -12,7 +12,9 @@ const QR_LIGHT = "#f4f2ef";
 export function FightInvite({ raceId }: { raceId: string }) {
   const [open, setOpen] = useState(false);
   const [qr, setQr] = useState<string | null>(null);
+  const [qrFailed, setQrFailed] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [shareFailed, setShareFailed] = useState(false);
   const [canShare] = useState(() => typeof navigator !== "undefined" && typeof navigator.share === "function");
   const url = useMemo(() => {
     if (typeof window === "undefined") return "";
@@ -22,11 +24,12 @@ export function FightInvite({ raceId }: { raceId: string }) {
   useEffect(() => {
     if (!open || !url) return;
     let active = true;
+    setQrFailed(false);
     // Matches .qrWrap: our ground on our off-white, rather than pure black on
     // pure white, so the code sits in the palette without losing contrast.
     QRCode.toDataURL(url, { width: 320, margin: 2, errorCorrectionLevel: "M", color: { dark: QR_DARK, light: QR_LIGHT } })
       .then((value) => { if (active) setQr(value); })
-      .catch(() => { if (active) setQr(null); });
+      .catch(() => { if (active) { setQr(null); setQrFailed(true); } });
     return () => { active = false; };
   }, [open, url]);
 
@@ -34,9 +37,11 @@ export function FightInvite({ raceId }: { raceId: string }) {
     try {
       await copyInviteText(url);
       setCopied(true);
+      setShareFailed(false);
       window.setTimeout(() => setCopied(false), 1500);
     } catch {
       setCopied(false);
+      setShareFailed(true);
     }
   };
 
@@ -55,8 +60,9 @@ export function FightInvite({ raceId }: { raceId: string }) {
         <Dialog title="Scan to join this fight" subtitle="Each phone receives an independent, equal virtual bankroll." onClose={() => setOpen(false)} size="md">
           <div className={styles.layout}>
             <div className={styles.qrWrap}>
-              {qr ? <img className={styles.qr} src={qr} alt={`QR code for ${url}`} /> : <span>Generating QR…</span>}
+              {qr ? <img className={styles.qr} src={qr} alt={`QR code for ${url}`} /> : <span>{qrFailed ? "QR unavailable" : "Generating QR…"}</span>}
             </div>
+            {shareFailed && <p role="alert">Copy failed. Select and share the URL above manually.</p>}
             <p className={styles.url}>{url}</p>
             <div className={styles.actions}>
               {canShare && <Button variant="ghost" onClick={() => void share()}>Share</Button>}

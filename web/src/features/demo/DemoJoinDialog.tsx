@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useLocation, useSearchParams } from "react-router-dom";
 import { Button } from "../../components";
 import { Dialog } from "../evaluation/Dialog";
 import { useSession } from "../../state/session";
@@ -8,8 +8,11 @@ import styles from "./DemoJoinDialog.module.css";
 /** One-time judge naming flow opened by the QR link's ?join=1 flag. */
 export function DemoJoinDialog() {
   const [params, setParams] = useSearchParams();
+  const { pathname } = useLocation();
   const { meta, account, updateDisplayName } = useSession();
   const invited = params.get("join") === "1";
+  const onFight = /^\/fights\/[^/]+$/.test(pathname);
+  const named = account ? !account.displayName.startsWith("Trader ") : false;
   const [name, setName] = useState("");
   const [pending, setPending] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
@@ -18,9 +21,10 @@ export function DemoJoinDialog() {
     if (account && !name) setName(account.displayName.startsWith("Trader ") ? "" : account.displayName);
   }, [account, name]);
 
-  if (!invited || !meta?.demoMode || !account) return null;
+  if (!meta?.demoMode || !account || (!invited && (!onFight || named))) return null;
 
   const close = () => {
+    if (!named && name.trim() === "") return;
     setParams((previous) => {
       const next = new URLSearchParams(previous);
       next.delete("join");

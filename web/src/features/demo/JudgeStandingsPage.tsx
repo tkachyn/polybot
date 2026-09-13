@@ -34,7 +34,7 @@ export function JudgeStandingsPage() {
     const controller = new AbortController();
     void load(controller.signal);
     const timer = window.setInterval(() => {
-      if (streamStatus !== "open") void load();
+      if (document.visibilityState === "visible" && streamStatus !== "open") void load();
     }, POLL_MS);
     return () => {
       controller.abort();
@@ -48,7 +48,7 @@ export function JudgeStandingsPage() {
     <Page title="Judge standings">
       <PageHeader
         title="Judge standings"
-        subtitle="Live mark-to-market ranking for this fight"
+        subtitle={`Live mark-to-market ranking for this fight · ${streamStatus === "open" ? "connected" : "reconnecting"}`}
         actions={<ButtonLink to={`/fights/${encodeURIComponent(raceId)}`} variant="ghost" icon={<IconArrowLeft size={14} />}>Back to fight</ButtonLink>}
       />
       {failed && <p className={styles.error}>Standings are reconnecting…</p>}

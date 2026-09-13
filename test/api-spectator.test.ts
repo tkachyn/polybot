@@ -11,6 +11,17 @@ function build(options: Partial<Parameters<typeof buildApi>[0]> = {}) {
   return buildApi({ coordinatorFactory: factory, enableTicker: false, startingBalance: 500, ...options });
 }
 
+test("health reports demo readiness without creating a session", async () => {
+  const app = build({ mode: "simulated", demoMode: true });
+  const response = await app.inject({ method: "GET", url: "/api/health" });
+  assert.equal(response.statusCode, 200);
+  assert.deepEqual(
+    { ok: response.json().ok, mode: response.json().mode, demoMode: response.json().demoMode },
+    { ok: true, mode: "simulated", demoMode: true },
+  );
+  await app.close();
+});
+
 test("operator races enable checkpoint-one sabotage by default", async () => {
   const app = build();
   const response = await app.inject({
@@ -98,6 +109,11 @@ test("demo mode locks equal bankrolls and ranks judges in one fight", async () =
     const created = await app.inject({ method: "POST", url: "/api/users", payload: { userId, displayName } });
     assert.equal(created.json().account.balance, 100);
   }
+  const duplicateName = await app.inject({
+    method: "POST", url: "/api/users", payload: { userId: "judge-03", displayName: "ada" },
+  });
+  assert.deepEqual([duplicateName.statusCode, duplicateName.json().code], [409, "conflict"]);
+  app.registry.users.ensure({ userId: "market-bot", displayName: "Bot" }, Date.now(), { automated: true });
 
   const locked = await app.inject({
     method: "POST", url: "/api/users/judge-01/deposit", payload: { amount: 10, method: "virtual" },
@@ -107,6 +123,10 @@ test("demo mode locks equal bankrolls and ranks judges in one fight", async () =
   await app.inject({
     method: "POST", url: "/api/fights/race-demo/orders",
     payload: { userId: "judge-01", racerId: "racer-1", side: "yes", action: "buy", quantity: 8 },
+  });
+  await app.inject({
+    method: "POST", url: "/api/fights/race-demo/orders",
+    payload: { userId: "market-bot", racerId: "racer-3", side: "yes", action: "buy", quantity: 2 },
   });
   await app.inject({
     method: "POST", url: "/api/fights/race-demo/orders",

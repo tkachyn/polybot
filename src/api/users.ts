@@ -11,6 +11,8 @@ export type UserRecord = {
   userId: string;
   displayName: string;
   createdAt: number;
+  /** Internal market-liquidity bot, excluded from judge standings. */
+  automated: boolean;
 };
 
 export type UserChangeListener = (userIds: string[]) => void;
@@ -52,12 +54,23 @@ export class UserDirectory {
   ensure(
     request: EnsureUserRequest = {},
     now = Date.now(),
+    options: { automated?: boolean } = {},
   ): { user: UserRecord; created: boolean } {
     const { userId, displayName } = request ?? {};
     if (userId !== undefined && (typeof userId !== "string" || !USER_ID_PATTERN.test(userId))) {
       invalid("userId must match ^[A-Za-z0-9_-]{6,64}$");
     }
     const name = normalizeDisplayName(displayName);
+
+    if (name !== undefined && !options.automated) {
+      const duplicate = [...this.users.values()].find(
+        (candidate) => candidate.userId !== userId && !candidate.automated &&
+          candidate.displayName.localeCompare(name, undefined, { sensitivity: "accent" }) === 0,
+      );
+      if (duplicate) {
+        throw new DomainError("conflict", "That judge name is already in use");
+      }
+    }
 
     const existing = userId === undefined ? undefined : this.users.get(userId);
     if (existing) {
@@ -74,6 +87,7 @@ export class UserDirectory {
       userId: id,
       displayName: name ?? defaultDisplayName(id),
       createdAt: now,
+      automated: options.automated ?? false,
     };
     this.users.set(id, user);
     if (this.options.startingBalance > 0) {

@@ -458,7 +458,11 @@ export class SimulationAutopilot {
       const userId = `bot-${botRng.hex(6)}`;
       if (this.bots.includes(userId)) continue;
       this.bots.push(userId);
-      this.registry.users.ensure({ userId, displayName: `Bot ${userId.slice(-4).toUpperCase()}` }, at);
+      this.registry.users.ensure(
+        { userId, displayName: `Bot ${userId.slice(-4).toUpperCase()}` },
+        at,
+        { automated: true },
+      );
       this.fundTo(userId, at);
     }
   }

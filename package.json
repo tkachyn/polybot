@@ -15,6 +15,7 @@
     "web:test": "npm --prefix web test",
     "build:all": "npm run build && npm run web:build",
     "demo": "npm run web:build && RACE_MODE=simulated DEMO_MODE=true WEB_DIST=web/dist node --import tsx src/server.ts",
+    "demo:check": "command -v cloudflared >/dev/null && test -f web/dist/index.html && curl -fsS http://127.0.0.1:3001/api/health",
     "demo:tunnel": "cloudflared tunnel --url http://127.0.0.1:3001",
     "smoke:steel": "node --import tsx scripts/steel-smoke.ts",
     "race:shop": "node --import tsx scripts/create-shop-race.ts",

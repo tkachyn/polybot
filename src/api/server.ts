@@ -160,6 +160,13 @@ export function buildApi(options: ApiServerOptions): FastifyInstance {
     return reply.status(400).send({ error: message, code: "invalid" });
   });
 
+  app.get("/api/health", async () => ({
+    ok: true,
+    mode,
+    demoMode: options.demoMode ?? false,
+    serverTime: now(),
+  }));
+
   if (webDist) {
     void app.register(fastifyStatic, { root: webDist, prefix: "/", wildcard: true });
   }
