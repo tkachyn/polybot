@@ -13,6 +13,7 @@ import {
   DecisionRetryError,
 } from "../src/agents/competitor-decision.js";
 import {
+  OPENROUTER_REQUEST_TIMEOUT_MS,
   OpenRouterCompetitorDecisionModel,
   OpenRouterModelRateLimiter,
   OpenRouterToolArgumentsError,
@@ -82,7 +83,7 @@ type Request = {
   tools: unknown[];
   tool_choice: unknown;
 };
-type RequestOptions = { signal?: AbortSignal; maxRetries?: number };
+type RequestOptions = { signal?: AbortSignal; maxRetries?: number; timeout?: number };
 /**
  * One provider reply: a tool payload, a reply without the tool call, a failed
  * request, or a function that returns one of these when the request is made.
@@ -124,6 +125,14 @@ function rateLimited(headers: Record<string, string> = {}, metadata?: Record<str
 function failureOf(decision: Promise<unknown>): Promise<unknown> {
   return decision.then(() => assert.fail("expected the decision to fail"), (error: unknown) => error);
 }
+
+test("every provider request carries a timeout, so a hung reply cannot stall a racer", async () => {
+  const { model, sent } = scripted(['{"type":"finish"}']);
+  await model.decide(INPUT);
+  assert.equal(sent[0]?.timeout, OPENROUTER_REQUEST_TIMEOUT_MS);
+  // Competitor decisions pace their own retries; the SDK's hidden ones stay off.
+  assert.equal(sent[0]?.maxRetries, 0);
+});
 
 test("a first-try tool call has no decision issue, and the prompt is the runtime user message", async () => {
   const { model, requests } = scripted(['{"type":"click","targetRole":"primary-action","reasoning":"Next."}']);

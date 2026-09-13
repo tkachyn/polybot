@@ -53,6 +53,13 @@ type OpenRouterModelOptions = {
 export const OPENROUTER_DEFAULT_MAX_OUTPUT_TOKENS = 400;
 
 /**
+ * Longest wait for one model reply. The SDK default (10 minutes) would let a
+ * hung request stall a racer; a timeout is a transient failure, which
+ * competitor decisions retry with pacing.
+ */
+export const OPENROUTER_REQUEST_TIMEOUT_MS = 60_000;
+
+/**
  * Paced retries after transient provider failures: the first wait without a
  * provider hint (it doubles with each failure), and the most back-off in
  * total before the provider answers again.
@@ -329,7 +336,7 @@ abstract class OpenRouterModelBase {
       | ReturnType<typeof sabotageTool>
       | ReturnType<typeof sabotageSequenceTool>
       | ReturnType<typeof completionTool>,
-    request: { signal?: AbortSignal; maxRetries?: number } = {},
+    request: { signal?: AbortSignal; maxRetries?: number; timeout?: number } = {},
   ): Promise<unknown> {
     this.malformedAttempts = 0;
     let redo: "malformed" | "missing" | null = null;
@@ -359,7 +366,7 @@ abstract class OpenRouterModelBase {
         tool_choice: redo === "missing"
           ? "required"
           : { type: "function", function: { name: tool.function.name } },
-      }, request);
+      }, { timeout: OPENROUTER_REQUEST_TIMEOUT_MS, ...request });
       const usage = response.usage as (typeof response.usage & { cost?: number }) | undefined;
       this.options.budget?.record(usage?.cost ?? 0);
       const call = response.choices[0]?.message.tool_calls?.[0];
