@@ -2,6 +2,7 @@ import type { AgentIdentity } from "../api/dto.js";
 import type { ApiCreateRaceInput, RaceRegistry } from "../api/race-registry.js";
 import type { RaceCoordinator } from "../application/race-coordinator.js";
 import { isDomainError } from "../domain/errors.js";
+import { crowdLot } from "../prediction/market-crowd.js";
 import type { DisruptionCommand, RaceStatus, SabotagePlan } from "../domain/types.js";
 import {
   SIM_HISTORY_COURSE_ID,
@@ -540,7 +541,7 @@ export class SimulationAutopilot {
         racerId,
         side,
         action: "buy",
-        quantity: this.rng.int(1, 40),
+        quantity: this.rng.int(1, 40) * crowdLot(market.depth),
       }, now);
     } catch (error) {
       if (!isDomainError(error)) throw error;

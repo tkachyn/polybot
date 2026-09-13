@@ -44,6 +44,14 @@ export const BRAND_PRIOR: Readonly<Record<string, number>> = {
   meta: 0.8,
 };
 
+/**
+ * Order sizes are tuned for a market depth of 250 shares. A deeper market
+ * needs proportionally bigger orders to move its price as visibly.
+ */
+export function crowdLot(depth: number): number {
+  return Math.max(1, Math.round(depth / 250));
+}
+
 /** Vendors outside the table get no lift and no penalty. */
 export function brandPrior(agentKey: string | undefined): number {
   if (!agentKey) return 1;
@@ -271,7 +279,7 @@ export class MarketCrowd {
           racerId,
           side,
           action: "buy",
-          quantity: Math.max(1, Math.round(trader.size * this.rng.range(0.4, 1.8))),
+          quantity: Math.max(1, Math.round(trader.size * this.rng.range(0.4, 1.8))) * crowdLot(market.depth),
         },
         now,
       );

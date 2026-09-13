@@ -160,12 +160,13 @@ test("fight stream sends snapshot, then price and fight events after a trade", a
     const price = await fight.take("price");
     assert.ok(price.data.point.prices["racer-1"] > 0.25);
     const update = await fight.take("fight");
-    assert.equal(update.data.fight.volume, 2.5);
+    assert.equal(update.data.fight.volume, order.json().receipt.total);
+    assert.equal(update.data.fight.pricing.depth, 1_000);
     assert.equal(update.data.priceHistory, undefined);
 
     const portfolio = await user.take("portfolio");
     assert.equal(portfolio.data.positions.length, 1);
-    assert.equal(portfolio.data.account.balance, 997.5);
+    assert.equal(portfolio.data.account.balance, Math.round((1_000 - order.json().receipt.total) * 1e6) / 1e6);
     await new Promise((resolve) => setTimeout(resolve, 600));
     assert.equal(user.count("portfolio"), 0);
 

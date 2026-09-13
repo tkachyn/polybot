@@ -274,8 +274,27 @@ export type FightDetail = Omit<FightSummary, "agents" | "sabotage"> & {
   checkpoints: CheckpointInfo[];
   sabotage: SabotageDetail | null;
   agents: FightAgentDetail[];
+  /** The market maker's exact quoting inputs (see `FightPricing`). */
+  pricing: FightPricing;
   /** Present once the fight has started; refetch the evaluation when `updatedAt` changes. */
   evaluation?: FightEvaluationPointer | null;
+};
+
+/**
+ * Orders are priced by an LMSR market maker (src/prediction/lmsr.ts): each
+ * one pays the integral of the price along its own price impact. These are
+ * the exact inputs the server fills with, so a client quote computed from
+ * them with the same functions matches the fill.
+ */
+export type FightPricing = {
+  /** LMSR depth b: the net shares that move one racer's log-odds by 1. */
+  depth: number;
+  /**
+   * YES log-odds per racerId, ln(p / (1 − p)), unrounded. Log-odds keep full
+   * precision next to 0 and 1, where prices do not. Display prices are
+   * `agents[].yes`.
+   */
+  logOdds: Record<string, number>;
 };
 
 /** One sample of every agent's YES price, keyed by racerId. */
@@ -321,9 +340,9 @@ export type Account = {
   displayName: string;
   /** Available credits. */
   balance: number;
-  /** Cost basis of open positions. */
+  /** Cost basis of open positions: what was paid for the shares still held. */
   held: number;
-  /** Mark-to-market value of open positions. */
+  /** Liquidation value of open positions: what selling each one now would return. */
   positionsValue: number;
   /** balance + positionsValue. */
   equity: number;
@@ -347,6 +366,10 @@ export type Position = {
   /** Current price of this side. */
   currentPrice: number;
   costBasis: number;
+  /**
+   * Liquidation value: what selling the whole position now would return.
+   * Below quantity × currentPrice, since the sale moves the price.
+   */
   value: number;
   pnl: number;
   /** pnl / costBasis. */
@@ -421,8 +444,9 @@ export type OrderRequest = {
   /** Positive integer number of shares. */
   quantity: number;
   /**
-   * Price guard. For buys, rejected with `price_moved` if the current price
-   * is above the limit. For sells, rejected if it is below.
+   * Worst acceptable average fill price (total / quantity). A buy filling
+   * above it, or a sell below it, is rejected with `price_moved` and
+   * `PriceMovedDetails`. Clients quote the order, then allow some slippage.
    */
   limitPrice?: number;
   /** Idempotency key. A repeat returns the original receipt. */
@@ -437,7 +461,9 @@ export type OrderReceipt = {
   side: Side;
   action: OrderAction;
   quantity: number;
+  /** Average fill price: total / quantity. */
   price: number;
+  /** Credits paid (buy) or received (sell). */
   total: number;
   /** quantity * 1.00 for buys; 0 for sells. */
   payoutIfWin: number;
@@ -553,6 +579,23 @@ export type ApiErrorCode =
 export type ApiError = {
   error: string;
   code: ApiErrorCode;
+  /** Present on `price_moved`. */
+  details?: PriceMovedDetails;
+};
+
+/** Where the market is now, for a rejected limit order. */
+export type PriceMovedDetails = {
+  racerId: string;
+  side: Side;
+  action: OrderAction;
+  quantity: number;
+  /** Current price of the side. */
+  price: number;
+  /** Average price the order would fill at now. */
+  averagePrice: number;
+  limitPrice: number;
+  /** The racer's YES log-odds now, to re-quote with (see `FightPricing`). */
+  logOdds: number;
 };
 
 // ---------------------------------------------------------------------------

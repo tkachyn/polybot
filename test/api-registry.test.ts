@@ -30,11 +30,11 @@ test("numbers fights sequentially over a shared ledger", async () => {
   assert.ok(changes.includes("race-a:fight"));
 
   registry.users.ensure({ userId: "alice-01" }, 1_000);
-  registry.get("race-a").placeOrder(
+  const { total } = registry.get("race-a").placeOrder(
     { userId: "alice-01", racerId: "racer-1", side: "yes", action: "buy", quantity: 10 },
     1_500,
   );
-  assert.equal(registry.ledger.balance("alice-01"), 47.5);
+  assert.equal(registry.ledger.balance("alice-01"), Math.round((50 - total) * 1e6) / 1e6);
 
   await assert.rejects(registry.create(raceInput("race-a")), isCode("conflict"));
   assert.throws(() => registry.get("missing"), isCode("not_found"));
@@ -111,11 +111,11 @@ test("a failed scheduled start leaves the fight voided and refunded", async () =
   await registry.create(raceInput("race-f", { startsAt: 10_000 }), 1_000);
   registry.users.ensure({ userId: "alice-01" }, 1_000);
   const race = registry.get("race-f");
-  race.placeOrder(
+  const { total } = race.placeOrder(
     { userId: "alice-01", racerId: "racer-2", side: "yes", action: "buy", quantity: 8 },
     2_000,
   );
-  assert.equal(registry.ledger.balance("alice-01"), 98);
+  assert.equal(registry.ledger.balance("alice-01"), Math.round((100 - total) * 1e6) / 1e6);
 
   await registry.tickAll(10_000);
   assert.equal(race.engine.race.status, "timed_out");

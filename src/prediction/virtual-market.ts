@@ -8,6 +8,13 @@ import {
   InMemoryCreditLedger,
   type CreditLedger,
 } from "../wallet/credit-ledger.js";
+import {
+  MAX_ORDER_QUANTITY,
+  ceilMicro,
+  floorMicro,
+  quoteTrade,
+  type TradeQuote,
+} from "./lmsr.js";
 
 export type MarketStatus = "open" | "frozen" | "resolved" | "unresolved";
 
@@ -16,7 +23,10 @@ export type PredictionPosition = {
   racerId: string;
   side: Side;
   quantity: number;
+  /** costBasis / quantity, rounded up to 6 decimals like a receipt's average. */
   averagePrice: number;
+  /** Credits paid for the shares still held. A sell releases it pro rata. */
+  costBasis: number;
 };
 
 export type TradeReceipt = {
@@ -27,17 +37,27 @@ export type TradeReceipt = {
   /** The outcome traded: YES on the racer, or NO on the racer. */
   side: Side;
   quantity: number;
+  /** Average fill price: total / quantity. */
   price: number;
   total: number;
 };
 
 export type TradeOptions = {
   /**
-   * Price guard. Buys fail with `price_moved` above it; sells fail below it.
+   * Worst acceptable average fill price. Buys fail with `price_moved` above
+   * it; sells fail below it.
    */
   limitPrice?: number;
   /** Timestamp recorded on the ledger entry. */
   now?: number;
+};
+
+/** What a client needs to quote an order exactly as the market will fill it. */
+export type MarketPricing = {
+  /** LMSR depth b, in shares. */
+  depth: number;
+  /** YES log-odds per racer, ln(p / (1 − p)), unrounded. */
+  logOdds: Record<string, number>;
 };
 
 /** Legacy resolution line. Use settlementLines() for side-aware detail. */
@@ -54,7 +74,7 @@ export type SettlementLine = {
   side: Side;
   quantity: number;
   averagePrice: number;
-  /** quantity * averagePrice. */
+  /** Credits paid for the shares settled. */
   costBasis: number;
   /** 1 or 0; null for an unresolved (void) market. */
   settlementPrice: number | null;
@@ -97,36 +117,60 @@ export type MarketQuote = {
 const PRECISION = 1_000_000;
 const FLOOR_RATIO = 0.02;
 const PRICE_TOLERANCE = 1e-9;
+/** Published prices stay inside (0, 1) so an open outcome never reads as settled. */
+const MIN_PRICE = 1 / PRECISION;
+
+/** Default LMSR depth: the net shares that move one racer's log-odds by 1. */
+export const DEFAULT_MARKET_DEPTH = 1_000;
 
 function round(value: number): number {
   return Math.round(value * PRECISION) / PRECISION;
 }
 
+function logSumExp(values: readonly number[]): number {
+  const top = Math.max(...values);
+  return top + Math.log(values.reduce((sum, value) => sum + Math.exp(value - top), 0));
+}
+
+/**
+ * A logarithmic market scoring rule market maker (src/prediction/lmsr.ts)
+ * over four outcomes. Each racer's weight is its prior (the base liquidity
+ * plus race confidence signals) times e^(q/b), where q is the net YES shares
+ * the market has sold on it; prices are the normalised weights. With no
+ * trades the prices are exactly the prior weights, normalised.
+ */
 export class VirtualPredictionMarket {
   readonly racerIds: readonly string[];
-  /** L: every racer's starting weight. */
+  /** L: every racer's starting prior weight. Confidence signals are multiples of it. */
   readonly baseLiquidity: number;
+  /** b: LMSR depth in shares. Larger is deeper: an order moves the price less. */
+  readonly depth: number;
   readonly raceId?: string;
   status: MarketStatus = "open";
   winnerRacerId?: string;
 
   private readonly ledger: CreditLedger;
   private readonly positions = new Map<string, PredictionPosition>();
-  private readonly demand = new Map<string, number>();
+  /** q: net YES shares sold per racer. A NO share is one YES short (plus a constant). */
+  private readonly outstanding = new Map<string, number>();
   private readonly signals = new Map<string, number>();
-  private readonly collapsed = new Set<string>();
+  /** Collapsed racers, with the log prior their weight was pinned to. */
+  private readonly collapsed = new Map<string, number>();
   private readonly traderIds = new Set<string>();
   private readonly racerStats = new Map<string, RacerTradeStats>();
   private settlement: SettlementLine[] = [];
   private volume = 0;
   private tradeCount = 0;
   private refunded = 0;
-  private prices: Record<string, number>;
+  /** YES log-odds per racer: the exact state orders are priced from. */
+  private odds: Record<string, number> = {};
+  private prices: Record<string, number> = {};
 
   constructor(
     racerIds: readonly string[],
     options: {
       baseLiquidity?: number;
+      depth?: number;
       ledger?: CreditLedger;
       raceId?: string;
     } = {},
@@ -138,11 +182,15 @@ export class VirtualPredictionMarket {
     if (!Number.isFinite(this.baseLiquidity) || this.baseLiquidity <= 0) {
       throw new DomainError("invalid", "baseLiquidity must be a positive number");
     }
+    this.depth = options.depth ?? DEFAULT_MARKET_DEPTH;
+    if (!Number.isFinite(this.depth) || this.depth <= 0) {
+      throw new DomainError("invalid", "depth must be a positive number");
+    }
     this.ledger = options.ledger ?? new InMemoryCreditLedger();
     this.raceId = options.raceId;
     this.racerIds = [...racerIds];
     for (const racerId of racerIds) {
-      this.demand.set(racerId, 0);
+      this.outstanding.set(racerId, 0);
       this.signals.set(racerId, 0);
       this.racerStats.set(racerId, {
         racerId,
@@ -154,7 +202,7 @@ export class VirtualPredictionMarket {
         noPayout: 0,
       });
     }
-    this.prices = this.calculatePrices();
+    this.reprice();
   }
 
   fund(userId: string, credits: number, now?: number): void {
@@ -168,8 +216,14 @@ export class VirtualPredictionMarket {
     return this.ledger.balance(userId);
   }
 
+  /** Published YES prices: 6 decimals, summing to exactly 1. */
   pricesSnapshot(): Record<string, number> {
     return { ...this.prices };
+  }
+
+  /** The exact inputs orders are priced from (see src/prediction/lmsr.ts). */
+  pricing(): MarketPricing {
+    return { depth: this.depth, logOdds: { ...this.odds } };
   }
 
   /** Current price of one side of a racer's outcome. NO is 1 - YES. */
@@ -188,6 +242,20 @@ export class VirtualPredictionMarket {
     }));
   }
 
+  /** What this order would cost or return right now. Never trades. */
+  quote(racerId: string, side: Side, action: OrderAction, quantity: number): TradeQuote {
+    this.assertRacer(racerId);
+    this.assertSide(side);
+    this.assertQuantity(quantity);
+    return quoteTrade(this.odds[racerId], side, action, quantity, this.depth);
+  }
+
+  /** Credits that selling `quantity` shares now would return: the honest mark. */
+  liquidationValue(racerId: string, side: Side, quantity: number): number {
+    if (quantity <= 0) return 0;
+    return this.quote(racerId, side, "sell", quantity).total;
+  }
+
   position(userId: string, racerId: string, side: Side = "yes"): PredictionPosition {
     this.assertRacer(racerId);
     this.assertSide(side);
@@ -198,6 +266,7 @@ export class VirtualPredictionMarket {
       side,
       quantity: position?.quantity ?? 0,
       averagePrice: position?.averagePrice ?? 0,
+      costBasis: position?.costBasis ?? 0,
     };
   }
 
@@ -219,45 +288,35 @@ export class VirtualPredictionMarket {
     options: TradeOptions = {},
   ): TradeReceipt {
     this.assertTradable();
-    this.assertRacer(racerId);
-    this.assertQuantity(quantity);
-    this.assertSide(side);
-
-    const price = this.sidePrice(racerId, side);
-    this.assertLimit("buy", price, options.limitPrice);
-    const total = round(price * quantity);
-    this.ledger.debit(userId, total, {
+    const quote = this.quote(racerId, side, "buy", quantity);
+    this.assertLimit(racerId, side, "buy", quote, options.limitPrice);
+    this.ledger.debit(userId, quote.total, {
       type: "buy",
       raceId: this.raceId,
       racerId,
       side,
       quantity,
-      price,
+      price: quote.averagePrice,
       at: options.now,
     });
 
     const key = this.positionKey(userId, racerId, side);
     const previous = this.positions.get(key);
-    const previousQuantity = previous?.quantity ?? 0;
-    const nextQuantity = previousQuantity + quantity;
-    const averagePrice = round(
-      ((previous?.averagePrice ?? 0) * previousQuantity + price * quantity) /
-        nextQuantity,
-    );
+    const nextQuantity = (previous?.quantity ?? 0) + quantity;
+    const costBasis = (previous?.costBasis ?? 0) + quote.total;
     this.positions.set(key, {
       userId,
       racerId,
       side,
       quantity: nextQuantity,
-      averagePrice,
+      // Rounded like a receipt's average, so one fill reads the same in both.
+      averagePrice: ceilMicro(costBasis / nextQuantity),
+      costBasis,
     });
-    for (const target of this.demandTargets(racerId, side)) {
-      this.demand.set(target, (this.demand.get(target) ?? 0) + quantity);
-    }
-    this.prices = this.calculatePrices();
-    this.recordTrade(userId, racerId, side, "buy", total);
+    this.move(racerId, side === "yes" ? quantity : -quantity);
+    this.recordTrade(userId, racerId, side, "buy", quote.total);
 
-    return { userId, racerId, action: "buy", side, quantity, price, total };
+    return { userId, racerId, action: "buy", side, quantity, price: quote.averagePrice, total: quote.total };
   }
 
   sell(
@@ -268,26 +327,20 @@ export class VirtualPredictionMarket {
     options: TradeOptions = {},
   ): TradeReceipt {
     this.assertTradable();
-    this.assertRacer(racerId);
-    this.assertQuantity(quantity);
-    this.assertSide(side);
-
+    const quote = this.quote(racerId, side, "sell", quantity);
     const key = this.positionKey(userId, racerId, side);
     const position = this.positions.get(key);
     if (!position || position.quantity < quantity) {
       throw new DomainError("insufficient_position", "insufficient position to sell");
     }
-
-    const price = this.sidePrice(racerId, side);
-    this.assertLimit("sell", price, options.limitPrice);
-    const total = round(price * quantity);
-    this.ledger.credit(userId, total, {
+    this.assertLimit(racerId, side, "sell", quote, options.limitPrice);
+    this.ledger.credit(userId, quote.total, {
       type: "sell",
       raceId: this.raceId,
       racerId,
       side,
       quantity,
-      price,
+      price: quote.averagePrice,
       at: options.now,
     });
 
@@ -295,21 +348,23 @@ export class VirtualPredictionMarket {
     if (remaining === 0) {
       this.positions.delete(key);
     } else {
-      this.positions.set(key, { ...position, quantity: remaining });
+      // Average cost: the remainder keeps its average price.
+      this.positions.set(key, {
+        ...position,
+        quantity: remaining,
+        costBasis: (position.costBasis * remaining) / position.quantity,
+      });
     }
-    for (const target of this.demandTargets(racerId, side)) {
-      this.demand.set(target, Math.max(0, (this.demand.get(target) ?? 0) - quantity));
-    }
-    this.prices = this.calculatePrices();
-    this.recordTrade(userId, racerId, side, "sell", total);
+    this.move(racerId, side === "yes" ? -quantity : quantity);
+    this.recordTrade(userId, racerId, side, "sell", quote.total);
 
-    return { userId, racerId, action: "sell", side, quantity, price, total };
+    return { userId, racerId, action: "sell", side, quantity, price: quote.averagePrice, total: quote.total };
   }
 
   /**
-   * Deterministic confidence signal: shifts a racer's weight by deltaWeight.
-   * Only applies while the market is open. Returns whether prices were
-   * recalculated.
+   * Deterministic confidence signal: shifts a racer's prior weight by
+   * deltaWeight. Only applies while the market is open. Returns whether
+   * prices were recalculated.
    */
   adjustConfidence(racerId: string, deltaWeight: number): boolean {
     this.assertRacer(racerId);
@@ -319,23 +374,31 @@ export class VirtualPredictionMarket {
     if (this.status !== "open" || this.collapsed.has(racerId) || deltaWeight === 0) {
       return false;
     }
-    // Never let the signal carry the weight below the floor, so a later
+    // Never let the signal carry the prior below the floor, so a later
     // positive signal is not swallowed by accumulated negative weight.
-    const minimumSignal = this.floorWeight() - this.baseLiquidity - (this.demand.get(racerId) ?? 0);
+    const minimumSignal = this.floorWeight() - this.baseLiquidity;
     const next = Math.max(minimumSignal, (this.signals.get(racerId) ?? 0) + deltaWeight);
     this.signals.set(racerId, next);
-    this.prices = this.calculatePrices();
+    this.reprice();
     return true;
   }
 
-  /** Pins a racer's weight to the floor (e.g. the racer failed). Open only. */
+  /**
+   * Drops a racer to the floor (e.g. the racer failed): its weight becomes
+   * 2% of the others' average, unless it is already lower. Later trades still
+   * move it along the curve. Open only.
+   */
   collapse(racerId: string): boolean {
     this.assertRacer(racerId);
     if (this.status !== "open" || this.collapsed.has(racerId)) {
       return false;
     }
-    this.collapsed.add(racerId);
-    this.prices = this.calculatePrices();
+    const others = this.racerIds.filter((candidate) => candidate !== racerId);
+    const floor = Math.log(this.floorWeight() / (others.length * this.baseLiquidity)) +
+      logSumExp(others.map((candidate) => this.logWeight(candidate)));
+    const pinned = Math.min(this.logWeight(racerId), floor);
+    this.collapsed.set(racerId, pinned - (this.outstanding.get(racerId) ?? 0) / this.depth);
+    this.reprice();
     return true;
   }
 
@@ -424,7 +487,7 @@ export class VirtualPredictionMarket {
         side: position.side,
         quantity: position.quantity,
         averagePrice: position.averagePrice,
-        costBasis: round(position.quantity * position.averagePrice),
+        costBasis: round(position.costBasis),
         settlementPrice: won ? 1 : 0,
         payout,
         result: won ? "won" : "lost",
@@ -435,13 +498,13 @@ export class VirtualPredictionMarket {
     return payouts;
   }
 
-  /** Voids the market: refunds every open position at its average price. */
+  /** Voids the market: refunds every open position what was paid for it. */
   markUnresolved(now?: number): SettlementLine[] {
     this.assertUnsettled();
     this.status = "unresolved";
     const lines: SettlementLine[] = [];
     for (const position of this.positions.values()) {
-      const refund = round(position.quantity * position.averagePrice);
+      const refund = floorMicro(position.costBasis);
       this.ledger.credit(position.userId, refund, {
         type: "refund",
         raceId: this.raceId,
@@ -469,42 +532,43 @@ export class VirtualPredictionMarket {
     return lines.map((line) => ({ ...line }));
   }
 
-  private calculatePrices(): Record<string, number> {
-    const floor = this.floorWeight();
-    let demandSum = 0;
-    let adjustmentSum = 0;
-    const weights = this.racerIds.map((racerId) => {
-      const demand = this.demand.get(racerId) ?? 0;
-      const base = this.baseLiquidity + demand;
-      const weight = this.collapsed.has(racerId)
-        ? floor
-        : Math.max(floor, base + (this.signals.get(racerId) ?? 0));
-      demandSum += demand;
-      adjustmentSum += weight - base;
-      return weight;
-    });
-    // With no signals every adjustment is exactly 0, so this is the original
-    // `racers * L + sum(demand)` total and prices stay bit-for-bit identical.
-    const totalWeight = this.racerIds.length * this.baseLiquidity + demandSum + adjustmentSum;
+  /** Log of a racer's weight: its log prior plus q/b. */
+  private logWeight(racerId: string): number {
+    const shares = (this.outstanding.get(racerId) ?? 0) / this.depth;
+    const pinned = this.collapsed.get(racerId);
+    if (pinned !== undefined) return pinned + shares;
+    const prior = Math.max(this.floorWeight(), this.baseLiquidity + (this.signals.get(racerId) ?? 0));
+    return Math.log(prior) + shares;
+  }
 
-    const rounded = this.racerIds.map(
-      (racerId, index) => [racerId, round(weights[index] / totalWeight)] as const,
-    );
-    const difference = round(1 - rounded.reduce((sum, [, price]) => sum + price, 0));
-    const last = rounded[rounded.length - 1];
-    rounded[rounded.length - 1] = [last[0], round(last[1] + difference)];
-    return Object.fromEntries(rounded);
+  private move(racerId: string, yesShares: number): void {
+    this.outstanding.set(racerId, (this.outstanding.get(racerId) ?? 0) + yesShares);
+    this.reprice();
+  }
+
+  private reprice(): void {
+    const logs = this.racerIds.map((racerId) => this.logWeight(racerId));
+    const total = logSumExp(logs);
+    this.odds = Object.fromEntries(this.racerIds.map((racerId, index) => [
+      racerId,
+      logs[index] - logSumExp(logs.filter((_, other) => other !== index)),
+    ]));
+    const rounded = logs.map((log) =>
+      Math.min(1 - MIN_PRICE, Math.max(MIN_PRICE, round(Math.exp(log - total)))));
+    const difference = round(1 - rounded.reduce((sum, price) => sum + price, 0));
+    // The last racer absorbs the rounding difference unless that would push it
+    // out of (0, 1); then the largest price does.
+    let target = rounded.length - 1;
+    const adjusted = rounded[target] + difference;
+    if (adjusted < MIN_PRICE || adjusted > 1 - MIN_PRICE) {
+      target = rounded.indexOf(Math.max(...rounded));
+    }
+    rounded[target] = round(rounded[target] + difference);
+    this.prices = Object.fromEntries(this.racerIds.map((racerId, index) => [racerId, rounded[index]]));
   }
 
   private floorWeight(): number {
     return FLOOR_RATIO * this.baseLiquidity;
-  }
-
-  /** YES adds demand to the racer; NO is a basket of the other three. */
-  private demandTargets(racerId: string, side: Side): string[] {
-    return side === "yes"
-      ? [racerId]
-      : this.racerIds.filter((candidate) => candidate !== racerId);
   }
 
   private recordTrade(
@@ -534,24 +598,38 @@ export class VirtualPredictionMarket {
     return stats;
   }
 
-  private assertLimit(action: OrderAction, price: number, limitPrice?: number): void {
+  /** The limit guards the average fill price, so a slip can allow for slippage. */
+  private assertLimit(
+    racerId: string,
+    side: Side,
+    action: OrderAction,
+    quote: TradeQuote,
+    limitPrice?: number,
+  ): void {
     if (limitPrice === undefined) return;
     if (typeof limitPrice !== "number" || !Number.isFinite(limitPrice) ||
       limitPrice < 0 || limitPrice > 1) {
       throw new DomainError("invalid", "limitPrice must be a number from 0 to 1");
     }
-    if (action === "buy" && price > limitPrice + PRICE_TOLERANCE) {
-      throw new DomainError(
-        "price_moved",
-        `price moved: ${price} is above the limit ${limitPrice}`,
-      );
-    }
-    if (action === "sell" && price < limitPrice - PRICE_TOLERANCE) {
-      throw new DomainError(
-        "price_moved",
-        `price moved: ${price} is below the limit ${limitPrice}`,
-      );
-    }
+    const average = quote.total / quote.quantity;
+    const buy = action === "buy";
+    if (buy ? average <= limitPrice + PRICE_TOLERANCE : average >= limitPrice - PRICE_TOLERANCE) return;
+    const price = this.sidePrice(racerId, side);
+    throw new DomainError(
+      "price_moved",
+      `price moved to ${price}: ${quote.quantity} shares would ${buy ? "cost" : "return"} an average of ` +
+        `${quote.averagePrice}, ${buy ? "above" : "below"} the limit ${limitPrice}`,
+      {
+        racerId,
+        side,
+        action,
+        quantity: quote.quantity,
+        price,
+        averagePrice: quote.averagePrice,
+        limitPrice,
+        logOdds: this.odds[racerId],
+      },
+    );
   }
 
   private assertTradable(): void {
@@ -579,12 +657,15 @@ export class VirtualPredictionMarket {
   }
 
   private assertQuantity(quantity: number): void {
-    if (!Number.isInteger(quantity) || quantity <= 0) {
-      throw new DomainError("invalid", "quantity must be a positive integer");
+    if (!Number.isInteger(quantity) || quantity <= 0 || quantity > MAX_ORDER_QUANTITY) {
+      throw new DomainError(
+        "invalid",
+        `quantity must be a whole number of shares from 1 to ${MAX_ORDER_QUANTITY}`,
+      );
     }
   }
 
   private positionKey(userId: string, racerId: string, side: Side): string {
-    return `${userId}\u0000${racerId}\u0000${side}`;
+    return `${userId} ${racerId} ${side}`;
   }
 }

@@ -330,6 +330,7 @@ export function presentFightDetail(
     checkpoints,
     sabotage: sabotageDetail(view),
     agents: view.racers.map((racer, index) => agentDetail(view, racer, index)),
+    pricing: view.coordinator.market.pricing(),
     // Null before the start; clients refetch the evaluation when updatedAt moves.
     evaluation: coordinator.evaluationPointer,
   };
@@ -405,8 +406,10 @@ export function presentPositions(
     .map((position): Position => {
       const index = market.racerIds.indexOf(position.racerId);
       const currentPrice = market.sidePrice(position.racerId, position.side);
-      const costBasis = round(position.quantity * position.averagePrice);
-      const value = round(position.quantity * currentPrice);
+      const costBasis = round(position.costBasis);
+      // Marked at what selling the whole position now returns, so a fresh buy
+      // shows no paper profit.
+      const value = market.liquidationValue(position.racerId, position.side, position.quantity);
       const pnl = round(value - costBasis);
       return {
         raceId: coordinator.raceId,
@@ -607,7 +610,7 @@ export function presentMyFight(
   };
 }
 
-/** Judges ranked by current P/L in one fight. Open positions are marked live. */
+/** Judges ranked by current P/L in one fight. Open positions are marked at liquidation value. */
 export function presentTraderLeaderboard(
   coordinator: RaceCoordinator,
   users: readonly UserRecord[],
@@ -626,7 +629,8 @@ export function presentTraderLeaderboard(
         : sum, 0);
     const open = coordinator.market.positionsFor(userId);
     const openValue = open.reduce(
-      (sum, position) => sum + position.quantity * coordinator.market.sidePrice(position.racerId, position.side),
+      (sum, position) =>
+        sum + coordinator.market.liquidationValue(position.racerId, position.side, position.quantity),
       0,
     );
     const pnl = round(returned + openValue - cost);

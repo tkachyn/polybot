@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { buildApi } from "../src/api/server.js";
+import { quoteTrade } from "../src/prediction/lmsr.js";
 import { createFactory, raceInput } from "./api-fixtures.js";
 
 function build(options: Partial<Parameters<typeof buildApi>[0]> = {}) {
@@ -188,12 +189,18 @@ test("fights, orders, frames, my-fight and leaderboard", async () => {
   const order = (payload: Record<string, unknown>, raceId = "race-live") =>
     app.inject({ method: "POST", url: `/api/fights/${raceId}/orders`, payload });
   const base = { userId: "alice-01", racerId: "racer-2", side: "no", action: "buy", quantity: 5 };
-  const bought = await order({ ...base, clientOrderId: "o-1" });
+  // The fight's pricing inputs quote the order exactly as it fills.
+  const { pricing } = (await app.inject({ method: "GET", url: "/api/fights/race-live" })).json().fight;
+  const expected = quoteTrade(pricing.logOdds["racer-2"], "no", "buy", 5, pricing.depth);
+  const bought = await order({ ...base, clientOrderId: "o-1", limitPrice: expected.averagePrice });
   assert.equal(bought.statusCode, 200);
-  assert.equal(bought.json().receipt.price, 0.75);
+  assert.equal(bought.json().receipt.price, expected.averagePrice);
+  assert.equal(bought.json().receipt.total, expected.total);
+  assert.ok(expected.averagePrice > 0.75, "NO pays for its own impact above the 75¢ opening price");
   assert.equal(bought.json().receipt.payoutIfWin, 5);
   assert.equal(bought.json().quotes.length, 4);
-  assert.equal(bought.json().account.held, 3.75);
+  assert.equal(bought.json().account.held, expected.total);
+  assert.ok(bought.json().account.unrealizedPnl <= 0, "a fresh buy shows no paper profit");
   const repeated = await order({ ...base, clientOrderId: "o-1" });
   assert.equal(repeated.json().receipt.orderId, bought.json().receipt.orderId);
 
@@ -202,6 +209,11 @@ test("fights, orders, frames, my-fight and leaderboard", async () => {
     assert.deepEqual([response.statusCode, response.json().code], [status, code], JSON.stringify(payload));
   };
   await expectCode({ ...base, limitPrice: 0.1 }, 400, "price_moved");
+  const moved = (await order({ ...base, limitPrice: 0.1 })).json();
+  assert.equal(moved.details.side, "no");
+  assert.equal(moved.details.price, bought.json().quotes[1].no, "the rejection carries the price now");
+  assert.equal(moved.details.limitPrice, 0.1);
+  assert.equal(typeof moved.details.logOdds, "number");
   await expectCode({ ...base, action: "sell", quantity: 99 }, 400, "insufficient_position");
   await expectCode({ ...base, racerId: "racer-9" }, 404, "not_found");
   await expectCode({ ...base, userId: "nobody-1" }, 404, "not_found");
@@ -213,7 +225,7 @@ test("fights, orders, frames, my-fight and leaderboard", async () => {
   const mine = await app.inject({ method: "GET", url: "/api/fights/race-live/me?userId=alice-01" });
   assert.equal(mine.statusCode, 200);
   assert.equal(mine.json().open.length, 1);
-  assert.equal(mine.json().totals.cost, 3.75);
+  assert.equal(mine.json().totals.cost, expected.total);
   assert.equal(mine.json().totals.returnPct, null);
   const noUser = await app.inject({ method: "GET", url: "/api/fights/race-live/me" });
   assert.equal(noUser.statusCode, 400);

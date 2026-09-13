@@ -1,10 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { DomainError } from "../src/domain/errors.js";
+import { priceFromLogOdds } from "../src/prediction/lmsr.js";
 import { VirtualPredictionMarket } from "../src/prediction/virtual-market.js";
 import { InMemoryCreditLedger } from "../src/wallet/credit-ledger.js";
 
 const racers = ["racer-1", "racer-2", "racer-3", "racer-4"] as const;
+const EVEN = { "racer-1": 0.25, "racer-2": 0.25, "racer-3": 0.25, "racer-4": 0.25 };
 
 function round(value: number): number {
   return Math.round(value * 1_000_000) / 1_000_000;
@@ -44,6 +46,7 @@ test("fund deposits virtual credits through the ledger", () => {
 
 test("receipts carry the action and side; YES is the default side", () => {
   const { market } = fundedMarket();
+  const quote = market.quote("racer-1", "yes", "buy", 10);
   const receipt = market.buy("alice", "racer-1", 10);
   assert.deepEqual(receipt, {
     userId: "alice",
@@ -51,8 +54,8 @@ test("receipts carry the action and side; YES is the default side", () => {
     action: "buy",
     side: "yes",
     quantity: 10,
-    price: 0.25,
-    total: 2.5,
+    price: quote.averagePrice,
+    total: quote.total,
   });
   const sold = market.sell("alice", "racer-1", 4);
   assert.equal(sold.action, "sell");
@@ -64,42 +67,38 @@ test("NO is priced at 1 - YES and buys a basket of the other racers", () => {
   assert.equal(market.sidePrice("racer-1", "no"), 0.75);
 
   const receipt = market.buy("bob", "racer-1", 10, "no");
-  assert.equal(receipt.price, 0.75);
-  assert.equal(receipt.total, 7.5);
-  assert.equal(market.balance("bob"), 92.5);
+  assert.ok(receipt.price > 0.75 && receipt.price < market.sidePrice("racer-1", "no"));
+  assert.equal(market.balance("bob"), round(100 - receipt.total));
 
   const prices = market.pricesSnapshot();
-  assert.equal(prices["racer-1"], round(100 / 430));
-  assert.equal(prices["racer-2"], round(110 / 430));
-  assert.equal(prices["racer-3"], round(110 / 430));
+  assert.ok(prices["racer-1"] < 0.25, "NO on racer-1 drops its YES price");
+  assert.equal(prices["racer-2"], prices["racer-3"]);
+  // The last racer absorbs the rounding that keeps the sum at exactly 1.
+  assert.ok(Math.abs(prices["racer-4"] - prices["racer-3"]) < 2e-6);
   assert.equal(round(sum(prices)), 1);
-  assert.equal(sum(prices), 1);
+  assert.equal(prices["racer-1"], round(priceFromLogOdds(market.pricing().logOdds["racer-1"])));
   assert.equal(market.sidePrice("racer-1", "no"), round(1 - prices["racer-1"]));
   assert.deepEqual(market.position("bob", "racer-1", "no"), {
     userId: "bob",
     racerId: "racer-1",
     side: "no",
     quantity: 10,
-    averagePrice: 0.75,
+    averagePrice: receipt.price,
+    costBasis: receipt.total,
   });
   assert.equal(market.position("bob", "racer-1").quantity, 0);
 });
 
-test("selling NO removes basket demand and restores prices", () => {
+test("selling NO back restores prices and never returns more than it cost", () => {
   const { market } = fundedMarket();
-  market.buy("bob", "racer-1", 10, "no");
-  const price = market.sidePrice("racer-1", "no");
+  const bought = market.buy("bob", "racer-1", 10, "no");
+  const quote = market.quote("racer-1", "no", "sell", 10);
   const receipt = market.sell("bob", "racer-1", 10, "no");
-  assert.equal(receipt.price, price);
-  assert.equal(receipt.total, round(price * 10));
-  assert.deepEqual(market.pricesSnapshot(), {
-    "racer-1": 0.25,
-    "racer-2": 0.25,
-    "racer-3": 0.25,
-    "racer-4": 0.25,
-  });
+  assert.equal(receipt.total, quote.total);
+  assert.ok(receipt.total <= bought.total);
+  assert.deepEqual(market.pricesSnapshot(), EVEN);
   assert.equal(market.position("bob", "racer-1", "no").quantity, 0);
-  assert.equal(market.balance("bob"), round(100 - 7.5 + receipt.total));
+  assert.equal(market.balance("bob"), round(100 - bought.total + receipt.total));
 });
 
 test("YES and NO positions on one racer are tracked separately", () => {
@@ -120,45 +119,41 @@ test("YES and NO positions on one racer are tracked separately", () => {
   assert.equal(market.positionsFor("bob").length, 0);
 });
 
-test("selling keeps the average price of the remaining position", () => {
+test("selling keeps the average price and releases cost pro rata", () => {
   const { market } = fundedMarket();
-  market.buy("alice", "racer-1", 10);
+  const first = market.buy("alice", "racer-1", 10);
   market.buy("bob", "racer-1", 30);
-  market.buy("alice", "racer-1", 10);
+  const second = market.buy("alice", "racer-1", 10);
   const before = market.position("alice", "racer-1");
-  assert.equal(before.averagePrice, round((0.25 * 10 + before.averagePrice * 20 - 0.25 * 10) / 20));
+  assert.ok(Math.abs(before.costBasis - (first.total + second.total)) < 1e-9);
+  assert.ok(Math.abs(before.averagePrice - (first.total + second.total) / 20) < 1e-6);
   market.sell("alice", "racer-1", 15);
   const after = market.position("alice", "racer-1");
   assert.equal(after.quantity, 5);
   assert.equal(after.averagePrice, before.averagePrice);
+  assert.ok(Math.abs(after.costBasis - before.costBasis / 4) < 1e-9);
 });
 
-test("limit prices guard buys and sells", () => {
+test("limit prices guard the average fill price", () => {
   const { market } = fundedMarket();
   assertDomainError(
-    () => market.buy("alice", "racer-1", 1, "yes", { limitPrice: 0.24 }),
+    () => market.buy("alice", "racer-1", 1, "yes", { limitPrice: 0.25 }),
     "price_moved",
   );
   assert.equal(market.balance("alice"), 100);
   assert.equal(market.position("alice", "racer-1").quantity, 0);
 
-  market.buy("alice", "racer-1", 1, "yes", { limitPrice: 0.25 - 1e-10 });
-  market.buy("alice", "racer-1", 1, "no", { limitPrice: 0.75 });
+  market.buy("alice", "racer-1", 1, "yes", { limitPrice: market.quote("racer-1", "yes", "buy", 1).averagePrice });
+  market.buy("alice", "racer-1", 1, "no", { limitPrice: market.quote("racer-1", "no", "buy", 1).averagePrice });
 
-  const yes = market.sidePrice("racer-1", "yes");
+  const sell = market.quote("racer-1", "yes", "sell", 1);
   assertDomainError(
-    () => market.sell("alice", "racer-1", 1, "yes", { limitPrice: yes + 0.01 }),
+    () => market.sell("alice", "racer-1", 1, "yes", { limitPrice: sell.averagePrice + 0.01 }),
     "price_moved",
   );
-  market.sell("alice", "racer-1", 1, "yes", { limitPrice: yes });
-  assertDomainError(
-    () => market.buy("alice", "racer-1", 1, "yes", { limitPrice: 1.5 }),
-    "invalid",
-  );
-  assertDomainError(
-    () => market.buy("alice", "racer-1", 1, "yes", { limitPrice: Number.NaN }),
-    "invalid",
-  );
+  market.sell("alice", "racer-1", 1, "yes", { limitPrice: sell.averagePrice });
+  assertDomainError(() => market.buy("alice", "racer-1", 1, "yes", { limitPrice: 1.5 }), "invalid");
+  assertDomainError(() => market.buy("alice", "racer-1", 1, "yes", { limitPrice: Number.NaN }), "invalid");
 });
 
 test("domain errors carry codes and keep their messages", () => {
@@ -189,12 +184,7 @@ test("confidence signals move weights while open", () => {
   assert.equal(sum(prices), 1);
 
   assert.equal(market.adjustConfidence("racer-1", -35), true);
-  assert.deepEqual(market.pricesSnapshot(), {
-    "racer-1": 0.25,
-    "racer-2": 0.25,
-    "racer-3": 0.25,
-    "racer-4": 0.25,
-  });
+  assert.deepEqual(market.pricesSnapshot(), EVEN);
   assert.equal(market.adjustConfidence("racer-1", 0), false);
   assert.throws(() => market.adjustConfidence("racer-1", Number.NaN), DomainError);
 
@@ -216,7 +206,7 @@ test("weights are floored at 2% of base liquidity", () => {
   assert.equal(market.pricesSnapshot()["racer-1"], round(37 / 337));
 });
 
-test("collapse pins a racer to the floor while open", () => {
+test("collapse drops a racer to the floor while open", () => {
   const { market } = fundedMarket();
   assert.equal(market.collapse("racer-2"), true);
   assert.equal(market.isCollapsed("racer-2"), true);
@@ -227,9 +217,10 @@ test("collapse pins a racer to the floor while open", () => {
 
   assert.equal(market.collapse("racer-2"), false);
   assert.equal(market.adjustConfidence("racer-2", 35), false);
-  // Demand no longer lifts a collapsed racer: it stays pinned to the floor.
-  market.buy("alice", "racer-2", 10);
-  assert.equal(market.pricesSnapshot()["racer-2"], round(2 / 302));
+  // Trades still price along the curve, so the floor is never free to buy.
+  const bought = market.buy("alice", "racer-2", 10);
+  assert.ok(bought.price > round(2 / 302));
+  assert.ok(market.pricesSnapshot()["racer-2"] < 0.007);
   assert.equal(round(sum(market.pricesSnapshot())), 1);
 
   const frozen = new VirtualPredictionMarket(racers);
@@ -245,15 +236,14 @@ test("quotes list YES and NO per racer in order", () => {
   for (const quote of quotes) {
     assert.equal(quote.no, round(1 - quote.yes));
   }
-  assert.equal(quotes[0].yes, 0.268293);
+  assert.equal(quotes[0].yes, market.pricesSnapshot()["racer-1"]);
+  assert.ok(quotes[0].yes > 0.25);
 });
 
 test("resolution pays YES on the winner and NO on every loser", () => {
   const { market, ledger } = fundedMarket();
-  market.buy("alice", "racer-1", 10);
-  const noPrice = market.sidePrice("racer-1", "no");
-  assert.equal(noPrice, 0.731707);
-  market.buy("bob", "racer-1", 10, "no");
+  const alice = market.buy("alice", "racer-1", 10);
+  const bob = market.buy("bob", "racer-1", 10, "no");
   market.fund("carol", 10);
   market.buy("carol", "racer-2", 5, "no");
 
@@ -265,8 +255,8 @@ test("resolution pays YES on the winner and NO on every loser", () => {
   ]);
   assert.equal(market.status, "resolved");
   assert.equal(market.winnerRacerId, "racer-2");
-  assert.equal(market.balance("bob"), round(100 - 7.31707 + 10));
-  assert.equal(market.balance("alice"), 97.5);
+  assert.equal(market.balance("bob"), round(100 - bob.total + 10));
+  assert.equal(market.balance("alice"), round(100 - alice.total));
   assert.deepEqual(market.allPositions(), []);
 
   const lines = market.settlementLines();
@@ -275,8 +265,8 @@ test("resolution pays YES on the winner and NO on every loser", () => {
     racerId: "racer-1",
     side: "yes",
     quantity: 10,
-    averagePrice: 0.25,
-    costBasis: 2.5,
+    averagePrice: alice.price,
+    costBasis: alice.total,
     settlementPrice: 0,
     payout: 0,
     result: "lost",
@@ -286,8 +276,8 @@ test("resolution pays YES on the winner and NO on every loser", () => {
     racerId: "racer-1",
     side: "no",
     quantity: 10,
-    averagePrice: 0.731707,
-    costBasis: 7.31707,
+    averagePrice: bob.price,
+    costBasis: bob.total,
     settlementPrice: 1,
     payout: 10,
     result: "won",
@@ -300,33 +290,32 @@ test("resolution pays YES on the winner and NO on every loser", () => {
   assert.equal(bobPayout?.amount, 10);
   assert.equal(bobPayout?.raceId, "race-9");
   assert.equal(bobPayout?.side, "no");
-  assert.equal(bobPayout?.price, 0.731707);
+  assert.equal(bobPayout?.price, bob.price);
   assert.equal(bobPayout?.at, 5_000);
   const aliceLoss = ledger.entries("alice").at(-1);
   assert.equal(aliceLoss?.type, "loss");
   assert.equal(aliceLoss?.amount, 0);
-  assert.equal(aliceLoss?.price, 0.25);
+  assert.equal(aliceLoss?.price, alice.price);
   assert.equal(aliceLoss?.quantity, 10);
 });
 
 test("stats track volume, traders and per-racer flows", () => {
   const { market } = fundedMarket();
-  market.buy("alice", "racer-1", 10);
-  market.buy("bob", "racer-1", 10, "no");
-  market.sell("alice", "racer-1", 4);
-  const sellTotal = round(market.stats().volume - 2.5 - 7.31707);
+  const alice = market.buy("alice", "racer-1", 10);
+  const bob = market.buy("bob", "racer-1", 10, "no");
+  const sold = market.sell("alice", "racer-1", 4);
   market.resolve("racer-1");
 
   const stats = market.stats();
   assert.equal(stats.traders, 2);
   assert.equal(stats.trades, 3);
-  assert.equal(stats.volume, round(2.5 + 7.31707 + sellTotal));
+  assert.equal(stats.volume, round(alice.total + bob.total + sold.total));
   assert.deepEqual(stats.racers["racer-1"], {
     racerId: "racer-1",
-    yesBuyCost: 2.5,
-    yesSellProceeds: sellTotal,
+    yesBuyCost: alice.total,
+    yesSellProceeds: sold.total,
     yesPayout: 6,
-    noBuyCost: 7.31707,
+    noBuyCost: bob.total,
     noSellProceeds: 0,
     noPayout: 0,
   });
@@ -335,28 +324,27 @@ test("stats track volume, traders and per-racer flows", () => {
   assert.equal(stats.refunded, 0);
 });
 
-test("an unresolved market refunds every position at its average price", () => {
+test("an unresolved market refunds every position what it cost", () => {
   const { market, ledger } = fundedMarket();
-  market.buy("alice", "racer-1", 10);
-  const noPrice = market.sidePrice("racer-3", "no");
-  market.buy("bob", "racer-3", 4, "no");
+  const alice = market.buy("alice", "racer-1", 10);
+  const bob = market.buy("bob", "racer-3", 4, "no");
 
   const lines = market.markUnresolved(7_000);
   assert.equal(market.status, "unresolved");
   assert.equal(market.balance("alice"), 100);
   assert.equal(market.balance("bob"), 100);
   assert.deepEqual(lines.map((line) => [line.userId, line.side, line.payout, line.result]), [
-    ["alice", "yes", 2.5, "refunded"],
-    ["bob", "no", round(4 * noPrice), "refunded"],
+    ["alice", "yes", alice.total, "refunded"],
+    ["bob", "no", bob.total, "refunded"],
   ]);
   assert.equal(lines[0].settlementPrice, null);
   assert.deepEqual(market.settlementLines(), lines);
-  assert.equal(market.stats().refunded, round(2.5 + 4 * noPrice));
+  assert.equal(market.stats().refunded, round(alice.total + bob.total));
 
   const refund = ledger.entries("bob").at(-1);
   assert.equal(refund?.type, "refund");
   assert.equal(refund?.raceId, "race-9");
-  assert.equal(refund?.price, noPrice);
+  assert.equal(refund?.price, bob.price);
   assert.equal(refund?.at, 7_000);
 });
 
@@ -365,11 +353,11 @@ test("markets on a shared ledger share one balance", () => {
   ledger.credit("alice", 10, { type: "deposit" });
   const first = new VirtualPredictionMarket(racers, { ledger, raceId: "race-a" });
   const second = new VirtualPredictionMarket(racers, { ledger, raceId: "race-b" });
-  first.buy("alice", "racer-1", 20);
-  assert.equal(second.balance("alice"), 5);
-  second.buy("alice", "racer-2", 20);
-  assert.equal(ledger.balance("alice"), 0);
-  assertDomainError(() => first.buy("alice", "racer-3", 1), "insufficient_balance");
+  const a = first.buy("alice", "racer-1", 20);
+  assert.equal(second.balance("alice"), round(10 - a.total));
+  const b = second.buy("alice", "racer-2", 15);
+  assert.equal(ledger.balance("alice"), round(10 - a.total - b.total));
+  assertDomainError(() => first.buy("alice", "racer-3", 20), "insufficient_balance");
   assert.deepEqual(
     ledger.entries("alice").map((entry) => entry.raceId ?? null),
     [null, "race-a", "race-b"],

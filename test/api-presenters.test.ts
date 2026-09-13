@@ -163,7 +163,9 @@ test("account lifetime realizedPnl, portfolio history and my-fight totals", asyn
   );
 
   const open = presentAccount(user, sourcesOf(registry));
-  assert.equal(open.held, round(6 * buy.price));
+  // Selling 4 of 10 releases 4/10 of the cost; the rest is still held.
+  assert.equal(open.held, round((buy.total * 6) / 10));
+  assert.ok(open.unrealizedPnl <= 0, "marked at liquidation value, a fresh position shows no paper profit");
   assert.equal(open.balance, round(100 - buy.total + sell.total));
   assert.equal(open.equity, round(open.balance + open.positionsValue));
   assert.equal(open.unrealizedPnl, round(open.positionsValue - open.held));

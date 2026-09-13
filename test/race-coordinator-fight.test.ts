@@ -388,6 +388,7 @@ test("placeOrder returns dto receipts and is idempotent per clientOrderId", asyn
   const { coordinator, ledger } = setup();
   await coordinator.prepareAndStart(1_000);
 
+  const quote = coordinator.market.quote("racer-1", "yes", "buy", 10);
   const receipt = coordinator.placeOrder({
     userId: "alice",
     racerId: "racer-1",
@@ -398,11 +399,12 @@ test("placeOrder returns dto receipts and is idempotent per clientOrderId", asyn
   }, 2_000);
   assert.equal(receipt.raceId, "race-1");
   assert.equal(receipt.clientOrderId, "order-1");
-  assert.equal(receipt.price, 0.25);
-  assert.equal(receipt.total, 2.5);
+  assert.equal(receipt.price, quote.averagePrice);
+  assert.equal(receipt.total, quote.total);
+  assert.ok(receipt.price > 0.25, "the fill pays for its own price impact");
   assert.equal(receipt.payoutIfWin, 10);
   assert.equal(receipt.executedAt, 2_000);
-  assert.equal(ledger.balance("alice"), 97.5);
+  assert.equal(ledger.balance("alice"), round(100 - quote.total));
 
   const repeat = coordinator.placeOrder({
     userId: "alice",
@@ -413,7 +415,7 @@ test("placeOrder returns dto receipts and is idempotent per clientOrderId", asyn
     clientOrderId: "order-1",
   }, 2_500);
   assert.deepEqual(repeat, receipt);
-  assert.equal(ledger.balance("alice"), 97.5);
+  assert.equal(ledger.balance("alice"), round(100 - quote.total));
 
   const sold = coordinator.placeOrder({
     userId: "alice",
@@ -492,8 +494,8 @@ test("a failed start refunds positions, aborts the race and rethrows", async () 
   const { coordinator, ledger, sessions, events } = setup({
     prepareError: new Error("steel unavailable"),
   });
-  coordinator.placeOrder({ userId: "alice", racerId: "racer-1", side: "yes", action: "buy", quantity: 10 }, 600);
-  assert.equal(ledger.balance("alice"), 97.5);
+  const bought = coordinator.placeOrder({ userId: "alice", racerId: "racer-1", side: "yes", action: "buy", quantity: 10 }, 600);
+  assert.equal(ledger.balance("alice"), round(100 - bought.total));
 
   await assert.rejects(coordinator.prepareAndStart(1_000), /steel unavailable/);
   assert.equal(coordinator.market.status, "unresolved");
@@ -571,7 +573,7 @@ test("a failed racer collapses to the price floor", async () => {
 test("resolution settles through the shared ledger and records closedAt", async () => {
   const { coordinator, ledger } = setup();
   await coordinator.prepareAndStart(1_000);
-  coordinator.placeOrder({ userId: "alice", racerId: "racer-2", side: "yes", action: "buy", quantity: 10 }, 1_500);
+  const bought = coordinator.placeOrder({ userId: "alice", racerId: "racer-2", side: "yes", action: "buy", quantity: 10 }, 1_500);
   const accounts: string[][] = [];
   coordinator.subscribe((change) => {
     if (change.kind === "account") accounts.push(change.userIds);
@@ -585,7 +587,7 @@ test("resolution settles through the shared ledger and records closedAt", async 
 
   assert.equal(coordinator.market.status, "resolved");
   assert.equal(coordinator.closedAt, 5_000);
-  assert.equal(ledger.balance("alice"), 107.5);
+  assert.equal(ledger.balance("alice"), round(100 - bought.total + 10));
   assert.equal(ledger.entries("alice").at(-1)?.type, "payout");
   assert.ok(accounts.at(-1)?.includes("alice"));
   assert.equal(coordinator.telemetry.racer("racer-2").log.at(-1)?.kind, "status");

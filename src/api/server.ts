@@ -196,7 +196,8 @@ export function buildApi(options: ApiServerOptions): FastifyInstance {
   app.setErrorHandler((error: FastifyError, request, reply) => {
     const message = error instanceof Error ? error.message : String(error);
     if (isDomainError(error)) {
-      return reply.status(ERROR_STATUS[error.code] ?? 400).send({ error: message, code: error.code });
+      const details = error.details ? { details: error.details } : {};
+      return reply.status(ERROR_STATUS[error.code] ?? 400).send({ error: message, code: error.code, ...details });
     }
     const statusCode = typeof error.statusCode === "number" ? error.statusCode : undefined;
     if (statusCode !== undefined && statusCode >= 400 && statusCode < 500) {
