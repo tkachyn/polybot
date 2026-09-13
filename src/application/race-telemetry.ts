@@ -1,3 +1,4 @@
+import { modelFacingErrorText } from "../agents/playwright-competitor-runner.js";
 import type {
   ActionLogEntry,
   ActionLogKind,
@@ -273,6 +274,24 @@ function traceEvidence(
   };
 }
 
+/** Terminal colour codes, which Playwright puts in its errors. */
+const ANSI_COLOUR = /\x1b\[[0-9;]*m/g;
+
+/**
+ * A failed step's error as spectators read it: what the model was told
+ * (`modelError`: no call log, nothing hidden), else the raw error cleaned the
+ * same way, never with colour codes. The raw error stays in the step record.
+ */
+function readableError(report: AgentActionReport): string | null {
+  const told = typeof report.modelError === "string" && report.modelError.trim().length > 0
+    ? report.modelError
+    : typeof report.error === "string" && report.error.trim().length > 0
+      ? modelFacingErrorText(report.error, traceEvidence(report.evidence).blockedBy)
+      : null;
+  const clean = told?.replace(ANSI_COLOUR, "").replace(/\s+/g, " ").trim() ?? "";
+  return clean.length > 0 ? clean : null;
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -527,9 +546,9 @@ export class RaceTelemetry {
       : report.kind === "note"
         ? "status"
         : "action";
-    const text = report.kind === "error" && report.error
-      ? `${report.text} (${report.error})`
-      : report.text;
+    // Spectators read a failure as the model was told it, never Playwright's call log.
+    const shownError = report.kind === "error" ? readableError(report) : null;
+    const text = shownError === null ? report.text : `${report.text} (${shownError})`;
     const at = report.at ?? now;
     const step = Number.isFinite(report.step) && report.step >= 0 ? Math.floor(report.step) : state.step;
     const actedAt = Number.isFinite(at) ? at : now;
@@ -567,7 +586,7 @@ export class RaceTelemetry {
       decisionIssue: cleanDecisionIssue(report.decisionIssue),
       // Playwright colours its call log; the record keeps plain text.
       error: typeof report.error === "string" && report.error.length > 0
-        ? clip(report.error.replace(/\x1b\[[0-9;]*m/g, ""), STEP_ERROR_MAX)
+        ? clip(report.error.replace(ANSI_COLOUR, ""), STEP_ERROR_MAX)
         : null,
       modelError: typeof report.modelError === "string" && report.modelError.length > 0
         ? clip(report.modelError, STEP_ERROR_MAX)

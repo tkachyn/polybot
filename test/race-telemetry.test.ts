@@ -139,6 +139,37 @@ test("error reports count a streak that an action resets; notes are neutral", ()
   );
 });
 
+test("the log and trace show a failed step's error as the model was told it, not Playwright's call log", () => {
+  const telemetry = new RaceTelemetry(racers, 3);
+  const raw = [
+    "\x1b[2mlocator.click: Timeout 5000ms exceeded.\x1b[22m",
+    "Call log:",
+    `\x1b[2m  - waiting for locator('[data-arena-role="primary-action"]').first()\x1b[22m`,
+    `\x1b[2m    - <div data-arena-disruption-id="disruption-1" role="dialog">…</div> intercepts pointer events\x1b[22m`,
+  ].join("\n");
+  const told = "locator.click: Timeout 5000ms exceeded. Another element is covering the control.";
+  const expected = `Clicked "Pay" (primary-action) (${told})`;
+  const failed = { kind: "error" as const, text: 'Clicked "Pay" (primary-action)', error: raw, evidence: { blockedBy: "modal" as const } };
+
+  assert.equal(telemetry.recordAction("racer-1", report({ ...failed, step: 2, modelError: told }), 1_000).text, expected);
+  assert.equal(telemetry.trace("racer-1")[0].text, expected);
+  // The step record keeps the raw error for diagnostics, and exactly what the model was told.
+  const [record] = telemetry.stepRecords("racer-1");
+  assert.match(record.error ?? "", /Call log:/);
+  assert.equal(record.modelError, told);
+
+  // Without modelError, the raw error is cleaned the same way.
+  assert.equal(telemetry.recordAction("racer-1", report({ ...failed, step: 3 }), 2_000).text, expected);
+  // Colour codes never reach spectators, even in what the model was told.
+  const coloured = telemetry.recordAction("racer-1", report({
+    kind: "error", text: "Typed into search", step: 4, error: "locator.fill: failed", modelError: "\x1b[31mlocator.fill: failed\x1b[39m",
+  }), 3_000);
+  assert.equal(coloured.text, "Typed into search (locator.fill: failed)");
+  for (const entry of [...telemetry.racer("racer-1").log, ...telemetry.trace("racer-1")]) {
+    assert.doesNotMatch(entry.text, /Call log|\x1b|\[2m|data-arena/);
+  }
+});
+
 test("bounds the action log and keeps sequence numbers increasing", () => {
   const telemetry = new RaceTelemetry(racers, 3);
   for (let index = 1; index <= ACTION_LOG_LIMIT + 15; index += 1) {
