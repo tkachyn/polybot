@@ -178,6 +178,7 @@ The script sends `POST /races` with `courseId: "arena-shop"`, three checkpoints,
 | `COURSE_BASE_URL` / `COURSE_VERIFIER_TOKEN` | none | Live mode: course verifier endpoint and token |
 | `RACE_EVENT_FILE` | `data/race-events.jsonl` | Live mode: append-only event log |
 | `EVALUATION_FILE` | `data/evaluations.jsonl` (live) | Final fight evaluations, appended as JSON lines (in memory in simulated mode unless set) |
+| `DATASET_DIR` | `data/dataset` (live) | Per-fight training records, step screenshots and raw Steel traces for the dataset export (in memory in simulated mode unless set) |
 | `VITE_API_TARGET` | `http://127.0.0.1:3001` | Web dev server: where `/api` is proxied |
 | `VITE_DEFAULT_LAYOUT` | `grid` | Web: default arena layout (`grid` or `lanes`) |
 
@@ -250,10 +251,35 @@ GET /api/fights/:raceId/evaluation
 GET /api/fights/:raceId/agents/:racerId/evidence/:key
 GET /api/fights/:raceId/agents/:racerId/replay.m3u8      live Steel sessions only
 GET /api/evaluations/matrix?days=30&mode=live|simulated|all
-GET /api/evaluations/export.jsonl?days=30&mode=…         one row per agent per fight
+GET /api/datasets/export.zip?days=30&mode=…             the training dataset (see Dataset export)
 ```
 
 To produce a real evaluation, run a race on the [shop course](#shop-course) with obstacles enabled.
+
+## Dataset export
+
+Every finished fight is recorded as training data for future web agents. The record covers all four agents, failures included:
+
+- What each agent saw at every step: page text, controls, screenshot.
+- Its exact tool call and its one-sentence reasoning.
+- The verified result: blocked, decoy, cleared sabotage, progress.
+- The sabotage in effect.
+- Steel's own record of clicks, typing (field, length and timing, never the characters), keys and page loads.
+
+```text
+GET /api/datasets/export.zip?days=30&mode=live                  manifest, JSON Lines files, screenshots, raw Steel traces
+GET /api/datasets/manifest.json?days=30&mode=live
+GET /api/datasets/{episodes|steps|sft|preferences}.jsonl?days=30&mode=live
+```
+
+| File | One row is | Use |
+| --- | --- | --- |
+| `steps.jsonl` | One step of one agent: what it saw, what it did, why, and what happened | The core training record |
+| `episodes.jsonl` | One agent in one fight: outcome, robustness, reactions | Filtering and evaluation |
+| `sft.jsonl` | A chat-format example from a good step of a successful run | Supervised fine-tuning |
+| `preferences.jsonl` | A chosen/rejected pair of actions at a sabotage | Preference training (DPO) |
+
+Text typed into password fields is redacted everywhere. Simulated rows are scripted agents, not real models, so use `mode=live` for training. The full schema and derivation rules are in [docs/training-data.md](docs/training-data.md).
 
 ## Operator API
 

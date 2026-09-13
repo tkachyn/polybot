@@ -43,7 +43,7 @@ Routes:
 | `/portfolio` | `features/portfolio/PortfolioPage` (`PortfolioPage`) |
 | `/wallet` | `features/wallet/WalletPage` (`WalletPage`), `?tab=deposit\|withdraw` |
 | `/leaderboard` | `features/leaderboard/LeaderboardPage` (`LeaderboardPage`) |
-| `/evaluations` | `features/evaluation/EvaluationsPage` (`EvaluationsPage`): robustness matrix, dataset export, recent reports; `?mode=live\|simulated\|all&days=7\|30\|90` |
+| `/evaluations` | `features/evaluation/EvaluationsPage` (`EvaluationsPage`): robustness matrix, training dataset download (the zip, or one file at a time), recent reports; `?mode=live\|simulated\|all&days=7\|30\|90` |
 | `*` | `app/NotFoundPage` |
 
 Feature folders own their files. Keep the exported component names and file
@@ -124,7 +124,8 @@ rethrow the AbortError; test with `isAbortError`).
 | `evidenceFrameUrl` | `(raceId, racerId, key) => string`: keyframe `<img src>` |
 | `replayUrl` | `(raceId, racerId) => string`: Steel HLS playlist, live fights only |
 | `getRobustnessMatrix` | `(params?: EvaluationQuery, signal?) => Promise<RobustnessMatrixResponse>` |
-| `evaluationExportUrl` | `(params?: EvaluationQuery) => string`: the `.jsonl` dataset download |
+| `datasetExportUrl` | `(params?: DatasetQuery) => string`: the training dataset zip, `/api/datasets/export.zip`. `DatasetQuery` is `{ days?, mode? }`: `days` 1–365 (server default 30), `mode` `live \| simulated \| all` (default: the server's mode) |
+| `datasetFileUrl` | `(file: DatasetFile \| "manifest", params?: DatasetQuery) => string`: one dataset file, `/api/datasets/{file}.jsonl` or `/api/datasets/manifest.json` |
 | `fightsStreamUrl` / `fightStreamUrl(raceId)` / `userStreamUrl(userId)` | SSE URLs |
 | `api` | all of the above as one object |
 | `request<T>` | `(path, { method?, body?, query?, signal? }) => Promise<T>` low level |
