@@ -15,6 +15,12 @@
   overflow: hidden;
 }
 
+.headerActions {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
 .body {
   display: grid;
   grid-template-columns: minmax(0, 1fr) var(--rail-width);

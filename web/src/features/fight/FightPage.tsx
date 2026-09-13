@@ -9,7 +9,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import type { FightDetail, PricePoint } from "@contract";
 import type { StreamStatus } from "../../api/stream";
-import { ErrorBanner, Skeleton, SkeletonText } from "../../components";
+import { Button, ErrorBanner, Skeleton, SkeletonText } from "../../components";
 import { cx } from "../../lib/cx";
 import { useSession } from "../../state/session";
 import { MarketRail } from "../market/MarketRail";
@@ -19,6 +19,8 @@ import { Arena } from "./Arena";
 import { FightInvite } from "../demo/FightInvite";
 import { isRaceOver, rosterByRacer, rosterKey } from "./fightView";
 import { FinishStrip, MasterStrip, SabotageStrip } from "./FightHeader";
+import { FightIntro } from "./FightIntro";
+import { hasSeenFightIntro, markFightIntroSeen, shouldOpenFightIntro } from "./fightIntroState";
 import styles from "./FightPage.module.css";
 
 export type FightPageProps = {
@@ -31,6 +33,24 @@ export function FightPage({ fight, priceHistory, streamStatus }: FightPageProps)
   // Judge invites promise every phone an equal bankroll, which only demo mode provides.
   const { meta } = useSession();
   const [params, setParams] = useSearchParams();
+  const [introAvailable, setIntroAvailable] = useState(true);
+  const [introOpen, setIntroOpen] = useState(() =>
+    shouldOpenFightIntro(fight.status, hasSeenFightIntro(fight.raceId)),
+  );
+  useEffect(() => {
+    if (introAvailable && shouldOpenFightIntro(fight.status, hasSeenFightIntro(fight.raceId))) {
+      setIntroOpen(true);
+    }
+  }, [fight.raceId, fight.status, introAvailable]);
+  const closeIntro = () => {
+    markFightIntroSeen(fight.raceId);
+    setIntroOpen(false);
+  };
+  const introUnavailable = () => {
+    markFightIntroSeen(fight.raceId);
+    setIntroAvailable(false);
+    setIntroOpen(false);
+  };
   // `?slip=racer-1:yes` (from the lobby's featured card) opens the order form once.
   const [slip, setSlip] = useState<Slip | null>(() => slipFromParam(fight, params.get(SLIP_PARAM)));
   useEffect(() => {
@@ -51,7 +71,19 @@ export function FightPage({ fight, priceHistory, streamStatus }: FightPageProps)
 
   return (
     <div className={styles.screen}>
-      <MasterStrip fight={fight} action={meta?.demoMode ? <FightInvite raceId={fight.raceId} /> : undefined} />
+      <MasterStrip
+        fight={fight}
+        action={
+          <span className={styles.headerActions}>
+            {introAvailable && (
+              <Button variant="subtle" size="sm" onClick={() => setIntroOpen(true)}>
+                Replay intro
+              </Button>
+            )}
+            {meta?.demoMode && <FightInvite raceId={fight.raceId} />}
+          </span>
+        }
+      />
       {isRaceOver(fight) ? <FinishStrip fight={fight} roster={roster} /> : <SabotageStrip fight={fight} roster={roster} />}
       <div className={styles.body}>
         <Arena fight={fight} roster={roster} slip={activeSlip} streamStatus={streamStatus} className={styles.arena} />
@@ -59,6 +91,13 @@ export function FightPage({ fight, priceHistory, streamStatus }: FightPageProps)
           <MarketRail fight={fight} priceHistory={priceHistory} slip={activeSlip} onSlipChange={setSlip} />
         </aside>
       </div>
+      {introOpen && (
+        <FightIntro
+          fightNumber={fight.number}
+          onClose={closeIntro}
+          onUnavailable={introUnavailable}
+        />
+      )}
     </div>
   );
 }
