@@ -13,7 +13,6 @@ import { useId } from "react";
 import type { FightAgentSummary, FightSummary, SabotageSummary } from "@contract";
 import {
   AgentMonogram,
-  Button,
   ButtonLink,
   ElapsedClock,
   SabotageTag,
@@ -36,7 +35,6 @@ import {
 } from "../../lib/format";
 import { RUN_STATUS_LABEL, SABOTAGE_HIDDEN_COPY } from "../../lib/labels";
 import { useNow } from "../../state/clock";
-import { PREVIEW_FIGHT_HINT } from "./placeholders";
 import styles from "./FightCard.module.css";
 
 // ---------------------------------------------------------------------------
@@ -290,16 +288,14 @@ export function Resolution({ fight }: { fight: FightSummary }) {
 export type FightCardProps = {
   fight: FightSummary;
   className?: string;
-  /** A sample card (./placeholders): tagged Preview, with a disabled View. */
-  preview?: boolean;
 };
 
-export function FightCard({ fight, className, preview = false }: FightCardProps) {
+export function FightCard({ fight, className }: FightCardProps) {
   const titleId = useId();
   const number = formatFightNumber(fight.number);
   return (
     <article className={cx(styles.container, className)} aria-labelledby={titleId}>
-      <div className={cx(styles.card, preview && styles.cardPreview)}>
+      <div className={styles.card}>
         <div className={styles.head}>
           <span className={cx("label", styles.number)}>
             Fight <span className="num">{number}</span>
@@ -308,11 +304,6 @@ export function FightCard({ fight, className, preview = false }: FightCardProps)
           {fight.status === "live" && fight.marketStatus === "frozen" && (
             <Tag tone="neutral" title="Trading is frozen for the rest of this fight">
               Trading frozen
-            </Tag>
-          )}
-          {preview && (
-            <Tag tone="edge" title={PREVIEW_FIGHT_HINT}>
-              Preview
             </Tag>
           )}
           <CardClock fight={fight} />
@@ -329,31 +320,15 @@ export function FightCard({ fight, className, preview = false }: FightCardProps)
           <CardMeta fight={fight} />
           <div className={styles.footerEnd}>
             <Resolution fight={fight} />
-            {preview ? (
-              // aria-disabled rather than disabled: the button stays hoverable
-              // and focusable, so the reason is reachable as its tooltip.
-              <Button
-                variant="subtle"
-                size="sm"
-                className={cx(styles.view, styles.viewPreview)}
-                aria-disabled="true"
-                title={PREVIEW_FIGHT_HINT}
-                aria-label={`View fight ${number} (preview, unavailable)`}
-                onClick={(event) => event.preventDefault()}
-              >
-                View
-              </Button>
-            ) : (
-              <ButtonLink
-                to={`/fights/${encodeURIComponent(fight.raceId)}`}
-                variant="subtle"
-                size="sm"
-                className={styles.view}
-                aria-label={`View fight ${number}`}
-              >
-                View
-              </ButtonLink>
-            )}
+            <ButtonLink
+              to={`/fights/${encodeURIComponent(fight.raceId)}`}
+              variant="subtle"
+              size="sm"
+              className={styles.view}
+              aria-label={`View fight ${number}`}
+            >
+              View
+            </ButtonLink>
           </div>
         </div>
       </div>
@@ -365,12 +340,12 @@ export function FightCard({ fight, className, preview = false }: FightCardProps)
 // List and loading state
 // ---------------------------------------------------------------------------
 
-export function FightCardList({ fights, label, preview = false }: { fights: readonly FightSummary[]; label: string; preview?: boolean }) {
+export function FightCardList({ fights, label }: { fights: readonly FightSummary[]; label: string }) {
   return (
     <ol className={styles.list} aria-label={label}>
       {fights.map((fight) => (
         <li key={fight.raceId}>
-          <FightCard fight={fight} preview={preview} />
+          <FightCard fight={fight} />
         </li>
       ))}
     </ol>

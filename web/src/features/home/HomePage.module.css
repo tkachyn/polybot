@@ -30,7 +30,7 @@
   min-width: 0;
 }
 
-/* Title, an optional Preview tag, and "See all" pushed to the end. */
+/* Title, and "See all" pushed to the end. */
 .sectionHead {
   display: flex;
   align-items: center;
@@ -46,12 +46,6 @@
 
 .sectionMore {
   margin-left: auto;
-}
-
-.previewNote {
-  margin: 0;
-  font-size: var(--fs-body-sm);
-  color: var(--color-text-muted);
 }
 
 @media (max-width: 1099px) {
