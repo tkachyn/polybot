@@ -1060,7 +1060,13 @@ export class PlaywrightCompetitorRunner implements CompetitorAgentRunner {
       return await Promise.race([
         page.evaluate((expression) => {
           const evaluate = new Function(`return (${expression})`) as () => unknown;
-          return evaluate();
+          const result = evaluate();
+          // A successful evaluate decision is itself an explicit recovery
+          // attempt. Always finish through the bounded disruption registry so
+          // removing only the visible overlay cannot leave the racer stuck.
+          (window as unknown as { __arenaRecoverDisruptions?: () => number })
+            .__arenaRecoverDisruptions?.();
+          return result;
         }, source),
         new Promise<never>((_, reject) => {
           timeout = setTimeout(() => reject(new Error("evaluate script timed out")), EVALUATE_TIMEOUT_MS);

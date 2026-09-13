@@ -20,6 +20,7 @@ import type {
   DisruptionCommand,
   DisruptionResult,
   ObstacleProvider,
+  SabotagePlan,
 } from "../src/domain/types.js";
 import { InMemoryRaceEventStore } from "../src/persistence/in-memory-event-store.js";
 import { InMemoryCreditLedger } from "../src/wallet/credit-ledger.js";
@@ -473,6 +474,59 @@ test("sabotage hits drive telemetry, run status, signals and sabotage state", as
     round(145 / 445),
     round(155 / 455),
   ]);
+  await coordinator.shutdown();
+});
+
+test("multi-step sabotage logs name the policy applied at each checkpoint", async () => {
+  const move: DisruptionCommand = {
+    hazardType: "move_primary_action",
+    targetRole: "primary-action",
+    durationMs: 4_000,
+    intensity: 1,
+  };
+  const modal: DisruptionCommand = {
+    hazardType: "blocking_modal",
+    targetRole: "primary-action",
+    durationMs: 8_000,
+    intensity: 3,
+  };
+  const obstacles: ObstacleProvider = {
+    async armRace(input): Promise<SabotagePlan> {
+      return {
+        raceId: input.raceId,
+        tier: "difficult",
+        trigger: input.trigger,
+        policy: move,
+        selectedAt: 900,
+        source: "operator",
+        steps: [move, modal].map((stepPolicy, index) => ({
+          stepId: `step-${index + 1}`,
+          checkpoint: index + 1,
+          tier: index === 0 ? "basic" : "difficult",
+          policy: stepPolicy,
+          selectedAt: 900,
+        })),
+      };
+    },
+    async apply(_racerId, appliedPolicy) {
+      return { applied: true, policy: appliedPolicy };
+    },
+  };
+  const { coordinator } = setup({ obstacles });
+  await coordinator.prepareAndStart(1_000);
+  await coordinator.recordCheckpoint("racer-1", 1, 2_000);
+  await coordinator.recordRecovery("racer-1", 2_500);
+  await coordinator.recordCheckpoint("racer-1", 2, 3_000);
+
+  assert.deepEqual(
+    coordinator.telemetry.racer("racer-1").log
+      .filter((entry) => entry.kind === "sabotage")
+      .map((entry) => entry.text),
+    [
+      "Sabotage active: move primary action. Recover it with DOM inspection or a visible recovery action.",
+      "Sabotage active: blocking modal. Recover it with DOM inspection or a visible recovery action.",
+    ],
+  );
   await coordinator.shutdown();
 });
 

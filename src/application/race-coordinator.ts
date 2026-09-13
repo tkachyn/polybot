@@ -1533,7 +1533,7 @@ export class RaceCoordinator {
         this.telemetry.captureHitKeyframes(racerId, sabotageStepIdOf(event), at);
         this.telemetry.appendLog(racerId, {
           kind: "sabotage",
-          text: `Sabotage active: ${this.hazardText()}. Recover it with DOM inspection or a visible recovery action.`,
+          text: `Sabotage active: ${this.hazardText(metadata)}. Recover it with DOM inspection or a visible recovery action.`,
           at,
         });
         if (!this.sabotageHits.includes(racerId)) this.sabotageHits.push(racerId);
@@ -1545,7 +1545,7 @@ export class RaceCoordinator {
         const reason = typeof metadata.reason === "string" ? metadata.reason : "not applied";
         this.telemetry.appendLog(racerId, {
           kind: "sabotage",
-          text: `Sabotage attempt did not apply (${reason}): ${this.hazardText()}`,
+          text: `Sabotage attempt did not apply (${reason}): ${this.hazardText(metadata)}`,
           at,
         });
         return;
@@ -1585,8 +1585,16 @@ export class RaceCoordinator {
     }
   }
 
-  private hazardText(): string {
-    return hazardLabel(this.engine.race.sabotagePlan?.policy.hazardType ?? "hazard");
+  private hazardText(metadata: Record<string, unknown> = {}): string {
+    const eventPolicy = metadata.policy;
+    if (eventPolicy && typeof eventPolicy === "object" && "hazardType" in eventPolicy) {
+      const hazardType = (eventPolicy as { hazardType?: unknown }).hazardType;
+      if (typeof hazardType === "string") return hazardLabel(hazardType);
+    }
+    const plan = this.engine.race.sabotagePlan;
+    const stepId = typeof metadata.stepId === "string" ? metadata.stepId : null;
+    const step = stepId ? plan?.steps?.find((candidate) => candidate.stepId === stepId) : null;
+    return hazardLabel(step?.policy.hazardType ?? plan?.policy.hazardType ?? "hazard");
   }
 
   /** Appends a price point when prices moved (or when forced). */
