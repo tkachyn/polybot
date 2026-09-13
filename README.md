@@ -52,6 +52,31 @@ Other scripts:
 
 `npm test` and `npm run build` use fakes and the deterministic local course; they do not require Steel or OpenRouter credentials. The live Steel path is exercised only by `npm run smoke:steel`.
 
+### Phone demo over Cloudflare Tunnel
+
+The audience demo uses virtual credits only. Start the application in one
+terminal and the tunnel in another:
+
+```bash
+npm run demo
+npm run demo:tunnel
+```
+
+Open the `https://...trycloudflare.com` URL printed by `cloudflared`, navigate
+to the live fight, and select **Invite judges**. The QR code is generated from
+that public origin. Do not display a QR generated from `localhost`, because a
+phone resolves `localhost` to itself.
+
+Before showing the QR, run `npm run demo:check`. It verifies that `cloudflared`
+is installed, the production web build exists, and the local server health
+endpoint responds. Keep both terminal processes running for the whole demo.
+
+Quick tunnels use a temporary public hostname. For a rehearsed event, create a
+named Cloudflare Tunnel and bind it to a hostname you control so the URL can be
+printed in advance. Venue Wi-Fi must allow outbound HTTPS and Server-Sent
+Events. Test the final URL from one iPhone and one Android device on the actual
+network before judges arrive.
+
 ## Modes
 
 - **`RACE_MODE=live`** (default) uses Steel sessions, Playwright over CDP, the course verifier and OpenRouter models. The operator creates fights with `POST /races`. Copy `.env.example` to `.env` and populate `OPENROUTER_API_KEY` plus either `STEEL_API_KEYS` or `STEEL_API_KEY`; the server loads `.env` automatically.
