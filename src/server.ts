@@ -2,7 +2,8 @@ import "dotenv/config";
 import type { CoordinatorFactory, RaceRegistry } from "./api/race-registry.js";
 import { buildApi } from "./api/server.js";
 import { createProductionRaceCoordinator } from "./application/production-race-factory.js";
-import { envApiOptions, envNumber } from "./env.js";
+import { envApiOptions, envBoolean, envNumber } from "./env.js";
+import { startMarketCrowd } from "./prediction/market-crowd.js";
 
 const mode = process.env.RACE_MODE?.trim() || "live";
 if (mode !== "live" && mode !== "simulated") {
@@ -13,6 +14,15 @@ const host = process.env.HOST ?? "127.0.0.1";
 
 let coordinatorFactory: CoordinatorFactory = createProductionRaceCoordinator;
 let onRegistryReady: ((registry: RaceRegistry) => Promise<() => void>) | undefined;
+if (mode === "live" && envBoolean("MARKET_CROWD", true)) {
+  // Live fights have no traders of their own, so the market would only
+  // reprice on checkpoints. The crowd gives it continuous two-way flow.
+  onRegistryReady = async (registry) =>
+    startMarketCrowd(registry, {
+      seed: process.env.MARKET_CROWD_SEED ?? undefined,
+      size: envNumber("MARKET_CROWD_SIZE", 14),
+    });
+}
 if (mode === "simulated") {
   const sim = await import("./simulation/index.js");
   const simOptions = {

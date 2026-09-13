@@ -2,12 +2,16 @@ import "dotenv/config";
 import { buildApi } from "./api/server.js";
 import { createProductionRaceCoordinator } from "./application/production-race-factory.js";
 import { buildCourseApp } from "./course/course-server.js";
-import { envApiOptions, envNumber } from "./env.js";
+import { envApiOptions, envBoolean, envNumber } from "./env.js";
+import { startMarketCrowd } from "./prediction/market-crowd.js";
 
 // Live-mode API plus the local deterministic course, for development.
 const api = buildApi({
   coordinatorFactory: createProductionRaceCoordinator,
   ...envApiOptions("live"),
+  onRegistryReady: envBoolean("MARKET_CROWD", true)
+    ? async (registry) => startMarketCrowd(registry, { size: envNumber("MARKET_CROWD_SIZE", 14) })
+    : undefined,
 });
 const course = buildCourseApp();
 
