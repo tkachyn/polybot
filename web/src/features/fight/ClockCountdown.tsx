@@ -14,7 +14,8 @@ export type ClockCountdownProps = {
 /** Ticking m:ss countdown ("4:07"), server-corrected. */
 export function ClockCountdown({ to, expiredLabel = "0:00", className }: ClockCountdownProps) {
   const active = typeof to === "number";
-  const now = useNow(1000, active);
+  // Tick on the target's own second boundaries, so "0:42" turns over with the server's clock.
+  const now = useNow(1000, active, to ?? 0);
   if (!active) return <span className={cx("num", className)}>{EMPTY}</span>;
   const remaining = to - now;
   return (

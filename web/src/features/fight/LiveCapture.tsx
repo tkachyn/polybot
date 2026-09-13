@@ -92,7 +92,7 @@ function Placeholder({ fightStatus, startsAt }: { fightStatus: FightStatus; star
 
 /** "LIVE · 2s ago" from the displayed frame's capturedAt. */
 function FrameAge({ capturedAt }: { capturedAt: number }) {
-  const now = useNow(1000);
+  const now = useNow(1000, true, capturedAt);
   const age = Math.max(0, now - capturedAt);
   const stale = age > STALE_FRAME_MS;
   return (
