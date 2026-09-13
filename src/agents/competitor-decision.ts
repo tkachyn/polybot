@@ -1,3 +1,4 @@
+import type { DatasetAction } from "../api/dto.js";
 import type {
   AgentDecision,
   CompetitorDecisionModel,
@@ -10,11 +11,15 @@ export const COMPETITOR_TOOL_NAME = "take_browser_action";
 export const COMPETITOR_TOOL_DESCRIPTION =
   "Take one browser action or report verified progress. Persistent challenges must be actively cleared with bounded DOM recovery, never waited out.";
 export const COMPETITOR_SYSTEM_PROMPT =
-  "You control one browser racer. Choose exactly one bounded action. Use data-arena-role values when clicking or typing, plus the visible label when several controls share a role. Sabotage, challenges, and blocking overlays persist until you actively clear them; waiting never clears them and is rejected while one is active. First inspect the blocker, then use a visible recovery control when one exists. For an arena blocker with no recovery control, use the bounded same-page evaluate action to inspect or repair the DOM; window.__arenaRecoverDisruptions?.() is an allowed recovery helper. Keep recovery scripts DOM-only and bounded. Do not use evaluate for network access, navigation, storage, secrets, or task completion shortcuts. Report recovery only after the blocker is gone, and report checkpoints and completion only when the visible task state supports the claim.";
+  "You control one browser racer. Choose exactly one bounded action and give a one-sentence reasoning. Use data-arena-role values when clicking or typing, plus the visible label when several controls share a role. Sabotage, challenges, and blocking overlays persist until you actively clear them; waiting never clears them and is rejected while one is active. First inspect the blocker, then use a visible recovery control when one exists. For an arena blocker with no recovery control, use the bounded same-page evaluate action to inspect or repair the DOM; window.__arenaRecoverDisruptions?.() is an allowed recovery helper. Keep recovery scripts DOM-only and bounded. Do not use evaluate for network access, navigation, storage, secrets, or task completion shortcuts. Report recovery only after the blocker is gone, and report checkpoints and completion only when the visible task state supports the claim.";
 
 /** Longest accepted `label`; longer labels are truncated, which still matches by substring. */
 export const LABEL_MAX_LENGTH = 120;
 export const EVALUATE_SCRIPT_MAX_LENGTH = 2_000;
+/** Longest kept `reasoning`; longer reasons are clipped. */
+export const REASONING_MAX_LENGTH = 400;
+/** Stands in for text typed into a password field wherever a step is recorded. */
+export const REDACTED_TEXT = "[redacted]";
 
 export const DECISION_TYPES = [
   "inspect",
@@ -59,17 +64,31 @@ export const COMPETITOR_TOOL_SCHEMA: ToolJsonSchema = {
     url: { type: "string", maxLength: 2_000 },
     durationMs: { type: "integer", minimum: 0, maximum: 2_000 },
     checkpoint: { type: "integer", minimum: 1 },
+    reasoning: {
+      type: "string",
+      maxLength: REASONING_MAX_LENGTH,
+      description: "One short sentence: why you chose this action.",
+    },
   },
   required: ["type"],
   additionalProperties: false,
 };
 
-/** Validates raw tool arguments into an AgentDecision. Throws on bad input. */
+/**
+ * Validates raw tool arguments into an AgentDecision. Throws on bad input.
+ * An optional `reasoning` is kept on any decision type (see normalizeReasoning).
+ */
 export function parseDecision(value: unknown): AgentDecision {
   if (!value || typeof value !== "object" || !("type" in value)) {
     throw new Error("Invalid competitor decision");
   }
   const input = value as Record<string, unknown>;
+  const decision = parseAction(input);
+  const reasoning = normalizeReasoning(input.reasoning);
+  return reasoning === undefined ? decision : { ...decision, reasoning };
+}
+
+function parseAction(input: Record<string, unknown>): AgentDecision {
   switch (input.type) {
     case "inspect":
     case "finish":
@@ -126,6 +145,87 @@ export function normalizeLabel(value: unknown): string | undefined {
   if (typeof value !== "string") return undefined;
   const label = value.replace(/\s+/g, " ").trim().slice(0, LABEL_MAX_LENGTH).trim();
   return label.length > 0 ? label : undefined;
+}
+
+/**
+ * Normalises the model's optional reasoning: whitespace is collapsed, it is
+ * clipped at REASONING_MAX_LENGTH, and a blank or non-string value is dropped.
+ */
+export function normalizeReasoning(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const reasoning = value.replace(/\s+/g, " ").trim().slice(0, REASONING_MAX_LENGTH).trim();
+  return reasoning.length > 0 ? reasoning : undefined;
+}
+
+/**
+ * The decision without its reasoning: what the model gets back in its
+ * history, and what loop signatures and dataset actions are built from.
+ */
+export function withoutReasoning(decision: AgentDecision): AgentDecision {
+  if (decision.reasoning === undefined) return decision;
+  const copy: AgentDecision = { ...decision };
+  delete copy.reasoning;
+  return copy;
+}
+
+/** What a competitor model is sent as its user message, before serialisation. */
+export type CompetitorPrompt = Omit<CompetitorDecisionInput, "signal">;
+
+/**
+ * The model-facing part of a decision input: the task, racer, observation
+ * and history (never with reasoning). The runner's abort signal is left out;
+ * adapters pass it to the request instead.
+ */
+export function competitorPromptInput(input: CompetitorPrompt): CompetitorPrompt {
+  return {
+    task: input.task,
+    racerId: input.racerId,
+    observation: input.observation,
+    history: input.history.map((entry) => ({ ...entry, decision: withoutReasoning(entry.decision) })),
+  };
+}
+
+/** The exact user message every competitor adapter sends. */
+export function competitorUserMessage(input: CompetitorPrompt): string {
+  return JSON.stringify(competitorPromptInput(input));
+}
+
+/**
+ * The exact tool call as a dataset records it: without reasoning, with the
+ * typed text's length, and with the text itself replaced by "[redacted]"
+ * when it went into a password field.
+ */
+export function datasetAction(
+  decision: AgentDecision,
+  options: { redactText?: boolean } = {},
+): DatasetAction {
+  switch (decision.type) {
+    case "inspect":
+    case "finish":
+      return { type: decision.type };
+    case "click":
+      return {
+        type: "click",
+        targetRole: decision.targetRole,
+        ...(decision.label === undefined ? {} : { label: decision.label }),
+      };
+    case "type":
+      return {
+        type: "type",
+        targetRole: decision.targetRole,
+        ...(decision.label === undefined ? {} : { label: decision.label }),
+        text: options.redactText ? REDACTED_TEXT : decision.text,
+        textLength: decision.text.length,
+      };
+    case "evaluate":
+      return { type: "evaluate", script: decision.script };
+    case "navigate":
+      return { type: "navigate", url: decision.url };
+    case "wait":
+      return { type: "wait", durationMs: decision.durationMs };
+    case "checkpoint":
+      return { type: "checkpoint", checkpoint: decision.checkpoint };
+  }
 }
 
 const TYPED_TEXT_MAX = 40;

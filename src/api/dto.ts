@@ -572,6 +572,10 @@ export type TraceEntry = {
   /** The step clicked a planted decoy. */
   decoy: boolean;
   blockedBy: BlockedBy | null;
+  /** The model's stated reason for this step, when it gave one. */
+  reasoning: string | null;
+  /** This step cleared an active sabotage. */
+  clearedSabotage: boolean;
 };
 
 /** One Steel Agent Traces event, normalised. */
@@ -772,6 +776,241 @@ export type EvaluationExportRow = {
   trace: TraceEntry[];
   steelTrace: SteelTraceEntry[];
   crowd: AgentCrowdSignal;
+};
+
+// ---------------------------------------------------------------------------
+// Dataset export (docs/training-data.md). One zip: manifest.json plus
+// episodes / steps / sft / preferences JSON Lines, screenshots and raw Steel
+// traces. Every row covers all four agents, failures included.
+// ---------------------------------------------------------------------------
+
+/** What the model saw when it chose a step: exactly the runner's observation. */
+export type StepObservation = {
+  url: string | null;
+  title: string | null;
+  /** The page's visible text as given to the model (at most 8,000 characters). */
+  text: string;
+  /** Interactive controls in page order (at most 100), as given to the model. */
+  controls: Array<{
+    tag: string;
+    role: string | null;
+    arenaRole: string | null;
+    label: string;
+    visible: boolean;
+    disabled: boolean;
+  }>;
+};
+
+/** The exact tool call a model made. */
+export type DatasetAction = {
+  type: "inspect" | "click" | "type" | "evaluate" | "navigate" | "wait" | "checkpoint" | "finish";
+  targetRole?: string;
+  label?: string;
+  /** Typed text; "[redacted]" when typed into a password field. */
+  text?: string;
+  /** Characters typed, kept even when the text is redacted. */
+  textLength?: number;
+  /** The agent's own same-page DOM script (evaluate). */
+  script?: string;
+  url?: string;
+  durationMs?: number;
+  checkpoint?: number;
+};
+
+/**
+ * progress: a verified checkpoint or finish followed, or it cleared a sabotage;
+ * harmful: clicked a decoy, was blocked, errored, or the model gave no usable
+ * tool call (the recorded action is the runner's substitute); wasted: repeated the
+ * previous step with no progress; neutral: anything else.
+ */
+export type StepQuality = "progress" | "neutral" | "wasted" | "harmful";
+
+/** One Steel Agent Traces event in full. Typing is recorded without the characters. */
+export type DatasetSteelEvent = {
+  at: number;
+  endAt: number | null;
+  /** click | change | input | keyPress | submit | navigate | scroll | drag | error | ... */
+  type: string;
+  label: string | null;
+  role: string | null;
+  tag: string | null;
+  selector: string | null;
+  url: string | null;
+  /** Target box [x, y, width, height] in CSS pixels. */
+  bbox: [number, number, number, number] | null;
+  pointer: { x: number; y: number; button: string | null } | null;
+  /** Typing episode: input type and length, never the characters. */
+  input: { inputType: string | null; length: number | null; redacted: boolean } | null;
+  /** Special keys, e.g. Enter. */
+  key: { key: string; code: string | null } | null;
+  decoy: boolean;
+};
+
+/**
+ * A decision that was not one valid tool call on the first try. After a
+ * malformed payload the provider is asked once more; when it never gives a
+ * usable call, the runner inspects the page instead (`fallback`).
+ */
+export type DecisionIssue = {
+  /** Malformed tool payloads before the decision (or before giving up). */
+  malformedAttempts: number;
+  /** No usable tool call: the recorded action is the runner's substitute, not the model's. */
+  fallback: boolean;
+};
+
+/** steps.jsonl: one line per agent step, the core training record. */
+export type DatasetStep = {
+  schemaVersion: 1;
+  /** `${raceId}:${racerId}:${step}` */
+  id: string;
+  raceId: string;
+  racerId: string;
+  step: number;
+  mode: ServerMode;
+  agent: AgentIdentity;
+  task: { text: string; courseId: string; seed: string };
+  timing: {
+    observedAt: number | null;
+    /** When the prompt was sent: after the screenshot and any rate-limit pause. */
+    promptedAt: number | null;
+    decidedAt: number | null;
+    actedAt: number;
+    /** Rate-limit pause before the prompt was sent; 0 when none. */
+    rateLimitWaitMs: number;
+    /** decidedAt - promptedAt (decidedAt - observedAt in records without promptedAt). */
+    modelLatencyMs: number | null;
+  };
+  progress: { checkpoint: number; checkpointCount: number; nextCheckpointLabel: string | null };
+  observation: StepObservation | null;
+  /** Bundle path of the screenshot the model's observation was taken with. */
+  screenshot: string | null;
+  /** The sabotage in effect (hidden from the agent at the time), or null. */
+  hazard: {
+    stepId: string;
+    hazardType: HazardType;
+    tier: SabotageTier;
+    appliedAt: number;
+    clearedAt: number | null;
+  } | null;
+  action: DatasetAction | null;
+  reasoning: string | null;
+  /** Null when the model gave one valid tool call on the first try. */
+  decisionIssue: DecisionIssue | null;
+  result: {
+    ok: boolean;
+    error: string | null;
+    blockedBy: BlockedBy | null;
+    decoy: boolean;
+    navigated: boolean;
+    clearedSabotage: boolean;
+    progressed: boolean;
+    finished: boolean;
+    target: { role: string | null; text: string | null } | null;
+    cursor: CursorPosition | null;
+  };
+  /** Steel events between this step's decision and the next step's. Live runs only. */
+  steel: DatasetSteelEvent[];
+  labels: { quality: StepQuality; reaction: ReactionLabel | null };
+};
+
+/** episodes.jsonl: one line per agent per fight. */
+export type DatasetEpisode = {
+  schemaVersion: 1;
+  /** `${raceId}:${racerId}` */
+  id: string;
+  raceId: string;
+  racerId: string;
+  fightNumber: number;
+  mode: ServerMode;
+  title: string;
+  task: { text: string; courseId: string; seed: string; checkpointLabels: string[] };
+  agent: AgentIdentity;
+  startedAt: number | null;
+  finishedAt: number | null;
+  outcome: AgentOutcome;
+  success: boolean;
+  durationMs: number | null;
+  steps: number;
+  errors: number;
+  loops: number;
+  robustness: number | null;
+  sabotage: Array<Omit<SabotageReaction, "evidence">>;
+  crowd: AgentCrowdSignal;
+  stepIds: string[];
+  /** Bundle path of the raw Steel trace, or null when there is none. */
+  steelTraceFile: string | null;
+};
+
+export type DatasetToolCall = {
+  id: string;
+  type: "function";
+  function: { name: string; arguments: string };
+};
+
+/** sft.jsonl: chat-format examples (OpenAI / Hugging Face) from good steps of successful runs. */
+export type DatasetSftExample = {
+  messages: Array<
+    | { role: "system"; content: string }
+    | { role: "user"; content: string }
+    | { role: "assistant"; content: string | null; tool_calls: DatasetToolCall[] }
+  >;
+  metadata: {
+    stepId: string;
+    raceId: string;
+    agentKey: string;
+    model: string;
+    quality: StepQuality;
+    hazardType: HazardType | null;
+    mode: ServerMode;
+  };
+};
+
+/** preferences.jsonl: at a sabotage, the action that worked vs one that failed (DPO). */
+export type DatasetPreference = {
+  id: string;
+  prompt: { task: string; observation: StepObservation | null; history: DatasetAction[] };
+  chosen: DatasetAction;
+  rejected: DatasetAction;
+  metadata: {
+    /** cross-agent: two agents on the same trap; self-correction: one agent's failed then successful attempt. */
+    pairType: "cross-agent" | "self-correction";
+    raceId: string;
+    sabotageStepId: string;
+    hazardType: HazardType;
+    checkpoint: number;
+    chosenStepId: string;
+    rejectedStepId: string;
+    chosenAgent: string;
+    rejectedAgent: string;
+    chosenResult: "progressed" | "cleared";
+    rejectedResult: "decoy" | BlockedBy | "error";
+    mode: ServerMode;
+  };
+};
+
+export type DatasetFile = "episodes" | "steps" | "sft" | "preferences";
+
+/** manifest.json at the root of the zip. */
+export type DatasetManifest = {
+  schemaVersion: 1;
+  name: "sabotage-markets";
+  generatedAt: number;
+  filters: { days: number; mode: ServerMode | "all" };
+  counts: {
+    fights: number;
+    episodes: number;
+    steps: number;
+    sft: number;
+    preferences: number;
+    screenshots: number;
+    steelTraces: number;
+  };
+  byMode: Record<ServerMode, number>;
+  files: Array<{ path: string; description: string; rows: number | null }>;
+  /** The competitor action tool, so sft.jsonl can be replayed as-is. */
+  tool: { name: string; description: string; parameters: unknown };
+  systemPrompt: string;
+  notes: string[];
 };
 
 // ---------------------------------------------------------------------------

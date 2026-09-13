@@ -32,16 +32,24 @@ export function interleaveHits(trace: readonly TraceEntry[], reactions: readonly
   return rows;
 }
 
-export type TraceTotals = { steps: number; errors: number; decoys: number; blocked: number };
+export type TraceTotals = { steps: number; errors: number; decoys: number; blocked: number; cleared: number };
 
 export function traceTotals(trace: readonly TraceEntry[]): TraceTotals {
   let errors = 0;
   let decoys = 0;
   let blocked = 0;
+  let cleared = 0;
   for (const entry of trace) {
     if (entry.kind === "error") errors += 1;
     if (entry.decoy) decoys += 1;
     if (entry.blockedBy !== null) blocked += 1;
+    if (entry.clearedSabotage) cleared += 1;
   }
-  return { steps: trace.length, errors, decoys, blocked };
+  return { steps: trace.length, errors, decoys, blocked, cleared };
+}
+
+/** The model's stated reason for a step, trimmed; null when it gave none. */
+export function traceReasoning(entry: Pick<TraceEntry, "reasoning">): string | null {
+  const text = entry.reasoning?.trim();
+  return text ? text : null;
 }

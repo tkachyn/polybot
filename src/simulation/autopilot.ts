@@ -318,7 +318,7 @@ export class SimulationAutopilot {
           break;
         case "crash":
           lastAt = Math.max(lastAt, at);
-          await this.recordHistoryStep(coordinator, course, fight.agents, event, at);
+          await this.recordHistoryStep(coordinator, course, fight.agents, event, at, startAt);
           coordinator.engine.failRacer(event.racerId, "simulated agent crashed: browser context lost", at);
           await coordinator.tick(at);
           break;
@@ -328,7 +328,7 @@ export class SimulationAutopilot {
           break;
         default:
           lastAt = Math.max(lastAt, at);
-          await this.recordHistoryStep(coordinator, course, fight.agents, event, at);
+          await this.recordHistoryStep(coordinator, course, fight.agents, event, at, startAt);
           break;
       }
     }
@@ -347,6 +347,7 @@ export class SimulationAutopilot {
     agents: readonly AgentIdentity[],
     event: HistoryStepEvent,
     at: number,
+    startAt: number,
   ): Promise<void> {
     const racer = coordinator.engine.racers.get(event.racerId);
     if (!racer || (racer.status !== "running" && racer.status !== "recovering")) return;
@@ -364,9 +365,15 @@ export class SimulationAutopilot {
       caption = event.text;
       if (event.idle) status = "idle";
     } else {
+      // The agent read the page as its previous event ended, and acted at `at`.
+      const observedAt = Math.min(at, startAt + Math.max(0, Math.round(event.observedT)));
       coordinator.recordAgentAction(
         event.racerId,
-        actionReport(event.entry, event.page, event.step, SIM_MAX_STEPS),
+        actionReport(event.entry, event.page, event.step, SIM_MAX_STEPS, {
+          brand: course.brand,
+          observedAt,
+          decidedAt: at,
+        }),
         at,
       );
       caption = stepCaption(event.entry);
@@ -380,6 +387,8 @@ export class SimulationAutopilot {
     coordinator.recordAgentFrame(event.racerId, {
       contentType: "image/svg+xml",
       capturedAt: at,
+      // A step's frame is the page its agent read for that step.
+      ...(event.kind === "note" ? {} : { step: event.step }),
       body: renderSimFrame({
         brand: course.brand,
         page: event.page,

@@ -3,10 +3,12 @@ import test from "node:test";
 import type { Browser } from "playwright";
 import type Steel from "steel-sdk";
 import {
+  STEEL_RAW_TRACE_LIMIT,
   STEEL_TRACE_LIMIT,
   collectSteelEvidence,
   fetchSteelAgentTraces,
   fetchSteelHlsPlaylist,
+  normalizeSteelDatasetEvent,
   normalizeSteelTraceEvent,
   parseHlsReplayStart,
   parseSteelTimestamp,
@@ -117,13 +119,15 @@ test("pages through agent traces with startTime after the last event, using the 
   const pageTwo = { events: [clickReal], total: 3, hasMore: false };
   const { fetchImpl, calls } = mockFetch((url) =>
     Response.json(url.searchParams.has("startTime") ? pageTwo : pageOne));
-  const trace = await fetchSteelAgentTraces(credentials, { fetch: fetchImpl });
+  const traces = await fetchSteelAgentTraces(credentials, { fetch: fetchImpl });
 
-  assert.deepEqual(trace?.map((entry) => [entry.type, entry.decoy]), [
+  assert.deepEqual(traces?.trace.map((entry) => [entry.type, entry.decoy]), [
     ["navigate", false],
     ["click", true],
     ["click", false],
   ]);
+  // The raw events come back exactly as Steel sent them, oldest first.
+  assert.deepEqual(traces?.raw, [navigate, clickOnDecoy, clickReal]);
   assert.equal(calls.length, 2);
   assert.equal(`${calls[0].url.origin}${calls[0].url.pathname}`, "https://api.steel.dev/v1/sessions/3f1c-session/agent-traces");
   assert.equal(calls[0].url.searchParams.get("startTime"), null);
@@ -134,7 +138,7 @@ test("pages through agent traces with startTime after the last event, using the 
   }
 });
 
-test("caps agent traces at 300 events, oldest first", async () => {
+test("caps the normalised trace at 300 events and the raw events at 2,000, oldest first", async () => {
   const base = Date.parse("2026-09-12T21:00:00.000Z");
   const { fetchImpl, calls } = mockFetch((url) => {
     const start = url.searchParams.get("startTime");
@@ -145,11 +149,16 @@ test("caps agent traces at 300 events, oldest first", async () => {
     }));
     return Response.json({ events, total: 1_000, hasMore: true });
   });
-  const trace = await fetchSteelAgentTraces(credentials, { fetch: fetchImpl });
-  assert.equal(trace?.length, STEEL_TRACE_LIMIT);
-  assert.equal(calls.length, 2);
-  assert.equal(trace?.[0].at, base);
-  assert.ok(trace?.every((entry, index) => index === 0 || entry.at >= trace[index - 1].at));
+  const traces = await fetchSteelAgentTraces(credentials, { fetch: fetchImpl });
+  assert.ok(traces);
+  assert.equal(traces.trace.length, STEEL_TRACE_LIMIT);
+  assert.equal(traces.raw.length, STEEL_RAW_TRACE_LIMIT);
+  assert.equal(calls.length, STEEL_RAW_TRACE_LIMIT / 200);
+  assert.equal(traces.trace[0].at, base);
+  assert.ok(traces.trace.every((entry, index) => index === 0 || entry.at >= traces.trace[index - 1].at));
+  const times = traces.raw.map((event) => Date.parse((event as { timestamp: string }).timestamp));
+  assert.equal(times[0], base);
+  assert.ok(times.every((at, index) => index === 0 || at >= times[index - 1]));
 });
 
 test("trace failures resolve to null and malformed events are skipped", async () => {
@@ -162,7 +171,10 @@ test("trace failures resolve to null and malformed events are skipped", async ()
   const html = mockFetch(() => new Response("<html>oops</html>", { status: 200 }));
   assert.equal(await fetchSteelAgentTraces(credentials, { fetch: html.fetchImpl }), null);
   const mixed = mockFetch(() => Response.json({ events: [{ type: "click" }, 42, navigate], hasMore: false }));
-  assert.deepEqual((await fetchSteelAgentTraces(credentials, { fetch: mixed.fetchImpl }))?.map((entry) => entry.type), ["navigate"]);
+  const mixedTraces = await fetchSteelAgentTraces(credentials, { fetch: mixed.fetchImpl });
+  assert.deepEqual(mixedTraces?.trace.map((entry) => entry.type), ["navigate"]);
+  // Raw events without a timestamp can be neither ordered nor paged past.
+  assert.deepEqual(mixedTraces?.raw, [navigate]);
   assert.equal(await fetchSteelAgentTraces({ steelSessionId: "", apiKey: "k" }, { fetch: mixed.fetchImpl }), null);
 });
 
@@ -188,6 +200,7 @@ test("collects traces and the replay start together; a timeout yields nothing", 
   assert.equal(evidence.replayAvailable, true);
   assert.equal(evidence.replayStart, Date.parse("2026-09-12T21:11:11.610Z"));
   assert.deepEqual(evidence.trace?.map((entry) => entry.decoy), [true]);
+  assert.deepEqual(evidence.raw, [clickOnDecoy]);
 
   const hanging = ((_input: unknown, init?: RequestInit) =>
     new Promise<Response>((_resolve, reject) => {
@@ -196,7 +209,7 @@ test("collects traces and the replay start together; a timeout yields nothing", 
   const started = Date.now();
   assert.deepEqual(
     await collectSteelEvidence(credentials, { fetch: hanging, timeoutMs: 30 }),
-    { trace: null, replayAvailable: false, replayStart: null },
+    { trace: null, raw: null, replayAvailable: false, replayStart: null },
   );
   assert.ok(Date.now() - started < 2_000);
 });
@@ -231,9 +244,152 @@ test("later attempts fetch only what is still missing and report progress", asyn
       : Response.json({ events: [], total: 0, hasMore: false }));
   assert.deepEqual(
     await collectSteelEvidence(credentials, { fetch: never.fetchImpl, attempts: 2, retryMs: 5 }),
-    { trace: [], replayAvailable: false, replayStart: null },
+    { trace: [], raw: [], replayAvailable: false, replayStart: null },
   );
   assert.equal(never.calls.filter((call) => call.url.pathname.endsWith("/hls")).length, 2);
+});
+
+// Full Agent Traces shapes, as verified against real Steel sessions on 2026-09-12.
+const clickWithPointer = {
+  ...clickOnDecoy,
+  pointer: { x: 60, y: 35, button: "left", clickCount: 1 },
+};
+const emailInput = {
+  timestamp: "2026-09-12T21:11:13.000Z",
+  endTimestamp: "2026-09-12T21:11:13.900Z",
+  type: "input",
+  page: { url: "https://course.test/login" },
+  target: {
+    tagName: "INPUT",
+    role: "textbox",
+    accessibleName: "Email",
+    text: "",
+    attributes: { id: "email" },
+    selector: { css: "#email", id: "email" },
+    boundingBox: { x: 40, y: 140, width: 320, height: 44 },
+  },
+  value: { inputType: "email", valueLength: 17 },
+};
+const passwordChange = {
+  timestamp: "2026-09-12T21:11:14.100Z",
+  endTimestamp: "2026-09-12T21:11:15.350Z",
+  type: "change",
+  page: { url: "https://course.test/login" },
+  target: {
+    tagName: "INPUT",
+    role: "textbox",
+    accessibleName: "Password",
+    text: "",
+    attributes: { id: "password" },
+    selector: { css: "#password", id: "password" },
+    boundingBox: { x: 40, y: 200, width: 320, height: 44 },
+  },
+  value: { inputType: "password", valueLength: 14, redacted: true },
+};
+const enterKey = {
+  timestamp: "2026-09-12T21:11:15.400Z",
+  type: "keyPress",
+  page: { url: "https://course.test/login" },
+  keyboard: { key: "Enter", code: "Enter" },
+};
+const formSubmit = {
+  timestamp: "2026-09-12T21:11:15.410Z",
+  type: "submit",
+  page: { url: "https://course.test/login" },
+  target: {
+    tagName: "FORM",
+    role: "form",
+    accessibleName: "Sign in",
+    attributes: { id: "login-form" },
+    selector: { css: "#login-form", id: "login-form" },
+    boundingBox: { x: 20, y: 100, width: 360, height: 260 },
+  },
+};
+
+test("normalises full Agent Traces events for the dataset", () => {
+  assert.deepEqual(normalizeSteelDatasetEvent(clickWithPointer), {
+    at: Date.parse("2026-09-12T21:11:17.874Z"),
+    endAt: null,
+    type: "click",
+    label: "Continue",
+    role: "button",
+    tag: "button",
+    selector: "#arena-decoy-2",
+    url: "https://course.test/shipping",
+    bbox: [10, 20, 100, 30],
+    pointer: { x: 60, y: 35, button: "left" },
+    input: null,
+    key: null,
+    decoy: true,
+  });
+  assert.deepEqual(normalizeSteelDatasetEvent(emailInput), {
+    at: Date.parse("2026-09-12T21:11:13.000Z"),
+    endAt: Date.parse("2026-09-12T21:11:13.900Z"),
+    type: "input",
+    label: "Email",
+    role: "textbox",
+    tag: "input",
+    selector: "#email",
+    url: "https://course.test/login",
+    bbox: [40, 140, 320, 44],
+    pointer: null,
+    input: { inputType: "email", length: 17, redacted: false },
+    key: null,
+    decoy: false,
+  });
+  const password = normalizeSteelDatasetEvent(passwordChange);
+  assert.deepEqual(password?.input, { inputType: "password", length: 14, redacted: true });
+  assert.deepEqual(
+    [password?.type, password?.label, password?.endAt],
+    ["change", "Password", Date.parse("2026-09-12T21:11:15.350Z")],
+  );
+  const enter = normalizeSteelDatasetEvent(enterKey);
+  assert.deepEqual([enter?.type, enter?.key, enter?.label, enter?.tag], ["keyPress", { key: "Enter", code: "Enter" }, null, null]);
+  const submit = normalizeSteelDatasetEvent(formSubmit);
+  assert.deepEqual(
+    [submit?.type, submit?.tag, submit?.role, submit?.label, submit?.selector, submit?.bbox],
+    ["submit", "form", "form", "Sign in", "#login-form", [20, 100, 360, 260]],
+  );
+  assert.deepEqual(normalizeSteelDatasetEvent(navigate), {
+    at: Date.parse("2026-09-12T21:11:11.990Z"),
+    endAt: null,
+    type: "navigate",
+    label: null,
+    role: null,
+    tag: null,
+    selector: null,
+    url: "https://course.test/cart",
+    bbox: null,
+    pointer: null,
+    input: null,
+    key: null,
+    decoy: false,
+  });
+});
+
+test("the dataset normaliser never keeps typed characters and tolerates odd shapes", () => {
+  // A single-character key would be a typed character.
+  assert.equal(normalizeSteelDatasetEvent({ ...enterKey, keyboard: { key: "a", code: "KeyA" } })?.key, null);
+  // A string value is never an input episode.
+  const typed = normalizeSteelDatasetEvent({ ...emailInput, value: "tester@arena.test" });
+  assert.equal(typed?.input, null);
+  assert.doesNotMatch(JSON.stringify(typed), /tester@arena/);
+  // A navigation's own URL wins over the page it started from.
+  assert.equal(
+    normalizeSteelDatasetEvent({ ...navigate, page: { url: "https://course.test/shipping" } })?.url,
+    "https://course.test/cart",
+  );
+  // DOM button codes read as names; a box with a missing side is dropped.
+  const odd = normalizeSteelDatasetEvent({
+    ...clickWithPointer,
+    pointer: { x: 1, y: 2, button: 2 },
+    target: { ...clickWithPointer.target, boundingBox: { x: 1, y: 2, width: 3 } },
+  });
+  assert.deepEqual(odd?.pointer, { x: 1, y: 2, button: "right" });
+  assert.equal(odd?.bbox, null);
+  assert.equal(normalizeSteelDatasetEvent(null), null);
+  assert.equal(normalizeSteelDatasetEvent({ type: "click" }), null);
+  assert.equal(normalizeSteelDatasetEvent({ timestamp: "2026-09-12T21:11:11Z" }), null);
 });
 
 test("the session manager remembers each racer's session and creating key after release", async () => {

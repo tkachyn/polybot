@@ -18,7 +18,7 @@ import {
 } from "./format";
 import { parseEvaluationMode, parseEvaluationWindow } from "./params";
 import { EVALUATION_STATUS_TONE, OUTCOME_TONE, REACTION_TONE, TONE_COLOR_VAR } from "./tones";
-import { interleaveHits, steelTraceAround, traceTotals } from "./trace";
+import { interleaveHits, steelTraceAround, traceReasoning, traceTotals } from "./trace";
 
 // ---------------------------------------------------------------------------
 // Fixtures (tests only)
@@ -47,6 +47,8 @@ const step = (n: number, at: number, extra: Partial<TraceEntry> = {}): TraceEntr
   targetText: null,
   decoy: false,
   blockedBy: null,
+  reasoning: null,
+  clearedSabotage: false,
   ...extra,
 });
 
@@ -256,8 +258,14 @@ describe("trace helpers", () => {
     expect(rows.map((r) => (r.kind === "hit" ? `hit${r.reaction.stepIndex}` : `s${r.entry.step}`))).toEqual(["s1", "hit1", "s2", "hit2", "s3", "hit3"]);
   });
 
-  it("counts errors, decoy clicks and blocked steps", () => {
-    const trace = [step(1, 1, { kind: "error", blockedBy: "modal" }), step(2, 2, { decoy: true }), step(3, 3)];
-    expect(traceTotals(trace)).toEqual({ steps: 3, errors: 1, decoys: 1, blocked: 1 });
+  it("counts errors, decoy clicks, blocked steps and cleared sabotage", () => {
+    const trace = [step(1, 1, { kind: "error", blockedBy: "modal" }), step(2, 2, { decoy: true }), step(3, 3, { clearedSabotage: true }), step(4, 4)];
+    expect(traceTotals(trace)).toEqual({ steps: 4, errors: 1, decoys: 1, blocked: 1, cleared: 1 });
+  });
+
+  it("reads the model's reasoning, trimmed, or null when it gave none", () => {
+    expect(traceReasoning(step(1, 1, { reasoning: "  Two primary buttons; the task needs Add to cart.\n" }))).toBe("Two primary buttons; the task needs Add to cart.");
+    expect(traceReasoning(step(2, 2))).toBeNull();
+    expect(traceReasoning(step(3, 3, { reasoning: "   " }))).toBeNull();
   });
 });

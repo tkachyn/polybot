@@ -168,6 +168,8 @@ class FightScript {
       targetText: options.targetText ?? null,
       decoy: options.decoy ?? false,
       blockedBy: options.blockedBy ?? null,
+      reasoning: null,
+      clearedSabotage: false,
     });
     return this;
   }

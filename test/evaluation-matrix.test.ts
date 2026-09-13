@@ -247,6 +247,7 @@ test("export rows: one per agent per final evaluation, newest fight first, witho
   const trace = [{
     step: 1, at: 11_000, kind: "action" as const, text: "click \"Continue\"", url: "https://x.test/",
     targetRole: "primary-action", targetText: "Continue", decoy: true, blockedBy: null,
+    reasoning: null, clearedSabotage: false,
   }];
   const steelTrace = [{
     at: 11_000, type: "click", label: "Continue", role: "button", selector: "#arena-decoy-1",

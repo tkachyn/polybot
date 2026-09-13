@@ -1,5 +1,11 @@
 import type { Locator, Page } from "playwright";
-import type { BlockedBy, CursorPosition } from "../api/dto.js";
+import type {
+  BlockedBy,
+  CursorPosition,
+  DatasetAction,
+  DecisionIssue,
+  StepObservation,
+} from "../api/dto.js";
 import type {
   ActionEvidence,
   AgentActionReport,
@@ -7,9 +13,13 @@ import type {
   CompetitorContext,
 } from "../application/contracts.js";
 import {
+  datasetAction,
   describeDecision,
   EVALUATE_SCRIPT_MAX_LENGTH,
   normalizeLabel,
+  normalizeReasoning,
+  REDACTED_TEXT,
+  withoutReasoning,
 } from "./competitor-decision.js";
 
 export type BrowserObservation = {
@@ -28,16 +38,20 @@ export type BrowserObservation = {
   }>;
 };
 
+/**
+ * One model decision. Any decision may carry the model's one-sentence
+ * `reasoning`: it is reported with the step, never sent back in history.
+ */
 export type AgentDecision =
-  | { type: "inspect" }
+  | { type: "inspect"; reasoning?: string }
   /** `label` picks, by visible text, among controls that share `targetRole`. */
-  | { type: "click"; targetRole: string; label?: string }
-  | { type: "type"; targetRole: string; text: string; label?: string }
-  | { type: "evaluate"; script: string }
-  | { type: "navigate"; url: string }
-  | { type: "wait"; durationMs: number }
-  | { type: "checkpoint"; checkpoint: number }
-  | { type: "finish" };
+  | { type: "click"; targetRole: string; label?: string; reasoning?: string }
+  | { type: "type"; targetRole: string; text: string; label?: string; reasoning?: string }
+  | { type: "evaluate"; script: string; reasoning?: string }
+  | { type: "navigate"; url: string; reasoning?: string }
+  | { type: "wait"; durationMs: number; reasoning?: string }
+  | { type: "checkpoint"; checkpoint: number; reasoning?: string }
+  | { type: "finish"; reasoning?: string };
 
 export interface CompetitorDecisionModel {
   /** Optional provider pacing hook; returns after the next call is allowed. */
@@ -53,6 +67,12 @@ export interface CompetitorDecisionModel {
     history: Array<{ decision: AgentDecision; error?: string }>;
     signal?: AbortSignal;
   }): Promise<AgentDecision>;
+  /**
+   * Optional: how the latest decision arrived when it was not one valid tool
+   * call (malformed payloads the provider redid, or a substitute action when
+   * it never gave a usable one). Cleared on read.
+   */
+  takeDecisionIssue?(): DecisionIssue | null;
 }
 
 /** Alias of `parseDecision`, the one shared competitor decision parser. */
@@ -85,6 +105,16 @@ const EVIDENCE_TIMEOUT_MS = 1_000;
 /** Longest wait for a navigation started by an action before syncing progress. */
 const SETTLE_TIMEOUT_MS = 3_000;
 const EVIDENCE_TEXT_MAX = 120;
+/** The observation keeps at most this much page text and this many controls. */
+const OBSERVATION_TEXT_MAX = 8_000;
+const OBSERVATION_CONTROLS_MAX = 100;
+/**
+ * Typing into a control whose role or label names a secret is redacted even
+ * when the target never resolved to a password input.
+ */
+const SECRET_FIELD_PATTERN = /pass(?:word|code|phrase)|\bpin\b|secret/i;
+/** Shorter secrets are not scrubbed from free text, which they would garble. */
+const SECRET_SCRUB_MIN_LENGTH = 3;
 const CURSOR_INITIAL_X = 24;
 const CURSOR_INITIAL_Y = 24;
 const CURSOR_FRAME_MS = 16;
@@ -193,11 +223,21 @@ type StepOutcome = {
   error?: string;
   /** The same failure as the model may see it: no call log, nothing hidden. */
   modelError?: string;
+  /** Text typed into a password field (or one named like it): never reported. */
+  secret?: string;
+};
+
+/** What the model was shown for one step. */
+type Observed = {
+  observation: BrowserObservation;
+  /** Per control: its label is a password field's value, redacted when recorded. */
+  masked: boolean[];
 };
 
 type FrameCapture = {
   timer?: ReturnType<typeof setInterval>;
-  inFlight: boolean;
+  /** Settles when the screenshot in flight settles; captures never overlap. */
+  inFlight: Promise<void> | null;
   stopped: boolean;
 };
 
@@ -258,35 +298,48 @@ export class PlaywrightCompetitorRunner implements CompetitorAgentRunner {
     this.controllers.set(context.racerId, controller);
     const capture = this.startFrames(page, context);
     const history: Array<{ decision: AgentDecision; error?: string }> = [];
+    const secrets = new SecretScrubber();
 
     try {
       for (let action = 0; action < this.maxActions; action += 1) {
         if (controller.signal.aborted) return;
-        const observation = await this.observe(page);
+        const step = action + 1;
+        const observed = await this.observe(page);
+        const observedAt = Date.now();
+        // The screenshot this step's observation was taken with.
+        await this.captureStepFrame(page, context, capture, step);
         const wait = await model.prepareForCall?.(controller.signal);
-        if (wait && wait.waitedMs > 0) {
-          this.reportNote(context, action + 1, {
-            text: `Rate limit pause complete; resumed after ${Math.ceil(wait.waitedMs / 1_000)}s`,
-            signature: `rate-limit:${Math.ceil(wait.waitedMs / 1_000)}`,
+        const rateLimitWaitMs = wait && wait.waitedMs > 0 ? wait.waitedMs : 0;
+        if (rateLimitWaitMs > 0) {
+          this.reportNote(context, step, {
+            text: `Rate limit pause complete; resumed after ${Math.ceil(rateLimitWaitMs / 1_000)}s`,
+            signature: `rate-limit:${Math.ceil(rateLimitWaitMs / 1_000)}`,
           });
         }
+        const promptedAt = Date.now();
         const decision = await model.decide({
           task: this.options.task,
           racerId: context.racerId,
-          observation,
+          observation: observed.observation,
           history: history.slice(-10),
           signal: controller.signal,
         });
+        const decidedAt = Date.now();
+        const decisionIssue = model.takeDecisionIssue?.() ?? null;
         if (controller.signal.aborted) return;
-        const step = action + 1;
 
         const outcome = await this.attempt(page, context, decision);
+        if (outcome.secret !== undefined) secrets.add(outcome.secret);
+        // The model's own history never carries its reasoning.
+        const remembered = withoutReasoning(decision);
         history.push(
           outcome.error === undefined
-            ? { decision }
-            : { decision, error: outcome.modelError ?? outcome.error },
+            ? { decision: remembered }
+            : { decision: remembered, error: outcome.modelError ?? outcome.error },
         );
-        this.report(context, decision, step, outcome);
+        this.report(context, decision, step, outcome, {
+          observed, observedAt, promptedAt, decidedAt, rateLimitWaitMs, decisionIssue,
+        }, secrets);
         // Let a navigation the action started commit first, so a sabotage
         // fired by the resulting checkpoint lands on the new page instead of
         // one that is being torn down.
@@ -322,23 +375,60 @@ export class PlaywrightCompetitorRunner implements CompetitorAgentRunner {
     return model;
   }
 
+  /**
+   * Reports one step: what the model saw, the exact tool call, its reason and
+   * timing, and the browser evidence. Text typed into a password field is
+   * replaced by "[redacted]" in every field, and removed from later steps.
+   */
   private report(
     context: CompetitorContext,
     decision: AgentDecision,
     step: number,
     outcome: StepOutcome,
+    seen: {
+      observed: Observed;
+      observedAt: number;
+      promptedAt: number;
+      decidedAt: number;
+      rateLimitWaitMs: number;
+      decisionIssue: DecisionIssue | null;
+    },
+    secrets: SecretScrubber,
   ): void {
     if (!context.reportAction) return;
     try {
+      const redact = outcome.secret !== undefined;
+      // Human text and the loop signature: secrets redacted, reasoning left out.
+      const shown = withoutReasoning(
+        redact && decision.type === "type" ? { ...decision, text: REDACTED_TEXT } : decision,
+      );
+      const reasoning = normalizeReasoning(decision.reasoning);
+      const evidence = secrets.scrubEvidence(outcome.evidence);
       context.reportAction({
         kind: outcome.error === undefined ? "action" : "error",
-        text: describeDecision(decision),
-        url: outcome.url,
+        text: secrets.scrub(describeDecision(shown)),
+        url: outcome.url === undefined ? undefined : secrets.scrub(outcome.url),
         step,
         maxSteps: Number.isFinite(this.maxActions) ? this.maxActions : 0,
-        signature: JSON.stringify(decision),
-        ...(outcome.error === undefined ? {} : { error: outcome.error }),
-        ...(Object.keys(outcome.evidence).length === 0 ? {} : { evidence: outcome.evidence }),
+        signature: secrets.scrub(JSON.stringify(shown)),
+        ...(outcome.error === undefined
+          ? {}
+          : {
+            error: secrets.scrubError(outcome.error, outcome.secret),
+            // What the model's history holds for this step (secrets redacted).
+            modelError: secrets.scrubError(outcome.modelError ?? outcome.error, outcome.secret),
+          }),
+        ...(Object.keys(evidence).length === 0 ? {} : { evidence }),
+        observation: secrets.scrubObservation(
+          stepObservation(seen.observed.observation, seen.observed.masked),
+        ),
+        action: secrets.scrubAction(datasetAction(decision, { redactText: redact })),
+        ...(reasoning === undefined ? {} : { reasoning: secrets.scrub(reasoning) }),
+        observedAt: seen.observedAt,
+        promptedAt: seen.promptedAt,
+        decidedAt: seen.decidedAt,
+        ...(seen.rateLimitWaitMs > 0 ? { rateLimitWaitMs: seen.rateLimitWaitMs } : {}),
+        ...(seen.decisionIssue === null ? {} : { decisionIssue: { ...seen.decisionIssue } }),
       });
     } catch {
       // Telemetry must never break the competitor loop.
@@ -365,7 +455,7 @@ export class PlaywrightCompetitorRunner implements CompetitorAgentRunner {
 
   private startFrames(page: Page, context: CompetitorContext): FrameCapture {
     this.stopFrames(context.racerId);
-    const capture: FrameCapture = { inFlight: false, stopped: false };
+    const capture: FrameCapture = { inFlight: null, stopped: false };
     this.captures.set(context.racerId, capture);
     if (context.reportFrame) {
       const timer = setInterval(() => {
@@ -392,7 +482,36 @@ export class PlaywrightCompetitorRunner implements CompetitorAgentRunner {
     capture: FrameCapture,
   ): Promise<void> {
     if (!context.reportFrame || capture.inFlight || capture.stopped) return;
-    capture.inFlight = true;
+    await this.screenshot(page, context, capture);
+  }
+
+  /**
+   * The screenshot a step's observation was taken with, tagged with the
+   * step. It waits for a periodic capture in flight instead of being
+   * skipped; a failed screenshot only loses this frame.
+   */
+  private async captureStepFrame(
+    page: Page,
+    context: CompetitorContext,
+    capture: FrameCapture,
+    step: number,
+  ): Promise<void> {
+    if (!context.reportFrame) return;
+    while (capture.inFlight && !capture.stopped) await capture.inFlight;
+    if (capture.stopped) return;
+    await this.screenshot(page, context, capture, step);
+  }
+
+  private async screenshot(
+    page: Page,
+    context: CompetitorContext,
+    capture: FrameCapture,
+    step?: number,
+  ): Promise<void> {
+    let settle: () => void = () => undefined;
+    capture.inFlight = new Promise<void>((resolve) => {
+      settle = resolve;
+    });
     try {
       const body = await page.screenshot({
         type: "jpeg",
@@ -400,18 +519,24 @@ export class PlaywrightCompetitorRunner implements CompetitorAgentRunner {
         fullPage: false,
       });
       if (!capture.stopped) {
-        context.reportFrame({ contentType: "image/jpeg", body, capturedAt: Date.now() });
+        context.reportFrame?.({
+          contentType: "image/jpeg",
+          body,
+          capturedAt: Date.now(),
+          ...(step === undefined ? {} : { step }),
+        });
       }
     } catch {
       // A failed capture only costs one frame.
     } finally {
-      capture.inFlight = false;
+      capture.inFlight = null;
+      settle();
     }
   }
 
-  private async observe(page: Page): Promise<BrowserObservation> {
+  private async observe(page: Page): Promise<Observed> {
     const bodyText = await page.locator("body").innerText().catch(() => "");
-    const controls = await page
+    const found = await page
       // Hidden inputs carry form plumbing (run ids, counts), not controls a
       // user could act on, so they stay out of the model's view.
       .locator('a, button, input:not([type="hidden"]), select, textarea, [role]')
@@ -432,15 +557,27 @@ export class PlaywrightCompetitorRunner implements CompetitorAgentRunner {
             // What a user could see; a covered but rendered control is visible.
             visible: box.width > 0 && box.height > 0 &&
               window.getComputedStyle(element).visibility !== "hidden",
+            // The label is a password field's value: the model sees it as
+            // before, but it is redacted wherever the step is recorded.
+            masked: control.type === "password" && !html.innerText && Boolean(control.value),
           };
         }),
       )
       .catch(() => []);
+    const controls: BrowserObservation["controls"] = [];
+    const masked: boolean[] = [];
+    for (const { masked: isMasked, ...control } of found) {
+      controls.push(control);
+      masked.push(isMasked === true);
+    }
     return {
-      url: page.url(),
-      title: await page.title(),
-      bodyText: bodyText.slice(0, 8_000),
-      controls,
+      observation: {
+        url: page.url(),
+        title: await page.title(),
+        bodyText: bodyText.slice(0, OBSERVATION_TEXT_MAX),
+        controls,
+      },
+      masked,
     };
   }
 
@@ -449,6 +586,7 @@ export class PlaywrightCompetitorRunner implements CompetitorAgentRunner {
     context: CompetitorContext,
     decision: AgentDecision,
     evidence: ActionEvidence,
+    facts: { password: boolean },
   ): Promise<boolean> {
     switch (decision.type) {
       case "inspect":
@@ -456,7 +594,7 @@ export class PlaywrightCompetitorRunner implements CompetitorAgentRunner {
       case "click": {
         const target = await this.resolveTarget(page, decision.targetRole, decision.label);
         const read = await readTarget(target);
-        if (read) evidence.target = read;
+        if (read) evidence.target = read.target;
         const cursor = await this.moveCursorToTarget(page, context.racerId, target, "click");
         if (cursor) evidence.cursor = cursor;
         await target.click({ timeout: this.actionTimeoutMs });
@@ -466,7 +604,9 @@ export class PlaywrightCompetitorRunner implements CompetitorAgentRunner {
         if (decision.text.length > 2_000) throw new Error("Text input is too long");
         const target = await this.resolveTarget(page, decision.targetRole, decision.label);
         const read = await readTarget(target);
-        if (read) evidence.target = read;
+        if (read) evidence.target = read.target;
+        // Typed text is only recorded from a field known not to be a password.
+        facts.password = read ? read.password : true;
         const cursor = await this.moveCursorToTarget(page, context.racerId, target, "type");
         if (cursor) evidence.cursor = cursor;
         await target.fill(decision.text, { timeout: this.actionTimeoutMs });
@@ -529,21 +669,27 @@ export class PlaywrightCompetitorRunner implements CompetitorAgentRunner {
     decision: AgentDecision,
   ): Promise<StepOutcome> {
     const evidence: ActionEvidence = {};
+    const facts = { password: false };
     const before = currentUrl(page);
     const disruptionBefore = await this.hasActiveDisruption(page);
     let finished = false;
     let failed = false;
     let failure: unknown;
     try {
-      finished = await this.execute(page, context, decision, evidence);
+      finished = await this.execute(page, context, decision, evidence, facts);
     } catch (error) {
       failed = true;
       failure = error;
     }
     const url = currentUrl(page);
     if (before !== undefined && url !== undefined) evidence.navigated = url !== before;
+    const secret = decision.type === "type" && (facts.password || namesSecret(decision))
+      ? decision.text
+      : undefined;
+    const secretField = secret === undefined ? {} : { secret };
     if (!failed) {
       if (disruptionBefore && !(await this.hasActiveDisruption(page))) {
+        evidence.clearedSabotage = true;
         try {
           await context.reportRecovery?.();
         } catch {
@@ -551,7 +697,7 @@ export class PlaywrightCompetitorRunner implements CompetitorAgentRunner {
           // a competitor failure.
         }
       }
-      return { finished, evidence, url };
+      return { finished, evidence, url, ...secretField };
     }
     const error = failure instanceof Error ? failure.message : String(failure);
     const blockedBy = classifyBlockedBy(failure);
@@ -562,6 +708,7 @@ export class PlaywrightCompetitorRunner implements CompetitorAgentRunner {
       url,
       error,
       modelError: modelFacingError(failure, error, blockedBy),
+      ...secretField,
     };
   }
 
@@ -767,6 +914,23 @@ function modelFacingError(
   blockedBy: BlockedBy | undefined,
 ): string {
   if (failure instanceof ActionBlockedError) return message;
+  return modelFacingHeadline(message, blockedBy);
+}
+
+/** The runner's own "No control ..." messages: the model sees them as they are. */
+const OWN_BLOCKED_MESSAGE = /^No control (?:has|with) data-arena-role /;
+
+/**
+ * What the model was told about a failed step, rebuilt from a raw error
+ * (which can hold Playwright's call log and hidden markup such as the decoy
+ * flag). Prefer `StepRecord.modelError`, which records the same text
+ * directly; this stays for records without it.
+ */
+export function modelFacingErrorText(error: string, blockedBy: BlockedBy | null | undefined): string {
+  return OWN_BLOCKED_MESSAGE.test(error) ? error : modelFacingHeadline(error, blockedBy ?? undefined);
+}
+
+function modelFacingHeadline(message: string, blockedBy: BlockedBy | undefined): string {
   const headline = (message.split("\n", 1)[0] ?? "")
     .replace(/\x1b\[[0-9;]*m/g, "")
     .replace(/<[^>]*\b(?:data-arena-decoy|data-arena-disruption-id|arena-decoy-)[^>]*>/g, "<element>")
@@ -784,15 +948,23 @@ function currentUrl(page: Page): string | undefined {
   }
 }
 
-/** Ground truth about the resolved element; undefined when it can't be read. */
-async function readTarget(target: Locator): Promise<ActionEvidence["target"] | undefined> {
+/**
+ * Ground truth about the resolved element, and whether it is a password input
+ * (read from its `type` attribute); undefined when it can't be read. A
+ * password field's value is never read.
+ */
+async function readTarget(
+  target: Locator,
+): Promise<{ target: NonNullable<ActionEvidence["target"]>; password: boolean } | undefined> {
   try {
-    return await target.evaluate(
+    const read = await target.evaluate(
       (element, max) => {
         const html = element as HTMLElement;
+        const type = String(element.getAttribute("type") ?? "").trim().toLowerCase();
+        const value = type === "password" ? "" : (element as HTMLInputElement).value;
         const label = String(
           html.innerText ||
-            (element as HTMLInputElement).value ||
+            value ||
             element.getAttribute("aria-label") ||
             element.textContent ||
             "",
@@ -801,13 +973,101 @@ async function readTarget(target: Locator): Promise<ActionEvidence["target"] | u
           role: element.getAttribute("data-arena-role"),
           text: label.length > 0 ? label : null,
           decoy: element.getAttribute("data-arena-decoy") === "true",
+          type,
         };
       },
       EVIDENCE_TEXT_MAX,
       { timeout: EVIDENCE_TIMEOUT_MS },
     );
+    return {
+      target: { role: read.role, text: read.text, decoy: read.decoy },
+      password: read.type === "password",
+    };
   } catch {
     return undefined;
+  }
+}
+
+/**
+ * A browser observation as recorded with its step (StepObservation). Controls
+ * flagged in `masked` show a password field's value, which is redacted.
+ */
+export function stepObservation(
+  observation: BrowserObservation,
+  masked: readonly boolean[] = [],
+): StepObservation {
+  return {
+    url: observation.url,
+    title: observation.title,
+    text: observation.bodyText.slice(0, OBSERVATION_TEXT_MAX),
+    controls: observation.controls.slice(0, OBSERVATION_CONTROLS_MAX).map((control, index) => ({
+      tag: control.tag,
+      role: control.role,
+      arenaRole: control.arenaRole,
+      label: masked[index] === true ? REDACTED_TEXT : control.text,
+      visible: control.visible,
+      disabled: control.disabled,
+    })),
+  };
+}
+
+function namesSecret(decision: { targetRole: string; label?: string }): boolean {
+  return SECRET_FIELD_PATTERN.test(decision.targetRole) ||
+    (decision.label !== undefined && SECRET_FIELD_PATTERN.test(decision.label));
+}
+
+/**
+ * Remembers text typed into password fields during one run and removes it,
+ * raw, JSON-escaped or URL-encoded, from everything reported afterwards.
+ */
+class SecretScrubber {
+  private readonly variants: string[] = [];
+
+  add(secret: string): void {
+    if (secret.trim().length < SECRET_SCRUB_MIN_LENGTH) return;
+    for (const variant of [secret, JSON.stringify(secret).slice(1, -1), encodeURIComponent(secret)]) {
+      if (!this.variants.includes(variant)) this.variants.push(variant);
+    }
+    // Longest first, so a secret that contains another is replaced whole.
+    this.variants.sort((left, right) => right.length - left.length);
+  }
+
+  scrub(text: string): string {
+    let clean = text;
+    for (const variant of this.variants) clean = clean.split(variant).join(REDACTED_TEXT);
+    return clean;
+  }
+
+  /** Also covers Playwright's call log, which quotes the value a failed fill was given. */
+  scrubError(error: string, secret: string | undefined): string {
+    const quoted = secret === undefined ? null : `fill(${JSON.stringify(secret)})`;
+    return this.scrub(quoted === null ? error : error.split(quoted).join(`fill("${REDACTED_TEXT}")`));
+  }
+
+  scrubEvidence(evidence: ActionEvidence): ActionEvidence {
+    const target = evidence.target;
+    if (this.variants.length === 0 || typeof target?.text !== "string") return evidence;
+    return { ...evidence, target: { ...target, text: this.scrub(target.text) } };
+  }
+
+  scrubObservation(observation: StepObservation): StepObservation {
+    if (this.variants.length === 0) return observation;
+    return {
+      url: observation.url === null ? null : this.scrub(observation.url),
+      title: observation.title === null ? null : this.scrub(observation.title),
+      text: this.scrub(observation.text),
+      controls: observation.controls.map((control) => ({ ...control, label: this.scrub(control.label) })),
+    };
+  }
+
+  scrubAction(action: DatasetAction): DatasetAction {
+    if (this.variants.length === 0) return action;
+    const clean: DatasetAction = { ...action };
+    for (const key of ["targetRole", "label", "text", "script", "url"] as const) {
+      const value = clean[key];
+      if (typeof value === "string") clean[key] = this.scrub(value);
+    }
+    return clean;
   }
 }
 

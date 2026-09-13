@@ -180,3 +180,45 @@
 .hitTime {
   color: var(--color-text-secondary);
 }
+
+/* --- Full action trace ------------------------------------------------------- */
+
+/*
+ * Six columns that fit a 900px window without scrolling sideways; below
+ * 760px the table scrolls in its container instead of crushing the text.
+ */
+.traceTable {
+  min-width: 760px;
+}
+
+.actionCell {
+  min-width: 180px;
+  max-width: 360px;
+  overflow-wrap: anywhere;
+}
+
+.targetCell {
+  max-width: 220px;
+}
+
+/* Two lines (.clamp-2); the full text is in the title. */
+.reasoning {
+  min-width: 200px;
+  max-width: 440px;
+  color: var(--color-text-secondary);
+  overflow-wrap: anywhere;
+}
+
+.flags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+}
+
+.clearedRow td:first-child {
+  box-shadow: inset 2px 0 0 var(--color-positive);
+}
+
+.summaryPositive {
+  color: var(--color-positive);
+}

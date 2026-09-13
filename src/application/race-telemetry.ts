@@ -3,10 +3,13 @@ import type {
   ActionLogKind,
   BlockedBy,
   CursorPosition,
+  DatasetAction,
+  DecisionIssue,
   EvidenceFrame,
   PricePoint,
   RacerPhase,
   RunStatus,
+  StepObservation,
   TraceEntry,
 } from "../api/dto.js";
 import { DomainError } from "../domain/errors.js";
@@ -26,6 +29,32 @@ export const TRACE_LIMIT = 500;
 export const KEYFRAME_AFTER_MS = 1_500;
 /** Safety bound on stored keyframe bodies per racer (two per hit). */
 export const KEYFRAME_LIMIT = 24;
+/** Step records (the dataset's per-step capture) keep the latest this many steps per racer. */
+export const STEP_RECORD_LIMIT = 500;
+/** Step-tagged screenshots are kept for the latest this many steps per racer. */
+export const STEP_FRAME_LIMIT = 300;
+/** A step's reasoning is clipped at this many characters. */
+export const REASONING_MAX = 400;
+const OBSERVATION_URL_MAX = 2_000;
+const OBSERVATION_TITLE_MAX = 300;
+const OBSERVATION_TEXT_MAX = 8_000;
+const OBSERVATION_CONTROLS_MAX = 100;
+const CONTROL_TAG_MAX = 40;
+const CONTROL_LABEL_MAX = 300;
+const ACTION_FIELD_MAX = 2_000;
+const ACTION_TEXT_MAX = 4_000;
+const STEP_ERROR_MAX = 2_000;
+const SIGNATURE_MAX = 5_000;
+const ACTION_TYPES: ReadonlySet<string> = new Set([
+  "inspect",
+  "click",
+  "type",
+  "evaluate",
+  "navigate",
+  "wait",
+  "checkpoint",
+  "finish",
+]);
 const LOG_TEXT_MAX = 240;
 const TARGET_TEXT_MAX = 120;
 const TARGET_ROLE_MAX = 100;
@@ -82,6 +111,44 @@ export type TraceStats = {
   loops: number;
 };
 
+/**
+ * Everything captured for one competitor step, for the dataset export
+ * (docs/training-data.md): what the model saw and chose, why, when, and what
+ * the browser reported. Built from each action report; text arrives redacted.
+ */
+export type StepRecord = {
+  step: number;
+  kind: "action" | "error" | "note";
+  /** Report time (after the action). */
+  actedAt: number;
+  observedAt: number | null;
+  /** When the prompt was sent (after any rate-limit pause); null in older records. */
+  promptedAt: number | null;
+  decidedAt: number | null;
+  /** Rate-limit pause before the prompt was sent; 0 when none. */
+  rateLimitWaitMs: number;
+  url: string | null;
+  /** Human description, already redacted. */
+  text: string;
+  observation: StepObservation | null;
+  action: DatasetAction | null;
+  reasoning: string | null;
+  /** Set when the decision was not one valid tool call on the first try. */
+  decisionIssue: DecisionIssue | null;
+  /** Full error text, for diagnostics: may include Playwright's call log. */
+  error: string | null;
+  /** The same failure as the model was shown in its history: use this for prompts. */
+  modelError: string | null;
+  signature: string | null;
+  evidence: {
+    target: { role: string | null; text: string | null; decoy: boolean } | null;
+    blockedBy: BlockedBy | null;
+    navigated: boolean;
+    clearedSabotage: boolean;
+    cursor: CursorPosition | null;
+  };
+};
+
 /** Evaluation evidence per racer: the step trace, loop counters and keyframes. */
 type RacerEvidence = {
   trace: TraceEntry[];
@@ -92,6 +159,10 @@ type RacerEvidence = {
   keyframes: Map<string, StoredFrame>;
   /** `after` keyframes still waiting for a frame captured at or after `due`. */
   pendingAfter: Array<{ key: string; due: number }>;
+  /** Oldest first, at most STEP_RECORD_LIMIT. */
+  steps: StepRecord[];
+  /** Step-tagged screenshots by step: the latest STEP_FRAME_LIMIT steps. */
+  stepFrames: Map<number, StoredFrame>;
 };
 
 /**
@@ -137,6 +208,101 @@ function traceEvidence(
     blockedBy: typeof blockedBy === "string" && BLOCKED_BY.has(blockedBy)
       ? blockedBy as BlockedBy
       : null,
+  };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function finiteOrNull(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function clip(text: string, max: number): string {
+  return text.length <= max ? text : text.slice(0, max);
+}
+
+function stringOrNull(value: unknown, max: number): string | null {
+  return typeof value === "string" ? clip(value, max) : null;
+}
+
+/** A report's observation, copied and bounded; null when absent or malformed. */
+function cleanObservation(value: unknown): StepObservation | null {
+  if (!isRecord(value)) return null;
+  const controls = Array.isArray(value.controls) ? value.controls : [];
+  return {
+    url: stringOrNull(value.url, OBSERVATION_URL_MAX),
+    title: stringOrNull(value.title, OBSERVATION_TITLE_MAX),
+    text: typeof value.text === "string" ? clip(value.text, OBSERVATION_TEXT_MAX) : "",
+    controls: controls.slice(0, OBSERVATION_CONTROLS_MAX).filter(isRecord).map((control) => ({
+      tag: typeof control.tag === "string" ? clip(control.tag, CONTROL_TAG_MAX) : "",
+      role: stringOrNull(control.role, TARGET_ROLE_MAX),
+      arenaRole: stringOrNull(control.arenaRole, TARGET_ROLE_MAX),
+      label: typeof control.label === "string" ? clip(control.label, CONTROL_LABEL_MAX) : "",
+      visible: control.visible === true,
+      disabled: control.disabled === true,
+    })),
+  };
+}
+
+/** A reported decision issue, or null when there was none. */
+function cleanDecisionIssue(issue: DecisionIssue | undefined): DecisionIssue | null {
+  if (!issue || typeof issue !== "object") return null;
+  const malformedAttempts = typeof issue.malformedAttempts === "number" &&
+    Number.isFinite(issue.malformedAttempts) && issue.malformedAttempts > 0
+    ? Math.floor(issue.malformedAttempts)
+    : 0;
+  const fallback = issue.fallback === true;
+  return malformedAttempts === 0 && !fallback ? null : { malformedAttempts, fallback };
+}
+
+/** A report's tool call, copied and bounded; null when absent or malformed. */
+function cleanAction(value: unknown): DatasetAction | null {
+  if (!isRecord(value) || typeof value.type !== "string" || !ACTION_TYPES.has(value.type)) {
+    return null;
+  }
+  const action: DatasetAction = { type: value.type as DatasetAction["type"] };
+  if (typeof value.targetRole === "string") action.targetRole = clip(value.targetRole, ACTION_FIELD_MAX);
+  if (typeof value.label === "string") action.label = clip(value.label, ACTION_FIELD_MAX);
+  if (typeof value.text === "string") action.text = clip(value.text, ACTION_TEXT_MAX);
+  const textLength = finiteOrNull(value.textLength);
+  if (textLength !== null) action.textLength = textLength;
+  if (typeof value.script === "string") action.script = clip(value.script, ACTION_TEXT_MAX);
+  if (typeof value.url === "string") action.url = clip(value.url, ACTION_FIELD_MAX);
+  const durationMs = finiteOrNull(value.durationMs);
+  if (durationMs !== null) action.durationMs = durationMs;
+  const checkpoint = finiteOrNull(value.checkpoint);
+  if (checkpoint !== null) action.checkpoint = checkpoint;
+  return action;
+}
+
+function cleanCursor(value: unknown): CursorPosition | null {
+  if (!isRecord(value)) return null;
+  const x = finiteOrNull(value.x);
+  const y = finiteOrNull(value.y);
+  const viewportWidth = finiteOrNull(value.viewportWidth);
+  const viewportHeight = finiteOrNull(value.viewportHeight);
+  const action = value.action;
+  if (x === null || y === null || viewportWidth === null || viewportHeight === null ||
+    (action !== "click" && action !== "type")) {
+    return null;
+  }
+  return { x, y, viewportWidth, viewportHeight, action };
+}
+
+/** Browser evidence → a step record's evidence. Tolerates junk. */
+function stepEvidence(evidence: ActionEvidence | undefined): StepRecord["evidence"] {
+  const traced = traceEvidence(evidence);
+  const record: Record<string, unknown> | undefined = isRecord(evidence) ? evidence : undefined;
+  return {
+    target: isRecord(record?.target)
+      ? { role: traced.targetRole, text: traced.targetText, decoy: traced.decoy }
+      : null,
+    blockedBy: traced.blockedBy,
+    navigated: record?.navigated === true,
+    clearedSabotage: record?.clearedSabotage === true,
+    cursor: cleanCursor(record?.cursor),
   };
 }
 
@@ -191,6 +357,8 @@ export class RaceTelemetry {
         runLength: 0,
         keyframes: new Map(),
         pendingAfter: [],
+        steps: [],
+        stepFrames: new Map(),
       });
     }
   }
@@ -280,17 +448,52 @@ export class RaceTelemetry {
       ? `${report.text} (${report.error})`
       : report.text;
     const at = report.at ?? now;
+    const step = Number.isFinite(report.step) && report.step >= 0 ? Math.floor(report.step) : state.step;
+    const actedAt = Number.isFinite(at) ? at : now;
+    const stepKind = report.kind === "error" ? "error" : report.kind === "note" ? "note" : "action";
+    const reasoning = cleanEvidenceText(report.reasoning, REASONING_MAX);
+    const browser = stepEvidence(report.evidence);
 
     evidence.trace.push({
-      step: Number.isFinite(report.step) && report.step >= 0 ? Math.floor(report.step) : state.step,
-      at: Number.isFinite(at) ? at : now,
-      kind: report.kind === "error" ? "error" : report.kind === "note" ? "note" : "action",
+      step,
+      at: actedAt,
+      kind: stepKind,
       text: clampText(text),
       url: state.url,
       ...traceEvidence(report.evidence),
+      reasoning,
+      clearedSabotage: browser.clearedSabotage,
     });
     if (evidence.trace.length > TRACE_LIMIT) {
       evidence.trace.splice(0, evidence.trace.length - TRACE_LIMIT);
+    }
+
+    evidence.steps.push({
+      step,
+      kind: stepKind,
+      actedAt,
+      observedAt: finiteOrNull(report.observedAt),
+      promptedAt: finiteOrNull(report.promptedAt),
+      decidedAt: finiteOrNull(report.decidedAt),
+      rateLimitWaitMs: Math.max(0, Math.round(finiteOrNull(report.rateLimitWaitMs) ?? 0)),
+      url: state.url,
+      text: clampText(report.text),
+      observation: cleanObservation(report.observation),
+      action: cleanAction(report.action),
+      reasoning,
+      decisionIssue: cleanDecisionIssue(report.decisionIssue),
+      // Playwright colours its call log; the record keeps plain text.
+      error: typeof report.error === "string" && report.error.length > 0
+        ? clip(report.error.replace(/\x1b\[[0-9;]*m/g, ""), STEP_ERROR_MAX)
+        : null,
+      modelError: typeof report.modelError === "string" && report.modelError.length > 0
+        ? clip(report.modelError, STEP_ERROR_MAX)
+        : null,
+      signature: typeof report.signature === "string" ? clip(report.signature, SIGNATURE_MAX) : null,
+      evidence: browser,
+    });
+    if (evidence.steps.length > STEP_RECORD_LIMIT) {
+      evidence.steps.splice(0, evidence.steps.length - STEP_RECORD_LIMIT);
     }
 
     return this.appendLog(racerId, { kind, text, at, cursor: report.evidence?.cursor });
@@ -319,6 +522,10 @@ export class RaceTelemetry {
         this.storeKeyframe(evidence, pending.key, stored);
         return false;
       });
+    }
+    // The screenshot a step's observation was taken with is also kept by step.
+    if (typeof frame.step === "number" && Number.isFinite(frame.step) && frame.step >= 0) {
+      this.storeStepFrame(evidence, Math.floor(frame.step), stored);
     }
     return { ...stored };
   }
@@ -374,6 +581,23 @@ export class RaceTelemetry {
   traceStats(racerId: string): TraceStats {
     const evidence = this.evidenceState(racerId);
     return { errors: evidence.errors, loops: evidence.loops };
+  }
+
+  /** Every step's full capture, oldest first: at most STEP_RECORD_LIMIT copies. */
+  stepRecords(racerId: string): StepRecord[] {
+    return structuredClone(this.evidence.get(racerId)?.steps ?? []);
+  }
+
+  /** The screenshot taken with `step`'s observation, or null. The body is shared. */
+  stepFrame(racerId: string, step: number): StoredFrame | null {
+    const frame = this.evidence.get(racerId)?.stepFrames.get(step);
+    return frame ? { ...frame } : null;
+  }
+
+  /** Steps that have a stored screenshot, ascending. */
+  stepFrameSteps(racerId: string): number[] {
+    const frames = this.evidence.get(racerId)?.stepFrames;
+    return frames ? [...frames.keys()].sort((left, right) => left - right) : [];
   }
 
   markCheckpointCleared(racerId: string, checkpoint: number, at: number): void {
@@ -454,5 +678,13 @@ export class RaceTelemetry {
     if (!evidence.keyframes.has(key) && evidence.keyframes.size >= KEYFRAME_LIMIT) return;
     evidence.keyframes.set(key, { ...frame });
     this.keyframeRevisionValue += 1;
+  }
+
+  /** Keeps the latest STEP_FRAME_LIMIT steps; a repeated step replaces its frame. */
+  private storeStepFrame(evidence: RacerEvidence, step: number, frame: StoredFrame): void {
+    evidence.stepFrames.set(step, { ...frame });
+    if (evidence.stepFrames.size > STEP_FRAME_LIMIT) {
+      evidence.stepFrames.delete(Math.min(...evidence.stepFrames.keys()));
+    }
   }
 }
