@@ -1,16 +1,23 @@
 import { describe, expect, it } from "vitest";
+import type { AgentCheckpointState, FightAgentDetail } from "@contract";
 import {
   agentStatusView,
   checkpointDot,
+  fightEnd,
+  finishView,
   formatCountdownClock,
   formatEta,
   formatStep,
   frameAgeLabel,
   gridRows,
+  isAgentActive,
+  isRaceOver,
+  leaderView,
   marketStateView,
   rosterByRacer,
   sabotageFiredLabel,
   sabotageMarkers,
+  startsFinishHold,
 } from "./fightView";
 import { parseLayout } from "./useArenaLayout";
 
@@ -28,6 +35,88 @@ describe("agentStatusView", () => {
     expect(agentStatusView({ runStatus: "run", phase: "ready" }).tone).toBe("idle");
     expect(agentStatusView({ runStatus: "run", phase: "finished" }).label).toBe("Finished");
     expect(agentStatusView({ runStatus: "bad", phase: "timed_out" })).toEqual({ tone: "bad", label: "Timed out" });
+  });
+
+  it("reads Upcoming before the start, matching the header", () => {
+    expect(agentStatusView({ runStatus: "run", phase: "starting" })).toEqual({ tone: "idle", label: "Upcoming" });
+  });
+
+  it("knows which agents still drive a browser", () => {
+    expect(isAgentActive("running")).toBe(true);
+    expect(isAgentActive("recovering")).toBe(true);
+    expect(isAgentActive("failed")).toBe(false);
+    expect(isAgentActive("finished")).toBe(false);
+    expect(isAgentActive("timed_out")).toBe(false);
+    expect(isAgentActive("ready")).toBe(false);
+  });
+});
+
+function checkpoints(clearedAt: Array<number | null>): AgentCheckpointState[] {
+  return clearedAt.map((at, i) => ({
+    index: i + 1,
+    label: `Step ${i + 1}`,
+    state: at === null ? "pending" : "cleared",
+    isSabotage: false,
+    sabotageFired: false,
+    clearedAt: at,
+  }));
+}
+
+function racer(racerId: string, name: string, clearedAt: Array<number | null>, finishedAt: number | null = null) {
+  return {
+    racerId,
+    agent: { key: racerId, name, provider: "test", model: "test" },
+    checkpoint: clearedAt.filter((at) => at !== null).length,
+    checkpoints: checkpoints(clearedAt),
+    finishedAt,
+  } satisfies Pick<FightAgentDetail, "racerId" | "agent" | "checkpoint" | "checkpoints" | "finishedAt">;
+}
+
+describe("leaderView", () => {
+  it("names nobody before the first checkpoint", () => {
+    const view = leaderView({ leaderCheckpoint: 0, checkpointCount: 4, winnerRacerId: null, agents: [racer("r1", "GPT-5.2", [null, null, null, null])] });
+    expect(view).toMatchObject({ racerId: null, name: null, tied: 0, checkpoint: 0, checkpointCount: 4 });
+  });
+
+  it("names the agent furthest along", () => {
+    const agents = [racer("r1", "GPT-5.2", [10, null, null]), racer("r2", "Grok 4.1", [12, 20, null])];
+    expect(leaderView({ leaderCheckpoint: 2, checkpointCount: 3, winnerRacerId: null, agents })).toMatchObject({
+      racerId: "r2",
+      name: "Grok 4.1",
+      tied: 0,
+      title: "Grok 4.1 leads with 2 of 3 checkpoints",
+    });
+  });
+
+  it("breaks a tie by who got there first", () => {
+    const agents = [racer("r1", "GPT-5.2", [10, 30, null]), racer("r2", "Grok 4.1", [12, 20, null]), racer("r3", "Gemini 3 Pro", [9, null, null])];
+    expect(leaderView({ leaderCheckpoint: 2, checkpointCount: 3, winnerRacerId: null, agents })).toMatchObject({ racerId: "r2", tied: 1 });
+  });
+
+  it("prefers the verified winner", () => {
+    const agents = [racer("r1", "GPT-5.2", [10, 30, 40]), racer("r2", "Grok 4.1", [12, 20, 35])];
+    expect(leaderView({ leaderCheckpoint: 3, checkpointCount: 3, winnerRacerId: "r1", agents })).toMatchObject({ racerId: "r1", title: "GPT-5.2 won" });
+  });
+});
+
+describe("finish moment", () => {
+  it("holds only a fight that resolved while on screen", () => {
+    expect(startsFinishHold("live", "resolved")).toBe(true);
+    expect(startsFinishHold(null, "resolved")).toBe(false);
+    expect(startsFinishHold("upcoming", "resolved")).toBe(false);
+    expect(startsFinishHold("live", "live")).toBe(false);
+  });
+
+  it("knows when the race has its result", () => {
+    expect(isRaceOver({ raceStatus: "finished" })).toBe(true);
+    expect(isRaceOver({ raceStatus: "timed_out" })).toBe(true);
+    expect(isRaceOver({ raceStatus: "hazards_frozen" })).toBe(false);
+  });
+
+  it("describes the winner, or a void", () => {
+    const agents = [racer("r1", "GPT-5.2", [10, 30, 40], 45_000), racer("r2", "Grok 4.1", [12, null, null])];
+    expect(finishView({ winnerRacerId: "r1", startedAt: 1_000, agents })).toEqual({ kind: "winner", racerId: "r1", name: "GPT-5.2", durationMs: 44_000 });
+    expect(finishView({ winnerRacerId: null, startedAt: 1_000, agents })).toEqual({ kind: "void" });
   });
 });
 
@@ -68,12 +157,51 @@ describe("figures", () => {
 });
 
 describe("marketStateView", () => {
+  const times = { freezesAt: 99, closesAt: 199, estimatedResolutionAt: null };
+
   it("covers every market state", () => {
-    expect(marketStateView({ status: "live", marketStatus: "open", freezesAt: 99 })).toMatchObject({ tone: "open", countdownTo: 99 });
-    expect(marketStateView({ status: "live", marketStatus: "open", freezesAt: null })).toMatchObject({ tone: "open", countdownTo: null });
-    expect(marketStateView({ status: "upcoming", marketStatus: "open", freezesAt: 99 })).toMatchObject({ tone: "pre", label: "Pre-fight trading" });
-    expect(marketStateView({ status: "live", marketStatus: "frozen", freezesAt: 99 }).tone).toBe("frozen");
-    expect(marketStateView({ status: "resolved", marketStatus: "resolved", freezesAt: 99 }).tone).toBe("closed");
+    expect(marketStateView({ ...times, status: "live", marketStatus: "open" })).toMatchObject({
+      tone: "open",
+      detail: null,
+      countdown: { to: 99, approximate: false, lead: "Trading freezes in", shortLead: "Open · freezes in" },
+    });
+    expect(marketStateView({ ...times, status: "live", marketStatus: "open", freezesAt: null })).toMatchObject({ tone: "open", detail: "Trading open", countdown: null });
+    expect(marketStateView({ ...times, status: "upcoming", marketStatus: "open" })).toMatchObject({ tone: "pre", label: "Pre-fight trading", countdown: null });
+    expect(marketStateView({ ...times, status: "live", marketStatus: "frozen" }).tone).toBe("frozen");
+    expect(marketStateView({ ...times, status: "resolved", marketStatus: "resolved" })).toMatchObject({ tone: "closed", countdown: null });
+  });
+
+  it("says the agents are still racing and counts down to the hard stop while frozen", () => {
+    expect(marketStateView({ ...times, status: "live", marketStatus: "frozen" })).toEqual({
+      tone: "frozen",
+      label: "Frozen",
+      detail: null,
+      countdown: {
+        to: 199,
+        approximate: false,
+        lead: "Agents racing · ends in",
+        due: "Agents racing · leader finishing",
+        shortLead: "Frozen · ends in",
+        shortDue: "Frozen · leader finishing",
+      },
+    });
+    // The fastest agent's projected finish wins when it is earlier, marked as an estimate.
+    expect(marketStateView({ ...times, status: "live", marketStatus: "frozen", estimatedResolutionAt: 150 }).countdown).toMatchObject({
+      to: 150,
+      approximate: true,
+    });
+    expect(marketStateView({ ...times, status: "live", marketStatus: "frozen", closesAt: null })).toMatchObject({
+      detail: "Agents still racing",
+      countdown: null,
+    });
+  });
+
+  it("ends the fight at the earlier of the hard stop and the estimate", () => {
+    expect(fightEnd({ closesAt: 200, estimatedResolutionAt: null })).toEqual({ to: 200, approximate: false });
+    expect(fightEnd({ closesAt: 200, estimatedResolutionAt: 120 })).toEqual({ to: 120, approximate: true });
+    expect(fightEnd({ closesAt: 200, estimatedResolutionAt: 200 })).toEqual({ to: 200, approximate: false });
+    expect(fightEnd({ closesAt: null, estimatedResolutionAt: 120 })).toEqual({ to: 120, approximate: true });
+    expect(fightEnd({ closesAt: null, estimatedResolutionAt: null })).toEqual({ to: null, approximate: false });
   });
 });
 

@@ -1,6 +1,6 @@
 import { useId, useRef, useState, type FormEvent } from "react";
 import type { Account, WalletTransferResponse } from "@contract";
-import { deposit, describeError, isApiFailure, withdraw } from "../../api/client";
+import { deposit, describeError, isApiFailure, isUnconfirmed, withdraw } from "../../api/client";
 import { Button, ErrorBanner, IconAlert, IconClose, SegmentedControl, type SegmentedOption } from "../../components";
 import { cx } from "../../lib/cx";
 import { formatMoney, formatTimeOfDay } from "../../lib/format";
@@ -58,6 +58,8 @@ export function TransferPanel({ tab, onTabChange, userId, account, onTransferred
   const [attempted, setAttempted] = useState(false);
   const [pending, setPending] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
+  // A transfer that timed out may have gone through: never "failed".
+  const [unconfirmed, setUnconfirmed] = useState(false);
   const [receipt, setReceipt] = useState<Receipt | null>(null);
   const inFlight = useRef(false);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -109,6 +111,7 @@ export function TransferPanel({ tab, onTabChange, userId, account, onTransferred
       if (kind === "withdraw") setInput("");
     } catch (err) {
       setSubmitError(failureMessage(kind, err));
+      setUnconfirmed(isUnconfirmed(err));
     } finally {
       inFlight.current = false;
       setPending(false);
@@ -229,7 +232,7 @@ export function TransferPanel({ tab, onTabChange, userId, account, onTransferred
           </div>
         )}
 
-        <ErrorBanner error={submitError} title={`${verb} failed.`} onDismiss={() => setSubmitError(null)} />
+        <ErrorBanner error={submitError} title={unconfirmed ? undefined : `${verb} failed.`} onDismiss={() => setSubmitError(null)} />
 
         <Button type="submit" variant="action" size="lg" block loading={pending} disabled={!ready || check.error !== null}>
           <span className="num">{ready ? transferLabel(tab, check) : verb}</span>

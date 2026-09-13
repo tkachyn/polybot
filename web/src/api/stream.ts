@@ -14,6 +14,15 @@
  *   URL or the SET of event names changes.
  * - If the browser gives up (HTTP error, backend restarting behind the dev
  *   proxy) the stream reconnects itself with capped exponential backoff.
+ * - Watchdog: the server sends a `ping` event on connect and every few
+ *   seconds (src/api/sse.ts). A connection that stays silent for two missed
+ *   pings is dead even though the browser has not noticed (half-open TCP
+ *   after sleep or Wi-Fi roaming, a hung proxy). It is closed and reopened,
+ *   and the status goes to "reconnecting", which puts consumers back on REST
+ *   polling until an event arrives again. A new connection that gets no
+ *   response at all within `connectTimeoutMs` is replaced the same way.
+ * - Every open stream is listed in a registry (`getTrackedStreams`) that the
+ *   global connection banner reads (state/connection.ts).
  */
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { noteServerTime } from "../state/clock";
@@ -34,6 +43,23 @@ export type EventSourceLike = {
 export type EventSourceFactory = (url: string) => EventSourceLike;
 
 const CLOSED = 2;
+
+/** The server's heartbeat event: `{ intervalMs }`, sent on connect and every interval. */
+export const PING_EVENT = "ping";
+/** Ping interval assumed when a ping does not announce one (the server default). */
+export const DEFAULT_PING_INTERVAL_MS = 5_000;
+/** Pings a connection may miss before it counts as dead. */
+export const HEARTBEAT_MISSED_PINGS = 2;
+/** Slack on top of the missed pings, for network jitter and a busy main thread. */
+export const HEARTBEAT_GRACE_MS = 2_000;
+/** A new connection with no response at all (not even headers) after this long is replaced. */
+export const CONNECT_TIMEOUT_MS = 8_000;
+export const HIDDEN_GRACE_MS = 10_000;
+
+/** Silence after which a stream whose server pings every `intervalMs` is dead. */
+export function heartbeatTimeoutFor(intervalMs: number): number {
+  return HEARTBEAT_MISSED_PINGS * intervalMs + HEARTBEAT_GRACE_MS;
+}
 
 export type OpenEventStreamOptions = {
   url: string;
@@ -57,6 +83,25 @@ export type OpenEventStreamOptions = {
   visibility?: VisibilitySource | null;
   /** Default 10000 ms. */
   hiddenGraceMs?: number;
+  /**
+   * Silence (no event and no ping) after which a connection counts as dead
+   * and is replaced. Default: two missed pings plus HEARTBEAT_GRACE_MS, from
+   * the interval the server announces in its pings. The watchdog arms only
+   * once the server has sent a ping, so a server without heartbeats (or a
+   * proxy that buffers the body) never trips it.
+   */
+  heartbeatTimeoutMs?: number;
+  /** Default CONNECT_TIMEOUT_MS. */
+  connectTimeoutMs?: number;
+  /**
+   * Browser connectivity. Going offline drops the connection at once rather
+   * than after the watchdog; coming back online reconnects without waiting
+   * out the backoff. Defaults to the window's online/offline events; null
+   * disables.
+   */
+  network?: NetworkSource | null;
+  /** List the stream in the registry the connection banner reads. Default true. */
+  track?: boolean;
 };
 
 export type VisibilitySource = {
@@ -64,7 +109,10 @@ export type VisibilitySource = {
   subscribe(listener: () => void): () => void;
 };
 
-export const HIDDEN_GRACE_MS = 10_000;
+export type NetworkSource = {
+  isOnline(): boolean;
+  subscribe(listener: () => void): () => void;
+};
 
 function documentVisibility(): VisibilitySource | null {
   if (typeof document === "undefined") return null;
@@ -77,7 +125,65 @@ function documentVisibility(): VisibilitySource | null {
   };
 }
 
+/** `navigator.onLine` and the window's online/offline events; null outside a browser. */
+export function browserNetwork(): NetworkSource | null {
+  if (typeof window === "undefined" || typeof navigator === "undefined") return null;
+  return {
+    isOnline: () => navigator.onLine !== false,
+    subscribe(listener) {
+      window.addEventListener("online", listener);
+      window.addEventListener("offline", listener);
+      return () => {
+        window.removeEventListener("online", listener);
+        window.removeEventListener("offline", listener);
+      };
+    },
+  };
+}
+
 const defaultFactory: EventSourceFactory = (url) => new EventSource(url) as unknown as EventSourceLike;
+
+// ---------------------------------------------------------------------------
+// Registry: every open stream, for the global connection banner.
+// ---------------------------------------------------------------------------
+
+export type TrackedStream = { readonly id: number; readonly url: string; readonly status: StreamStatus };
+
+type RegistryEntry = { url: string; status: StreamStatus; reconnect: () => void };
+
+const registry = new Map<number, RegistryEntry>();
+const registryListeners = new Set<() => void>();
+let registrySnapshot: readonly TrackedStream[] = [];
+let nextStreamId = 1;
+
+function publishRegistry(): void {
+  registrySnapshot = Array.from(registry, ([id, entry]) => ({ id, url: entry.url, status: entry.status }));
+  for (const listener of [...registryListeners]) listener();
+}
+
+/** Every open stream and its status. The same array until something changes. */
+export function getTrackedStreams(): readonly TrackedStream[] {
+  return registrySnapshot;
+}
+
+/** Called whenever a stream opens, closes or changes status. Returns unsubscribe. */
+export function subscribeTrackedStreams(listener: () => void): () => void {
+  registryListeners.add(listener);
+  return () => {
+    registryListeners.delete(listener);
+  };
+}
+
+/** Reconnects every stream that is not delivering right now, skipping its backoff. */
+export function reconnectStreams(): void {
+  for (const entry of [...registry.values()]) {
+    if (entry.status !== "open") entry.reconnect();
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Connection
+// ---------------------------------------------------------------------------
 
 /**
  * Framework-free stream connection with reconnect. Returns `close()`.
@@ -87,27 +193,85 @@ export function openEventStream(options: OpenEventStreamOptions): () => void {
   const create = options.createSource ?? defaultFactory;
   const baseMs = options.retryBaseMs ?? 1000;
   const maxMs = options.retryMaxMs ?? 15_000;
+  const connectMs = options.connectTimeoutMs ?? CONNECT_TIMEOUT_MS;
+  const consumerWantsPing = options.events.includes(PING_EVENT);
 
   let source: EventSourceLike | null = null;
   let closed = false;
   let attempt = 0;
   let retryTimer: ReturnType<typeof setTimeout> | undefined;
   let status: StreamStatus | null = null;
+  // Watchdog deadline. `heartbeatMs` stays null until the server has shown
+  // it sends heartbeats (its first ping); until then only a connection that
+  // never answers is timed out.
+  let heartbeatMs: number | null = null;
+  let deadline: ReturnType<typeof setTimeout> | undefined;
   const visibility = options.visibility === undefined ? documentVisibility() : options.visibility;
   const graceMs = options.hiddenGraceMs ?? HIDDEN_GRACE_MS;
   // Paused = closed because the page is hidden. The status is left as it was:
   // nobody sees a hidden tab, and a status change would start REST polling.
   let paused = false;
   let pauseTimer: ReturnType<typeof setTimeout> | undefined;
+  const network = options.network === undefined ? browserNetwork() : options.network;
+  const trackedId = nextStreamId++;
+  const tracked: RegistryEntry | null =
+    options.track === false ? null : { url: options.url, status: "connecting", reconnect: () => reconnectNow() };
 
   const setStatus = (next: StreamStatus) => {
     if (status === next) return;
     status = next;
+    if (tracked) {
+      tracked.status = next;
+      if (registry.has(trackedId)) publishRegistry();
+    }
     options.onStatus?.(next);
   };
 
+  const disarm = () => {
+    if (deadline !== undefined) clearTimeout(deadline);
+    deadline = undefined;
+  };
+
+  const arm = (ms: number) => {
+    disarm();
+    deadline = setTimeout(onDeadline, ms);
+  };
+
+  /** The connection delivered something, so it is alive. */
+  const noteActivity = () => {
+    attempt = 0;
+    if (heartbeatMs === null) disarm();
+    else arm(heartbeatMs);
+  };
+
+  const drop = () => {
+    disarm();
+    source?.close();
+    source = null;
+  };
+
+  const scheduleRetry = () => {
+    if (closed || paused) return;
+    disarm();
+    setStatus("reconnecting");
+    if (retryTimer !== undefined) clearTimeout(retryTimer);
+    const delay = Math.min(maxMs, baseMs * 2 ** attempt);
+    attempt += 1;
+    retryTimer = setTimeout(connect, delay);
+  };
+
+  function onDeadline() {
+    deadline = undefined;
+    if (closed || paused || !source) return;
+    // Silent past its deadline: dead, even if the browser has not noticed.
+    drop();
+    scheduleRetry();
+  }
+
   const dispatch = (name: string, raw: unknown) => {
     if (typeof raw !== "string") return;
+    // Even a malformed payload proves the connection is alive.
+    noteActivity();
     let data: unknown;
     try {
       data = JSON.parse(raw);
@@ -123,9 +287,22 @@ export function openEventStream(options: OpenEventStreamOptions): () => void {
     // response body indefinitely. Only call the stream open after an actual
     // application event arrives, so consumers keep their REST polling
     // fallback active behind tunnels that buffer SSE.
-    attempt = 0;
     setStatus("open");
     options.onEvent(name, data);
+  };
+
+  const onPing = (raw: unknown) => {
+    let intervalMs = DEFAULT_PING_INTERVAL_MS;
+    if (typeof raw === "string") {
+      try {
+        const announced = (JSON.parse(raw) as { intervalMs?: unknown } | null)?.intervalMs;
+        if (typeof announced === "number" && Number.isFinite(announced) && announced > 0) intervalMs = announced;
+      } catch {
+        // A ping without a readable interval still proves the connection works.
+      }
+    }
+    heartbeatMs = options.heartbeatTimeoutMs ?? heartbeatTimeoutFor(intervalMs);
+    noteActivity();
   };
 
   const connect = () => {
@@ -139,44 +316,66 @@ export function openEventStream(options: OpenEventStreamOptions): () => void {
       return;
     }
     source = es;
+    // No response at all within the connect timeout: replace it.
+    arm(connectMs);
     es.onopen = () => {
       if (closed || source !== es) return;
-      attempt = 0;
+      // Answered. Once the server is known to ping, data must follow within
+      // a heartbeat; otherwise (an older server, or a proxy that buffers the
+      // body) the open connection is trusted.
+      if (heartbeatMs === null) disarm();
+      else arm(heartbeatMs);
     };
     es.onerror = () => {
       if (closed || source !== es) return;
       if (es.readyState === CLOSED) {
         // The browser will not retry (HTTP error or wrong content type).
-        es.close();
-        source = null;
+        drop();
         scheduleRetry();
       } else {
         // The browser is retrying on its own (server sent `retry: 2000`).
+        // Take over if that attempt hangs.
         setStatus("reconnecting");
+        arm(connectMs);
       }
     };
     for (const name of options.events) {
+      if (name === PING_EVENT) continue;
       es.addEventListener(name, (event) => {
         if (closed || source !== es) return;
         dispatch(name, event.data);
       });
     }
+    es.addEventListener(PING_EVENT, (event) => {
+      if (closed || source !== es) return;
+      onPing(event.data);
+      if (consumerWantsPing) dispatch(PING_EVENT, event.data);
+    });
   };
 
-  const scheduleRetry = () => {
+  /** Replaces the connection now, skipping any backoff. */
+  const reconnectNow = () => {
     if (closed || paused) return;
-    setStatus("reconnecting");
-    const delay = Math.min(maxMs, baseMs * 2 ** attempt);
-    attempt += 1;
-    retryTimer = setTimeout(connect, delay);
+    if (retryTimer !== undefined) clearTimeout(retryTimer);
+    retryTimer = undefined;
+    drop();
+    attempt = 0;
+    connect();
   };
 
-  const onOnline = () => {
-    if (!closed && !source && retryTimer !== undefined) {
-      clearTimeout(retryTimer);
-      attempt = 0;
-      connect();
+  const onNetwork = () => {
+    if (closed || paused || !network) return;
+    if (!network.isOnline()) {
+      // No network at all: the connection is gone. Say so now rather than
+      // after the watchdog; the backoff runs until the network is back.
+      if (source) {
+        drop();
+        scheduleRetry();
+      }
+      return;
     }
+    // Back online: reconnect now instead of waiting out the backoff.
+    if (status !== "open") reconnectNow();
   };
 
   const pause = () => {
@@ -185,8 +384,7 @@ export function openEventStream(options: OpenEventStreamOptions): () => void {
     paused = true;
     if (retryTimer !== undefined) clearTimeout(retryTimer);
     retryTimer = undefined;
-    source?.close();
-    source = null;
+    drop();
   };
 
   const onVisibility = () => {
@@ -205,9 +403,12 @@ export function openEventStream(options: OpenEventStreamOptions): () => void {
   };
 
   setStatus("connecting");
+  if (tracked) {
+    registry.set(trackedId, tracked);
+    publishRegistry();
+  }
   connect();
-  const win = typeof window === "undefined" ? undefined : window;
-  win?.addEventListener("online", onOnline);
+  const unsubscribeNetwork = network?.subscribe(onNetwork);
   const unsubscribeVisibility = visibility?.subscribe(onVisibility);
   if (visibility?.isHidden()) onVisibility();
 
@@ -217,9 +418,9 @@ export function openEventStream(options: OpenEventStreamOptions): () => void {
     if (retryTimer !== undefined) clearTimeout(retryTimer);
     if (pauseTimer !== undefined) clearTimeout(pauseTimer);
     unsubscribeVisibility?.();
-    source?.close();
-    source = null;
-    win?.removeEventListener("online", onOnline);
+    unsubscribeNetwork?.();
+    drop();
+    if (tracked && registry.delete(trackedId)) publishRegistry();
     setStatus("closed");
   };
 }

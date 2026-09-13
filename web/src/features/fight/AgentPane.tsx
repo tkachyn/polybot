@@ -9,7 +9,7 @@ import { cx } from "../../lib/cx";
 import { formatCents } from "../../lib/format";
 import { SIDE_LABEL } from "../../lib/labels";
 import type { Slip } from "../market/types";
-import { agentStatusView, formatStep } from "./fightView";
+import { agentStatusView, formatStep, isAgentActive, isRaceOver } from "./fightView";
 import { StatusBand } from "./AgentStatus";
 import { LiveCapture } from "./LiveCapture";
 import styles from "./AgentPane.module.css";
@@ -28,22 +28,28 @@ export function AgentPane({ fight, agent, visual, slip, markers, onOpen, buttonR
   const status = agentStatusView(agent);
   const step = formatStep(agent.step, agent.maxSteps);
   const inSlip = slip?.racerId === agent.racerId;
+  const winner = fight.winnerRacerId === agent.racerId;
   const name = agent.agent.name;
 
   return (
     <button
       ref={(el) => buttonRef(agent.racerId, el)}
       type="button"
-      className={cx(styles.pane, inSlip && styles.inSlip)}
+      className={cx(styles.pane, inSlip && styles.inSlip, winner && styles.winner)}
       style={agentStyle(visual)}
       onClick={() => onOpen(agent.racerId)}
-      aria-label={`${name}: ${status.label}, step ${step}, ${agent.checkpoint} of ${fight.checkpointCount} checkpoints, YES ${formatCents(agent.yes)}. Expand browser view`}
+      aria-label={`${name}${winner ? ", winner" : ""}: ${status.label}, step ${step}, ${agent.checkpoint} of ${fight.checkpointCount} checkpoints, YES ${formatCents(agent.yes)}. Expand browser view`}
     >
       <StatusBand view={status} step={step} />
 
       <span className={styles.identity}>
         <AgentMonogram agent={visual} size="sm" />
         <span className={styles.name}>{name}</span>
+        {winner && (
+          <Tag tone="positive" solid className={styles.slipTag}>
+            Winner
+          </Tag>
+        )}
         {inSlip && slip && (
           <Tag tone="edge" className={styles.slipTag}>
             Slip · {SIDE_LABEL[slip.side]}
@@ -63,6 +69,7 @@ export function AgentPane({ fight, agent, visual, slip, markers, onOpen, buttonR
         fightStatus={fight.status}
         startsAt={fight.startsAt}
         agentName={name}
+        final={!isAgentActive(agent.phase) || isRaceOver(fight)}
         className={styles.capture}
       />
 

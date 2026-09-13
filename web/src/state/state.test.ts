@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { PricePoint } from "@contract";
 import { failureFromResponse } from "../api/client";
 import { backoffMs } from "../lib/backoff";
-import { getClockOffset, noteServerTime, resetClock, serverNow } from "./clock";
+import { getClockOffset, nextTickDelay, noteServerTime, resetClock, serverNow, tickPhase } from "./clock";
 import { appendPricePoint } from "./fight";
 import { createUserId, isValidUserId, sanitizeUserId } from "./userId";
 
@@ -31,6 +31,22 @@ describe("server clock", () => {
     noteServerTime(local + 60_000, local, local);
     expect(Math.round(getClockOffset() / 1000)).toBe(60);
     expect(serverNow() - Date.now()).toBeGreaterThan(59_000);
+  });
+
+  it("ticks just after each boundary of the clock's own phase", () => {
+    // Whole seconds by default: on a boundary, the next one.
+    expect(nextTickDelay(10_000, 1000)).toBe(1005);
+    expect(nextTickDelay(10_400, 1000)).toBe(605);
+    // A fight that started at …123 ms turns over at …123, not at the next whole second.
+    expect(nextTickDelay(10_400, 1000, 123)).toBe(728);
+    expect(nextTickDelay(10_100, 1000, 123)).toBe(28);
+    expect(nextTickDelay(10_100, 1000, -877)).toBe(28);
+  });
+
+  it("reduces a timestamp to its phase within the interval", () => {
+    expect(tickPhase(1_789_273_118_823, 1000)).toBe(823);
+    expect(tickPhase(-877, 1000)).toBe(123);
+    expect(tickPhase(Number.NaN, 1000)).toBe(0);
   });
 });
 

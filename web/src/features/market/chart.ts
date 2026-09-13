@@ -161,6 +161,21 @@ export function priceTicks([min, max]: PriceDomain): number[] {
   return Array.from({ length: 5 }, (_, index) => min + ((max - min) * index) / 4);
 }
 
+/** Side-by-side slots for traded amounts floating left of the price dots. */
+export const MONEY_SLOTS = 4;
+
+/**
+ * The slot for a new traded amount: the first one no amount on screen holds,
+ * so amounts shown together never overlap; the oldest one's when all are taken.
+ */
+export function freeMoneySlot(active: readonly { id: number; slot: number }[]): number {
+  const used = new Set(active.map((flash) => flash.slot));
+  for (let slot = 0; slot < MONEY_SLOTS; slot += 1) {
+    if (!used.has(slot)) return slot;
+  }
+  return active.reduce((oldest, flash) => (flash.id < oldest.id ? flash : oldest)).slot;
+}
+
 export type Scale = (value: number) => number;
 
 export function linearScale(d0: number, d1: number, r0: number, r1: number): Scale {

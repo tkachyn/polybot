@@ -362,7 +362,14 @@ export class RaceCoordinator {
       ledger: dependencies.ledger,
       raceId: input.raceId,
     });
-    this.telemetry = new RaceTelemetry(racerIds, input.checkpointCount);
+    // A budget the runner declares up front is shown from the start, not
+    // only once its first action report arrives.
+    const maxSteps = dependencies.agentRunner.maxSteps;
+    this.telemetry = new RaceTelemetry(
+      racerIds,
+      input.checkpointCount,
+      maxSteps !== undefined && Number.isInteger(maxSteps) && maxSteps > 0 ? { maxSteps } : {},
+    );
     this.telemetry.setOpeningPrices(this.market.pricesSnapshot());
     // Baseline chart sample so upcoming fights have a price series.
     this.telemetry.appendPrice(this.fightMeta.createdAt, this.market.pricesSnapshot());

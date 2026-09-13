@@ -14,16 +14,29 @@
  * 4. If the server forgot the user (restart with an in-memory store), the
  *    stream starts failing and REST returns 404: the provider re-creates the
  *    user with the same id and reopens the stream.
- * 5. While the stream is down, the portfolio is polled over REST.
+ * 5. While the stream is not delivering (down, or silent past its
+ *    heartbeat), the portfolio is polled over REST.
  *
  * After an order or wallet transfer, call `applyAccount(response.account,
  * response.serverTime)` so the balance updates before the stream catches up.
  */
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { Account, Portfolio, PortfolioResponse, ServerMeta, UserStreamEvents } from "@contract";
-import { ApiFailure, ensureUser, getMeta, getPortfolio, getUser, isAbortError, isApiFailure, toApiFailure, userStreamUrl } from "../api/client";
+import {
+  ApiFailure,
+  ensureUser,
+  getMeta,
+  getPortfolio,
+  getUser,
+  isAbortError,
+  isApiFailure,
+  onUnconfirmedRequest,
+  toApiFailure,
+  userStreamUrl,
+} from "../api/client";
 import { useEventStream, type StreamStatus } from "../api/stream";
 import { backoffMs } from "../lib/backoff";
+import { needsFallbackPolling, useFallbackPolling } from "./polling";
 import { getOrCreateUserId } from "./userId";
 
 /**
@@ -64,6 +77,8 @@ const USER_CHECK_GAP_MS = 5_000;
 /** REST portfolio polling while the stream is not open. */
 const PORTFOLIO_POLL_MS = 10_000;
 const PORTFOLIO_FIRST_POLL_MS = 1_500;
+/** Portfolio reads after an unconfirmed write before leaving it to the stream and polling. */
+const RECONCILE_ATTEMPTS = 6;
 
 export type SessionProviderProps = {
   children: ReactNode;
@@ -179,29 +194,44 @@ export function SessionProvider({ children, userId: userIdOverride }: SessionPro
     };
   }, [ensure]);
 
-  const refresh = useCallback(async () => {
-    try {
-      applyPortfolio(await getPortfolio(userId));
-    } catch (err) {
-      if (isAbortError(err) || !alive.current) return;
-      if (isApiFailure(err, "not_found")) {
-        await reensure();
-        try {
-          applyPortfolio(await getPortfolio(userId));
-        } catch (retryErr) {
-          if (alive.current && !isAbortError(retryErr)) setError(toApiFailure(retryErr));
+  /** GETs the portfolio, re-creating a user the server forgot. True on success; never rejects. */
+  const loadPortfolio = useCallback(
+    async (signal?: AbortSignal): Promise<boolean> => {
+      try {
+        applyPortfolio(await getPortfolio(userId, signal));
+        return true;
+      } catch (err) {
+        // An aborted poll (the stream came back) is not a failure.
+        if (isAbortError(err) || signal?.aborted || !alive.current) return false;
+        if (isApiFailure(err, "not_found")) {
+          await reensure();
+          try {
+            applyPortfolio(await getPortfolio(userId, signal));
+            return true;
+          } catch (retryErr) {
+            if (alive.current && !isAbortError(retryErr) && !signal?.aborted) setError(toApiFailure(retryErr));
+            return false;
+          }
         }
-        return;
+        setError(toApiFailure(err));
+        return false;
       }
-      setError(toApiFailure(err));
-    }
-  }, [userId, applyPortfolio, reensure]);
+    },
+    [userId, applyPortfolio, reensure],
+  );
 
-  const streamStatus = useEventStream<UserStreamEvents>(
+  const refresh = useCallback(async () => {
+    await loadPortfolio();
+  }, [loadPortfolio]);
+
+  const userStream = useEventStream<UserStreamEvents>(
     ensured ? userStreamUrl(userId) : null,
     { portfolio: applyPortfolio },
     { reconnectKey: streamEpoch },
   );
+  // The stream opens once the server has confirmed the user. Until then it
+  // is still coming up: "connecting", not "closed" (which reads as Offline).
+  const streamStatus: StreamStatus = ensured ? userStream : "connecting";
 
   // A failing stream may mean the server forgot the user: check and re-ensure.
   useEffect(() => {
@@ -217,17 +247,39 @@ export function SessionProvider({ children, userId: userIdOverride }: SessionPro
   }, [ensured, streamStatus, userId, applyAccount, reensure]);
 
   // REST fallback while the stream is not delivering.
+  useFallbackPolling(ensured && needsFallbackPolling(streamStatus), loadPortfolio, {
+    intervalMs: PORTFOLIO_POLL_MS,
+    firstDelayMs: PORTFOLIO_FIRST_POLL_MS,
+  });
+
+  // A write that timed out (an order, a transfer) may still have gone
+  // through. Re-read balance and positions until a read succeeds, so the
+  // screen shows what actually happened.
   useEffect(() => {
-    if (!ensured || streamStatus === "open") return;
+    let cancelled = false;
+    let running = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
-    const tick = () => {
-      void refresh().finally(() => {
-        timer = setTimeout(tick, PORTFOLIO_POLL_MS);
-      });
+    const attempt = async (n: number) => {
+      timer = undefined;
+      const ok = await loadPortfolio();
+      if (cancelled) return;
+      if (ok || n + 1 >= RECONCILE_ATTEMPTS) {
+        running = false;
+        return;
+      }
+      timer = setTimeout(() => void attempt(n + 1), backoffMs(n));
     };
-    timer = setTimeout(tick, portfolioTime.current === -Infinity ? PORTFOLIO_FIRST_POLL_MS : PORTFOLIO_POLL_MS);
-    return () => clearTimeout(timer);
-  }, [ensured, streamStatus, refresh]);
+    const unsubscribe = onUnconfirmedRequest(() => {
+      if (running) return;
+      running = true;
+      void attempt(0);
+    });
+    return () => {
+      cancelled = true;
+      unsubscribe();
+      clearTimeout(timer);
+    };
+  }, [loadPortfolio]);
 
   const status: SessionStatus = account ? "ready" : error ? "error" : "loading";
 

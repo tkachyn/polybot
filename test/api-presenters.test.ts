@@ -33,6 +33,11 @@ test("racer ETA and estimated resolution follow the contract", () => {
   assert.equal(racerEtaMs({ status: "running", checkpoint: 0, startedAt: 1_000 }, 3, 5_000), null);
   assert.equal(racerEtaMs({ status: "finished", checkpoint: 3, startedAt: 1_000 }, 3, 5_000), null);
   assert.equal(racerEtaMs({ status: "ready", checkpoint: 0 }, 3, 5_000), null);
+  // Capped at the hard stop, like the estimated resolution.
+  assert.equal(racerEtaMs({ status: "running", checkpoint: 1, startedAt: 1_000 }, 3, 5_000, 100_000), 8_000);
+  assert.equal(racerEtaMs({ status: "running", checkpoint: 1, startedAt: 1_000 }, 3, 5_000, 5_700), 700);
+  assert.equal(racerEtaMs({ status: "running", checkpoint: 1, startedAt: 1_000 }, 3, 5_000, 4_000), 0);
+  assert.equal(racerEtaMs({ status: "running", checkpoint: 0, startedAt: 1_000 }, 3, 5_000, 5_700), null);
 
   assert.equal(estimateResolutionAt("live", [8_000, null, 2_000], 5_000, 100_000), 7_000);
   assert.equal(estimateResolutionAt("live", [8_000], 5_000, 6_000), 6_000);
@@ -80,6 +85,11 @@ test("live fight summary derives ETA, change, checkpoints and run status", async
   assert.equal(leader.log.at(-1)?.kind, "checkpoint");
   assert.equal(leader.frame, null);
   assert.equal(detail.checkpoints[0].label, "Checkpoint 1");
+
+  // Near the hard stop an agent's ETA is capped at closesAt, like the estimate.
+  const late = presentFightDetail(race, { ...options, now: 298_000 });
+  assert.equal(late.agents[0].etaMs, 3_000);
+  assert.equal(late.estimatedResolutionAt, 301_000);
 });
 
 test("sabotage reveal rule and armed → fired → state", async () => {

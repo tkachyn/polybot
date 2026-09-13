@@ -1,7 +1,15 @@
 import type { FastifyReply, FastifyRequest } from "fastify";
 
 export const SSE_RETRY_MS = 2_000;
-export const SSE_PING_MS = 15_000;
+/**
+ * Heartbeat interval. Every stream sends a `ping` event, `{ "intervalMs" }`,
+ * on connect and then this often. It is a named event rather than an SSE
+ * comment because EventSource never shows comments to the page, and the web
+ * client's watchdog (web/src/api/stream.ts) has to see pings to tell a quiet
+ * stream from a dead one: it replaces a connection after two missed pings.
+ */
+export const SSE_PING_MS = 5_000;
+export const SSE_PING_EVENT = "ping";
 
 /** One open text/event-stream response. */
 export class SseStream {
@@ -23,7 +31,11 @@ export class SseStream {
       "X-Accel-Buffering": "no",
     });
     raw.write(`retry: ${SSE_RETRY_MS}\n\n`);
-    this.ping = setInterval(() => this.write(": ping\n\n"), pingMs);
+    // The first ping goes out before any application event, so a client
+    // knows the interval (and that heartbeats exist) as soon as it connects.
+    const ping = `event: ${SSE_PING_EVENT}\ndata: ${JSON.stringify({ intervalMs: pingMs })}\n\n`;
+    raw.write(ping);
+    this.ping = setInterval(() => this.write(ping), pingMs);
     this.ping.unref();
     request.raw.on("close", () => this.close());
     raw.on("close", () => this.close());

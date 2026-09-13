@@ -12,7 +12,7 @@ import { cx } from "../../lib/cx";
 import { EMPTY, formatLogTime } from "../../lib/format";
 import { ACTION_LOG_KIND_LABEL, SIDE_LABEL } from "../../lib/labels";
 import type { Slip } from "../market/types";
-import { agentStatusView, formatEta, formatStep } from "./fightView";
+import { agentStatusView, formatEta, formatStep, isAgentActive, isRaceOver } from "./fightView";
 import { StatusTag } from "./AgentStatus";
 import { LiveCapture } from "./LiveCapture";
 import styles from "./FocusView.module.css";
@@ -67,6 +67,7 @@ export function FocusView({ fight, agent, visual, slip, markers, onClose }: Focu
           fightStatus={fight.status}
           startsAt={fight.startsAt}
           agentName={name}
+          final={!isAgentActive(agent.phase) || isRaceOver(fight)}
           className={styles.capture}
           overlay={
             <span className={styles.url} title={agent.url ?? undefined}>

@@ -1,8 +1,9 @@
 /*
- * Full-height flex column that never scrolls. Floors: the chart keeps a
- * readable plot when no order is open; the outcome table keeps its header
- * and at least two rows (the rows scroll inside the card as a last resort);
- * the order panel and footer never shrink, so Confirm is never pushed off.
+ * Full-height flex column that never scrolls. The chart takes what the
+ * outcome table and footer leave, with a floor so the plot stays readable.
+ * While an order panel is open the chart is not rendered at all: the table
+ * keeps all four rows, the panel and footer never shrink, and Confirm stays
+ * on screen at every desktop size.
  */
 .rail {
   display: flex;
@@ -15,31 +16,22 @@
   overflow: hidden;
 }
 
-/* The chart stays on screen while an order is open: a trader needs to see
-   what they are buying into. It gives up height for the panel, not presence. */
 .chartFloor {
   min-height: 180px;
-}
-
-.chartFloorCompact {
-  min-height: 104px;
 }
 
 .table {
   flex: none;
 }
 
-.tableShrink {
-  flex: 0 1 auto;
-  min-height: 116px;
-}
-
+/* Pinned to the foot of the rail; the free space opens above it when the chart yields. */
 .footer {
   flex: none;
   display: flex;
   align-items: center;
   gap: var(--space-3);
   min-height: 20px;
+  margin-top: auto;
   padding-inline: var(--space-1);
   font-size: var(--fs-body-sm);
   color: var(--color-text-secondary);
@@ -51,13 +43,18 @@
   align-items: center;
   gap: var(--space-1-5);
   min-width: 0;
+  white-space: nowrap;
 }
 
-.statusText {
+/* Only the words may give way; the countdown never truncates. */
+.statusLabel {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
-  white-space: nowrap;
+}
+
+.statusCountdown {
+  flex: none;
 }
 
 .dot {
@@ -83,4 +80,12 @@
 .statValue {
   color: var(--color-text);
   font-weight: var(--fw-semibold);
+}
+
+/* Phones: the rail stacks in the scrolling screen and takes its content's height. */
+@media (max-width: 759px) {
+  .rail {
+    height: auto;
+    overflow: visible;
+  }
 }

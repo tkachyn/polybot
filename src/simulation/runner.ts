@@ -75,7 +75,7 @@ export type SimulatedRunnerOptions = {
 export class SimulatedCompetitorRunner implements CompetitorAgentRunner {
   private readonly controllers = new Map<string, AbortController>();
   private readonly stopped = new Set<string>();
-  private readonly maxSteps: number;
+  readonly maxSteps: number;
 
   constructor(private readonly options: SimulatedRunnerOptions) {
     if (!Number.isFinite(options.timeScale) || options.timeScale <= 0) {

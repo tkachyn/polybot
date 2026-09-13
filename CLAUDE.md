@@ -22,7 +22,8 @@ npm run smoke:steel                   # live Steel check: 4 real sessions; needs
 
 A backend for a four-racer browser-agent race. Four LLM agents drive four Steel cloud
 browser sessions through the same course while a master LLM sabotages them and spectators
-trade a virtual prediction market on the winner. There is no frontend in this repo.
+trade a virtual prediction market on the winner. The spectator web app is in `web/`
+(Vite + React + TypeScript; see `web/README.md`).
 
 Layering is strict and dependency-inverted: `domain` knows nothing about I/O, `application`
 depends only on interfaces declared in `src/application/contracts.ts`, and `agents`,
@@ -143,11 +144,10 @@ by `COURSE_VERIFIER_TOKEN`; the browser UI stays open so agents can use it.
 suffix to the store after each transition, tracked by `persistedEventCount`. The JSONL store
 serializes writes through a promise chain and filters by `raceId` on read.
 
-`src/api/dto.ts` is the types-only contract for a future `web/` frontend and is not yet
-imported by the server. Adding a runtime export there would break the frontend build.
-`docs/frontend-contract.md` likewise describes an intended surface (simulated mode, SSE,
-a shared credit ledger, `/api/meta`) that does not exist in `src` yet — treat it as a design
-target, not a description of the code.
+`src/api/dto.ts` is the types-only contract shared by the server and the `web/` app, which
+imports it as `@contract`. Keep it free of runtime exports: adding one would break the web
+build. `docs/frontend-contract.md` describes that surface (simulated mode, SSE, the shared
+credit ledger, `/api/meta`), all of which exists in `src`.
 
 ## Conventions
 

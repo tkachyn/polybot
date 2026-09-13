@@ -1,7 +1,34 @@
 import { describe, expect, it } from "vitest";
 import type { PricePoint } from "@contract";
-import { MIN_SPAN_MS, buildChartWindow, buildPriceDomain, isMarkerInWindow, linearScale, lowerBound, nearestIndex, seriesPath, timeTicks, tradeMarkerChartPrice } from "./chart";
+import {
+  MIN_SPAN_MS,
+  MONEY_SLOTS,
+  buildChartWindow,
+  buildPriceDomain,
+  freeMoneySlot,
+  isMarkerInWindow,
+  linearScale,
+  lowerBound,
+  nearestIndex,
+  seriesPath,
+  timeTicks,
+  tradeMarkerChartPrice,
+} from "./chart";
 
+describe("money flash slots", () => {
+  it("gives amounts on screen together different slots", () => {
+    expect(freeMoneySlot([])).toBe(0);
+    expect(freeMoneySlot([{ id: 1, slot: 0 }])).toBe(1);
+    expect(freeMoneySlot([{ id: 1, slot: 1 }])).toBe(0);
+    expect(freeMoneySlot([{ id: 1, slot: 0 }, { id: 2, slot: 2 }])).toBe(1);
+  });
+
+  it("reuses the oldest slot once every slot is taken", () => {
+    const full = Array.from({ length: MONEY_SLOTS }, (_, slot) => ({ id: 10 + ((slot + 1) % MONEY_SLOTS), slot }));
+    const oldest = full.reduce((a, b) => (b.id < a.id ? b : a));
+    expect(freeMoneySlot(full)).toBe(oldest.slot);
+  });
+});
 const p = (t: number, a: number, b = 1 - a): PricePoint => ({ t, prices: { a, b } });
 
 describe("chart event markers", () => {

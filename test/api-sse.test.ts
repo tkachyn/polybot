@@ -97,13 +97,31 @@ class SseClient {
   }
 }
 
-async function listen() {
+async function listen(options: { ssePingMs?: number } = {}) {
   const { factory } = createFactory();
-  const app = buildApi({ coordinatorFactory: factory, enableTicker: false });
+  const app = buildApi({ coordinatorFactory: factory, enableTicker: false, ...options });
   await app.listen({ port: 0, host: "127.0.0.1" });
   const { port } = app.server.address() as AddressInfo;
   return { app, base: `http://127.0.0.1:${port}` };
 }
+
+test("streams send a ping event on connect and at every interval", async () => {
+  const { app, base } = await listen({ ssePingMs: 40 });
+  try {
+    const fights = await SseClient.connect(`${base}/api/fights/stream`);
+    // An event, not an SSE comment: EventSource hides comments from the page.
+    const first = await fights.take("ping");
+    assert.deepEqual(first.data, { intervalMs: 40 });
+    await fights.take("fights");
+    // The first ping precedes the first application event.
+    assert.ok(fights.raw.indexOf("event: ping") < fights.raw.indexOf("event: fights"));
+    await fights.take("ping");
+    await fights.take("ping");
+    fights.close();
+  } finally {
+    await app.close();
+  }
+});
 
 test("fight stream sends snapshot, then price and fight events after a trade", async () => {
   const { app, base } = await listen();

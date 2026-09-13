@@ -16,7 +16,39 @@
 }
 
 .leader {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1-5);
+  min-width: 0;
   color: var(--color-text-secondary);
+}
+
+.leaderName {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+  overflow: hidden;
+  font-size: var(--fs-body-sm);
+  font-weight: var(--fw-semibold);
+  color: var(--color-text);
+  white-space: nowrap;
+}
+
+.leaderText {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.leaderTied {
+  flex-shrink: 0;
+  font-weight: var(--fw-medium);
+  color: var(--color-text-muted);
+}
+
+.leaderFigure {
+  flex-shrink: 0;
 }
 
 .toggle {

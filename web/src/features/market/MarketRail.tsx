@@ -2,15 +2,16 @@
  * The fight screen's 344px market rail (handoff 2.2 "Market rail", 2.3):
  * win-probability chart, outcome table, then the order form or receipt in
  * place, and a small market footer. Fills its column and never scrolls the
- * page: the chart collapses to a legend strip while an order panel is open
- * so the confirm button always stays on screen.
+ * page: while an order panel is open the chart yields its whole space, so all
+ * four outcome rows and the confirm button stay on screen.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { FightDetail, OrderResponse } from "@contract";
-import { Countdown } from "../../components";
 import { agentVisual, rosterVisuals } from "../../lib/agents";
 import { cx } from "../../lib/cx";
 import { formatCompactMoney, formatNumber } from "../../lib/format";
+import { ClockPhrase } from "../fight/ClockCountdown";
+import { marketStateView } from "../fight/fightView";
 import { marketStatusText } from "./market";
 import { OrderForm } from "./OrderForm";
 import { OutcomeTable } from "./OutcomeTable";
@@ -128,17 +129,21 @@ export function MarketRail({ fight, priceHistory, slip, onSlipChange }: MarketRa
 
   return (
     <div className={styles.rail}>
-      <ProbabilityChart
-        agents={fight.agents}
-        priceHistory={priceHistory}
-        sabotageAt={fight.sabotage?.firedAt ?? null}
-        sabotageMarkers={sabotageMarkersFor(fight)}
-        tradeMarkers={chartTradeMarkers}
-        endAt={fight.status === "resolved" ? fight.finishedAt : null}
-        volume={fight.volume}
-        className={cx(styles.chartFloor, panelOpen && styles.chartFloorCompact)}
-      />
-      <OutcomeTable fight={fight} slip={activeSlip} onSelect={select} className={cx(styles.table, panelOpen && styles.tableShrink)} />
+      {/* An open order panel takes the chart's whole space rather than
+          squeezing it into a stub or pushing outcome rows out of view. */}
+      {!panelOpen && (
+        <ProbabilityChart
+          agents={fight.agents}
+          priceHistory={priceHistory}
+          sabotageAt={fight.sabotage?.firedAt ?? null}
+          sabotageMarkers={sabotageMarkersFor(fight)}
+          tradeMarkers={chartTradeMarkers}
+          endAt={fight.finishedAt}
+          volume={fight.volume}
+          className={styles.chartFloor}
+        />
+      )}
+      <OutcomeTable fight={fight} slip={activeSlip} onSelect={select} className={styles.table} />
       {panel}
       <MarketFooter fight={fight} />
     </div>
@@ -157,20 +162,25 @@ function sabotageMarkersFor(fight: FightDetail): ChartSabotageMarker[] {
 
 function MarketFooter({ fight }: { fight: FightDetail }) {
   const status = marketStatusText(fight);
-  const showFreeze = status.open && fight.status === "live" && fight.freezesAt !== null;
+  // The header's m:ss clock rather than a second format: the freeze while
+  // trading is open, the end of the fight once it is frozen.
+  const countdown = fight.status === "live" ? marketStateView(fight).countdown : null;
   return (
     <footer className={styles.footer}>
       <span className={styles.status}>
         <span className={cx(styles.dot, status.open && styles.dotOpen)} aria-hidden="true" />
-        <span className={styles.statusText}>
-          {status.label}
-          {showFreeze && (
-            <>
-              {" · freezes in "}
-              <Countdown to={fight.freezesAt} className="num" />
-            </>
-          )}
-        </span>
+        {countdown === null ? (
+          <span className={styles.statusLabel}>{status.label}</span>
+        ) : (
+          <ClockPhrase
+            to={countdown.to}
+            lead={countdown.shortLead}
+            approximate={countdown.approximate}
+            due={countdown.shortDue}
+            leadClassName={styles.statusLabel}
+            clockClassName={cx(styles.statusCountdown, styles.statValue)}
+          />
+        )}
       </span>
       <span className={styles.stat}>
         <span className="label label-sm">Vol</span>

@@ -1,7 +1,9 @@
 /**
- * Live / upcoming fight screen (handoff 2.2). Never scrolls at 1280x720 and
+ * Live / upcoming fight screen (handoff 2.2). Never scrolls at 1024x720 and
  * up: header strips on top, arena + 344px market rail beneath, every region
  * floored and clipped. Owns the bet slip and passes it to the rail and arena.
+ * During the finish moment (see useFightStream) the sabotage strip gives its
+ * place to the result.
  */
 import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
@@ -9,13 +11,14 @@ import type { FightDetail, PricePoint } from "@contract";
 import type { StreamStatus } from "../../api/stream";
 import { ErrorBanner, Skeleton, SkeletonText } from "../../components";
 import { cx } from "../../lib/cx";
+import { useSession } from "../../state/session";
 import { MarketRail } from "../market/MarketRail";
 import { SLIP_PARAM, slipFromParam } from "../market/slipParam";
 import type { Slip } from "../market/types";
 import { Arena } from "./Arena";
 import { FightInvite } from "../demo/FightInvite";
-import { rosterByRacer, rosterKey } from "./fightView";
-import { MasterStrip, SabotageStrip } from "./FightHeader";
+import { isRaceOver, rosterByRacer, rosterKey } from "./fightView";
+import { FinishStrip, MasterStrip, SabotageStrip } from "./FightHeader";
 import styles from "./FightPage.module.css";
 
 export type FightPageProps = {
@@ -25,6 +28,8 @@ export type FightPageProps = {
 };
 
 export function FightPage({ fight, priceHistory, streamStatus }: FightPageProps) {
+  // Judge invites promise every phone an equal bankroll, which only demo mode provides.
+  const { meta } = useSession();
   const [params, setParams] = useSearchParams();
   // `?slip=racer-1:yes` (from the lobby's featured card) opens the order form once.
   const [slip, setSlip] = useState<Slip | null>(() => slipFromParam(fight, params.get(SLIP_PARAM)));
@@ -46,8 +51,8 @@ export function FightPage({ fight, priceHistory, streamStatus }: FightPageProps)
 
   return (
     <div className={styles.screen}>
-      <MasterStrip fight={fight} action={<FightInvite raceId={fight.raceId} />} />
-      <SabotageStrip fight={fight} roster={roster} />
+      <MasterStrip fight={fight} action={meta?.demoMode ? <FightInvite raceId={fight.raceId} /> : undefined} />
+      {isRaceOver(fight) ? <FinishStrip fight={fight} roster={roster} /> : <SabotageStrip fight={fight} roster={roster} />}
       <div className={styles.body}>
         <Arena fight={fight} roster={roster} slip={activeSlip} streamStatus={streamStatus} className={styles.arena} />
         <aside className={styles.rail} aria-label="Market">

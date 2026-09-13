@@ -5,10 +5,10 @@ import type { ReactNode } from "react";
 import type { FightDetail, SabotageDetail } from "@contract";
 import { AgentMonogram, ElapsedClock, SabotageTag, StatusPill, Tag, fightPillStatus } from "../../components";
 import { cx } from "../../lib/cx";
-import { formatCompactMoney, formatFightNumber, formatNumber } from "../../lib/format";
+import { formatCompactMoney, formatDuration, formatFightNumber, formatNumber } from "../../lib/format";
 import { HAZARD_LABEL, SABOTAGE_HIDDEN_COPY } from "../../lib/labels";
-import { marketStateView, sabotageFiredLabel, visualFor, type RosterVisuals } from "./fightView";
-import { ClockCountdown } from "./ClockCountdown";
+import { finishView, isRaceOver, marketStateView, sabotageFiredLabel, visualFor, type RosterVisuals } from "./fightView";
+import { ClockCountdown, ClockPhrase } from "./ClockCountdown";
 import styles from "./FightHeader.module.css";
 
 // ---------------------------------------------------------------------------
@@ -16,11 +16,13 @@ import styles from "./FightHeader.module.css";
 // ---------------------------------------------------------------------------
 
 export function MasterStrip({ fight, action }: { fight: FightDetail; action?: ReactNode }) {
+  // During the finish moment the screen still shows the arena, but the pill says what happened.
+  const pill = isRaceOver(fight) ? (fight.voided ? "voided" : "resolved") : fightPillStatus(fight);
   return (
     <section className={styles.master} aria-label="Master task">
       <div className={styles.idBlock}>
         <span className={cx("label num", styles.fightNo)}>Fight {formatFightNumber(fight.number)}</span>
-        <StatusPill status={fightPillStatus(fight)} size="sm" />
+        <StatusPill status={pill} size="sm" />
         <FightClock fight={fight} />
       </div>
 
@@ -87,19 +89,57 @@ function MarketState({ fight }: { fight: FightDetail }) {
           <span className={cx(styles.marketDot, styles[`market_${market.tone}`])} aria-hidden="true" />
           {market.label}
         </span>
-        {market.detail && (
+        {market.countdown ? (
           <span className={styles.marketSub}>
-            {market.detail}
-            {market.countdownTo !== null && (
-              <>
-                {" "}
-                <ClockCountdown to={market.countdownTo} expiredLabel="now" className={styles.marketCountdown} />
-              </>
-            )}
+            <ClockPhrase
+              to={market.countdown.to}
+              lead={market.countdown.lead}
+              approximate={market.countdown.approximate}
+              due={market.countdown.due}
+              clockClassName={styles.marketCountdown}
+            />
           </span>
+        ) : (
+          market.detail && <span className={styles.marketSub}>{market.detail}</span>
         )}
       </dd>
     </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Finish strip: replaces the sabotage strip during the finish moment
+// ---------------------------------------------------------------------------
+
+export function FinishStrip({ fight, roster }: { fight: FightDetail; roster: RosterVisuals }) {
+  const result = finishView(fight);
+  if (result.kind === "void") {
+    return (
+      <section className={cx(styles.finish, styles.finishVoid)} aria-label="Result" role="status">
+        <Tag tone="neutral">Time’s up</Tag>
+        <p className={cx("clamp-1", styles.finishText)}>No agent finished before the hard stop</p>
+        <span className={styles.finishMeta}>Market void · positions refunded</span>
+      </section>
+    );
+  }
+  const winner = fight.agents.find((a) => a.racerId === result.racerId);
+  return (
+    <section className={styles.finish} aria-label="Result" role="status">
+      <Tag tone="positive" solid>
+        Winner
+      </Tag>
+      {winner && <AgentMonogram agent={visualFor(roster, winner)} size="xs" />}
+      <p className={cx("clamp-1", styles.finishText)}>
+        {result.name} finished first
+        {result.durationMs !== null && (
+          <>
+            {" in "}
+            <span className="num">{formatDuration(result.durationMs)}</span>
+          </>
+        )}
+      </p>
+      <span className={styles.finishMeta}>Market settled · results next</span>
+    </section>
   );
 }
 

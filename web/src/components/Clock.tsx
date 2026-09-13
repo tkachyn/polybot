@@ -17,7 +17,8 @@ export type ElapsedClockProps = {
 /** "04:07" / "1:02:03" since `from`, ticking every second until `until`. */
 export function ElapsedClock({ from, until, className }: ElapsedClockProps) {
   const running = typeof from === "number" && (until === null || until === undefined);
-  const now = useNow(1000, running);
+  // Tick on `from`'s own second boundaries, so the clock turns over with the server's.
+  const now = useNow(1000, running, typeof from === "number" ? from : 0);
   const end = typeof until === "number" ? until : now;
   const ms = typeof from === "number" ? end - from : null;
   return (
@@ -40,7 +41,7 @@ export type CountdownProps = {
 /** "42s" / "4m 07s" / "1h 04m" until `to`, rounded up. */
 export function Countdown({ to, expiredLabel = "0s", placeholder = "—", className }: CountdownProps) {
   const active = typeof to === "number";
-  const now = useNow(1000, active);
+  const now = useNow(1000, active, typeof to === "number" ? to : 0);
   if (!active) return <span className={cx("num", className)}>{placeholder}</span>;
   const remaining = to - now;
   return (

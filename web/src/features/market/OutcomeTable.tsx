@@ -53,10 +53,13 @@ export function OutcomeTable({ fight, slip, onSelect, className }: OutcomeTableP
             <li key={a.racerId} className={cx(styles.row, rowSelected && styles.rowSelected)}>
               <div className={styles.identity}>
                 <AgentMonogram agent={visual} size="sm" />
-                <span className={styles.name} title={a.agent.name}>
-                  {a.agent.name}
+                {/* The move sits under the name, so a two-digit change never truncates it. */}
+                <span className={styles.nameBlock}>
+                  <span className={styles.name} title={a.agent.name}>
+                    {a.agent.name}
+                  </span>
+                  <ChangeCents value={a.change} className={styles.change} />
                 </span>
-                <ChangeCents value={a.change} className={styles.change} />
               </div>
               <PriceButton
                 side="yes"

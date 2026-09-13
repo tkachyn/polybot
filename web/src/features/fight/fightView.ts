@@ -1,7 +1,7 @@
 /**
  * Pure view helpers for the fight screen. No React.
  */
-import type { AgentCheckpointState, FightAgentDetail, FightDetail, RacerPhase, RunStatus } from "@contract";
+import type { AgentCheckpointState, FightAgentDetail, FightDetail, FightStatus, RacerPhase, RunStatus } from "@contract";
 import type { ProgressMarker } from "../../components";
 import { agentVisual, rosterVisuals, type AgentVisual } from "../../lib/agents";
 import { EMPTY, formatClock, formatCountdown, formatDuration, formatLogTime, formatNumber } from "../../lib/format";
@@ -19,8 +19,10 @@ export type AgentStatusView = { tone: AgentTone; label: string };
 /** Status band copy and tone. Terminal and pre-start phases override runStatus. */
 export function agentStatusView(agent: { runStatus: RunStatus; phase: RacerPhase }): AgentStatusView {
   switch (agent.phase) {
+    // Racers sit in "starting" for the whole pre-fight countdown; the header
+    // already says when the fight starts, so the band matches its "Upcoming".
     case "starting":
-      return { tone: "idle", label: "Starting" };
+      return { tone: "idle", label: "Upcoming" };
     case "ready":
       return { tone: "idle", label: "Ready" };
     case "finished":
@@ -45,6 +47,57 @@ export function formatEta(etaMs: number | null, phase: RacerPhase): string {
   if (etaMs === null || !Number.isFinite(etaMs)) return EMPTY;
   if (etaMs <= 0) return "Finishing";
   return `~${formatCountdown(etaMs)}`;
+}
+
+/** The agent's browser is still being driven, so its capture is live. */
+export function isAgentActive(phase: RacerPhase): boolean {
+  return phase === "running" || phase === "recovering";
+}
+
+// ---------------------------------------------------------------------------
+// Leader
+// ---------------------------------------------------------------------------
+
+export type LeaderView = {
+  /** Null until some agent clears a checkpoint. */
+  racerId: string | null;
+  name: string | null;
+  /** Other agents on the same checkpoint. */
+  tied: number;
+  checkpoint: number;
+  checkpointCount: number;
+  /** Accessible description, e.g. "GPT-5.2 leads with 2 of 4 checkpoints". */
+  title: string;
+};
+
+type LeaderAgent = Pick<FightAgentDetail, "racerId" | "agent" | "checkpoint" | "checkpoints">;
+
+/** When `agent` cleared its current checkpoint; unknown sorts last. */
+function reachedAt(agent: LeaderAgent): number {
+  return agent.checkpoints.find((c) => c.index === agent.checkpoint)?.clearedAt ?? Number.POSITIVE_INFINITY;
+}
+
+/**
+ * Who leads: the verified winner once there is one, else the agent furthest
+ * along, and on a tie the one that reached that checkpoint first.
+ */
+export function leaderView(fight: Pick<FightDetail, "leaderCheckpoint" | "checkpointCount" | "winnerRacerId"> & { agents: readonly LeaderAgent[] }): LeaderView {
+  const { leaderCheckpoint: checkpoint, checkpointCount } = fight;
+  const figure = `${formatNumber(checkpoint)} of ${formatNumber(checkpointCount)}`;
+  const winner = fight.agents.find((a) => a.racerId === fight.winnerRacerId);
+  const front = checkpoint > 0 ? fight.agents.filter((a) => a.checkpoint === checkpoint) : [];
+  const lead = winner ?? [...front].sort((a, b) => reachedAt(a) - reachedAt(b))[0];
+  if (!lead) {
+    return { racerId: null, name: null, tied: 0, checkpoint, checkpointCount, title: `No agent has cleared a checkpoint yet (0 of ${formatNumber(checkpointCount)})` };
+  }
+  const tied = front.filter((a) => a.racerId !== lead.racerId).length;
+  const name = lead.agent.name;
+  const title = winner
+    ? `${name} won`
+    : tied > 0
+      ? `${name} leads with ${figure} checkpoints, reached first; ${tied} more on the same checkpoint`
+      : `${name} leads with ${figure} checkpoints`;
+  return { racerId: lead.racerId, name, tied, checkpoint, checkpointCount, title };
 }
 
 // ---------------------------------------------------------------------------
@@ -78,27 +131,113 @@ export function sabotageFiredLabel(firedAt: number, startedAt: number | null): s
 
 export type MarketTone = "open" | "pre" | "frozen" | "closed";
 
+/** A ticking countdown and its copy, for the header and, shorter, the rail footer. */
+export type MarketCountdown = {
+  to: number;
+  /** Runs to an estimate (the fastest agent's projected finish): "~0:42", then `due` once it passes. */
+  approximate: boolean;
+  /** Words before the clock in the header, and what replaces both once an estimate is due. */
+  lead: string;
+  due: string;
+  /** The same for the rail footer, which has less room. */
+  shortLead: string;
+  shortDue: string;
+};
+
 export type MarketStateView = {
   tone: MarketTone;
   label: string;
-  /** Secondary copy; followed by the countdown when `countdownTo` is set. */
+  /** Secondary copy when there is no countdown. */
   detail: string | null;
-  countdownTo: number | null;
+  countdown: MarketCountdown | null;
 };
 
-export function marketStateView(fight: Pick<FightDetail, "status" | "marketStatus" | "freezesAt">): MarketStateView {
+export type FightEnd = { to: number | null; approximate: boolean };
+
+/**
+ * When a live fight ends: the hard stop (`closesAt`), or the fastest agent's
+ * projected finish when that comes first.
+ */
+export function fightEnd(fight: Pick<FightDetail, "closesAt" | "estimatedResolutionAt">): FightEnd {
+  const { closesAt, estimatedResolutionAt: estimate } = fight;
+  if (estimate !== null && Number.isFinite(estimate) && (closesAt === null || estimate < closesAt)) {
+    return { to: estimate, approximate: true };
+  }
+  return { to: closesAt, approximate: false };
+}
+
+type MarketStateInput = Pick<FightDetail, "status" | "marketStatus" | "freezesAt" | "closesAt" | "estimatedResolutionAt">;
+
+export function marketStateView(fight: MarketStateInput): MarketStateView {
   switch (fight.marketStatus) {
     case "open":
       if (fight.status === "upcoming") {
-        return { tone: "pre", label: "Pre-fight trading", detail: "Open before the start", countdownTo: null };
+        return { tone: "pre", label: "Pre-fight trading", detail: "Open before the start", countdown: null };
       }
-      if (fight.freezesAt === null) return { tone: "open", label: "Open", detail: "Trading open", countdownTo: null };
-      return { tone: "open", label: "Open", detail: "Trading freezes in", countdownTo: fight.freezesAt };
-    case "frozen":
-      return { tone: "frozen", label: "Frozen", detail: "Awaiting settlement", countdownTo: null };
+      if (fight.freezesAt === null) return { tone: "open", label: "Open", detail: "Trading open", countdown: null };
+      return {
+        tone: "open",
+        label: "Open",
+        detail: null,
+        countdown: {
+          to: fight.freezesAt,
+          approximate: false,
+          lead: "Trading freezes in",
+          due: "Trading freezes in",
+          shortLead: "Open · freezes in",
+          shortDue: "Open · freezes in",
+        },
+      };
+    case "frozen": {
+      // Trading stops at the freeze but the race does not: say so, and when it
+      // ends. An estimate that comes due means the leader is at the finish.
+      const end = fightEnd(fight);
+      if (end.to === null) return { tone: "frozen", label: "Frozen", detail: "Agents still racing", countdown: null };
+      return {
+        tone: "frozen",
+        label: "Frozen",
+        detail: null,
+        countdown: {
+          to: end.to,
+          approximate: end.approximate,
+          lead: "Agents racing · ends in",
+          due: "Agents racing · leader finishing",
+          shortLead: "Frozen · ends in",
+          shortDue: "Frozen · leader finishing",
+        },
+      };
+    }
     default:
-      return { tone: "closed", label: "Closed", detail: null, countdownTo: null };
+      return { tone: "closed", label: "Closed", detail: null, countdown: null };
   }
+}
+
+// ---------------------------------------------------------------------------
+// Finish moment
+// ---------------------------------------------------------------------------
+
+/** The race has its result (a verified winner, or the hard stop), whatever the screen still shows. */
+export function isRaceOver(fight: Pick<FightDetail, "raceStatus">): boolean {
+  return fight.raceStatus === "finished" || fight.raceStatus === "timed_out";
+}
+
+/** Only a fight seen live on this screen gets a finish moment before its settled view. */
+export function startsFinishHold(previous: FightStatus | null, next: FightStatus): boolean {
+  return previous === "live" && next === "resolved";
+}
+
+export type FinishView =
+  | { kind: "winner"; racerId: string; name: string; durationMs: number | null }
+  | { kind: "void" };
+
+/** The result strip shown during the finish moment. */
+export function finishView(
+  fight: Pick<FightDetail, "winnerRacerId" | "startedAt"> & { agents: readonly Pick<FightAgentDetail, "racerId" | "agent" | "finishedAt">[] },
+): FinishView {
+  const winner = fight.agents.find((a) => a.racerId === fight.winnerRacerId);
+  if (!winner) return { kind: "void" };
+  const durationMs = fight.startedAt !== null && winner.finishedAt !== null ? Math.max(0, winner.finishedAt - fight.startedAt) : null;
+  return { kind: "winner", racerId: winner.racerId, name: winner.agent.name, durationMs };
 }
 
 // ---------------------------------------------------------------------------

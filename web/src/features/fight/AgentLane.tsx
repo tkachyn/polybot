@@ -28,6 +28,7 @@ export function AgentLane({ fight, agent, visual, slip, onOpen, buttonRef }: Age
   const step = formatStep(agent.step, agent.maxSteps);
   const eta = formatEta(agent.etaMs, agent.phase);
   const inSlip = slip?.racerId === agent.racerId;
+  const winner = fight.winnerRacerId === agent.racerId;
   const name = agent.agent.name;
   const action = agent.currentAction ?? (fight.status === "upcoming" ? "Waiting to start" : EMPTY);
 
@@ -57,6 +58,11 @@ export function AgentLane({ fight, agent, visual, slip, onOpen, buttonRef }: Age
             <span className={styles.metaKey}>ETA</span> {eta}
           </span>
         </span>
+        {winner && (
+          <Tag tone="positive" solid>
+            Winner
+          </Tag>
+        )}
         {inSlip && slip && <Tag tone="edge">Slip · {SIDE_LABEL[slip.side]}</Tag>}
         <span className={styles.price}>
           <PriceCents value={agent.yes} size="lg" flash />
