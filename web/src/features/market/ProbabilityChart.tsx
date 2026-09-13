@@ -7,7 +7,7 @@
  * `collapsed` renders only a compact legend strip (monogram + price), for
  * when the order form needs the chart's space.
  */
-import { useMemo, useRef, useState, useEffect, useId, type KeyboardEvent, type PointerEvent, type ReactNode } from "react";
+import { useMemo, useRef, useState, useEffect, useId, type CSSProperties, type KeyboardEvent, type PointerEvent, type ReactNode } from "react";
 import type { AgentIdentity, PricePoint } from "@contract";
 import { AgentMonogram, PriceCents } from "../../components";
 import { agentStyle, agentVisual, rosterVisuals, type AgentVisual } from "../../lib/agents";
@@ -15,7 +15,18 @@ import { cx } from "../../lib/cx";
 import { formatCents, formatCompactMoney, formatLogTime, formatTimeOfDay } from "../../lib/format";
 import { useNow } from "../../state/clock";
 import type { ChartSabotageMarker, ChartTradeMarker } from "./types";
-import { Y_TICKS, buildChartWindow, isMarkerInWindow, linearScale, nearestIndex, seriesPath, timeTicks, tradeMarkerChartPrice, type ChartRange } from "./chart";
+import {
+  Y_TICKS,
+  buildChartWindow,
+  freeMoneySlot,
+  isMarkerInWindow,
+  linearScale,
+  nearestIndex,
+  seriesPath,
+  timeTicks,
+  tradeMarkerChartPrice,
+  type ChartRange,
+} from "./chart";
 import styles from "./ProbabilityChart.module.css";
 
 /** Structurally satisfied by FightAgentSummary / FightAgentDetail. */
@@ -153,35 +164,24 @@ type PlotProps = {
   volume?: number;
 };
 
-/** One amount floating over the plot, with the lane it rises in. */
+/** One amount floating over the plot, anchored where the line it moved ends. */
 type MoneyFlash = {
   id: number;
   amount: number;
-  lane: number;
   /** The racer whose price moved most on this trade; null if none did. */
   racerId: string | null;
+  /** That racer's price at the trade: the height the amount rises from. */
+  price: number | null;
+  /** Side-by-side slot left of the price dots (see freeMoneySlot). */
+  slot: number;
 };
 
 /** How long an amount stays on screen. Must match the CSS animation. */
 const MONEY_FLASH_MS = 2600;
-/** Vertical lanes, so amounts arriving together do not stack on one line. */
-const MONEY_LANES = 5;
-/** Where the lowest lane sits, clear of the x-axis labels. */
-const MONEY_BASE_PX = 26;
-/** Gap between lanes. */
-const MONEY_LANE_PX = 16;
-
-/**
- * Lane offsets in px, squeezed to fit short plots. The rail's chart is half
- * the height of the lobby's, and fixed offsets there would put the top lane
- * in the middle of the plot instead of at its foot.
- */
-function moneyLaneOffset(lane: number, plotHeight: number): number {
-  if (plotHeight <= 0) return MONEY_BASE_PX + lane * MONEY_LANE_PX;
-  const base = Math.min(MONEY_BASE_PX, plotHeight * 0.12);
-  const step = Math.min(MONEY_LANE_PX, Math.max(7, plotHeight * 0.055));
-  return base + lane * step;
-}
+/** One slot's width: room for "+$1.2K". */
+const MONEY_SLOT_PX = 46;
+/** Gap between a line's end dot and the first slot. */
+const MONEY_DOT_GAP_PX = 10;
 
 /**
  * Turns a running volume total into one flash per increase. Only the delta is
@@ -244,7 +244,9 @@ function useMoneyFlow(volume: number | undefined, prices: Record<string, number>
 
     const id = nextId.current;
     nextId.current += 1;
-    setFlashes((list) => [...list, { id, amount: volume - before, lane: id % MONEY_LANES, racerId }]);
+    const amount = volume - before;
+    const price = racerId === null ? null : (current[racerId] ?? null);
+    setFlashes((list) => [...list, { id, amount, racerId, price, slot: freeMoneySlot(list) }]);
 
     const timer = setTimeout(() => {
       timers.current.delete(timer);
@@ -506,20 +508,21 @@ function Plot({
 
       {moneyFlow.length > 0 && (
         <div className={styles.moneyFlow} aria-hidden="true">
-          {moneyFlow.map((flash) => (
-            <span
-              key={flash.id}
-              className={styles.money}
-              style={{
-                // Stacked just above the x axis, so every amount rises from
-                // the foot of the plot rather than out of the middle of it.
-                bottom: `${moneyLaneOffset(flash.lane, height)}px`,
-                color: (flash.racerId && moneyColors[flash.racerId]) || undefined,
-              }}
-            >
-              +{formatCompactMoney(flash.amount)}
-            </span>
-          ))}
+          {moneyFlow.map((flash) => {
+            // Rises from beside the price dot of the line it moved, in that
+            // line's colour; amounts on screen together take side-by-side slots.
+            const offset = MONEY_DOT_GAP_PX + flash.slot * MONEY_SLOT_PX;
+            const color = (flash.racerId && moneyColors[flash.racerId]) || undefined;
+            const style: CSSProperties =
+              drawable && flash.price !== null
+                ? { right: width - right + offset, top: Math.min(bottom - 6, Math.max(top + 6, y(flash.price))), color }
+                : { right: MARGIN.right + offset, bottom: MARGIN.bottom + 8, color };
+            return (
+              <span key={flash.id} className={styles.money} style={style}>
+                +{formatCompactMoney(flash.amount)}
+              </span>
+            );
+          })}
         </div>
       )}
 

@@ -1,3 +1,8 @@
+/*
+ * No overflow clipping here: the lobby's featured card drops this box's
+ * padding, and clipping at the content edge shaved the first glyph of the
+ * title. The plot and the money layer clip themselves.
+ */
 .chart {
   display: flex;
   flex-direction: column;
@@ -8,7 +13,6 @@
   background-color: var(--color-surface);
   border: 1px solid var(--color-hairline);
   border-radius: var(--radius-lg);
-  overflow: hidden;
 }
 
 .expanded {
@@ -33,18 +37,23 @@
 }
 
 /*
- * Legend: one row of model + price cells, divided by vertical rules. The
- * series key is a dot, not a line segment.
+ * Legend: model + price cells divided by vertical rules. Every cell carries
+ * its rule on the left, and the list is pulled left by one rule and padding
+ * and clipped there, so the first cell of each line (wrapped lines included)
+ * starts flush with no stray rule. The series key is a dot, not a line.
+ * Scoped under .chart to outrank the global `ul[class]` margin reset.
  */
-.legend {
+.chart .legend {
+  --legend-inset: calc(var(--space-3-5) + 1px);
   flex: none;
   display: flex;
   flex-wrap: wrap;
   align-items: stretch;
   gap: var(--space-1) 0;
-  margin: 0;
+  margin: 0 0 0 calc(-1 * var(--legend-inset));
   padding: 0;
   list-style: none;
+  clip-path: inset(0 0 0 var(--legend-inset));
 }
 
 .legendItem {
@@ -55,11 +64,6 @@
   padding-inline: var(--space-3-5);
   font-size: var(--fs-body-sm);
   border-left: 1px solid var(--color-divider);
-}
-
-.legendItem:first-child {
-  padding-left: 0;
-  border-left: 0;
 }
 
 .key {
@@ -241,8 +245,9 @@
 /* --- Money flow -------------------------------------------------------------- */
 
 /*
- * Amounts that just traded, floating up the left of the plot as the agents
- * move the market. Purely decorative: the figures are also in the footer.
+ * Amounts that just traded, rising from beside the price dot of the line they
+ * moved (position set inline). Amounts on screen together take side-by-side
+ * slots. Purely decorative: the figures are also in the footer.
  */
 .moneyFlow {
   position: absolute;
@@ -253,14 +258,20 @@
 
 .money {
   position: absolute;
-  left: var(--space-2);
+  /* Centre the first line of text on the anchor without using transform, which the animation owns. */
+  margin-top: calc(var(--fs-body-sm) * -0.65);
   font-family: var(--font-sans);
   font-size: var(--fs-body-sm);
   font-weight: var(--fw-medium);
+  line-height: var(--lh-tight);
   font-variant-numeric: tabular-nums;
   /* Falls back to positive green; the flash sets its line's colour inline. */
   color: var(--color-positive);
   white-space: nowrap;
+  /* Legible where it crosses the lines. */
+  text-shadow:
+    0 0 2px var(--color-surface),
+    0 0 4px var(--color-surface);
   animation: money-rise 2600ms var(--ease-standard) forwards;
 }
 
