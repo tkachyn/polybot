@@ -119,6 +119,12 @@ export function openEventStream(options: OpenEventStreamOptions): () => void {
       const serverTime = (data as { serverTime?: unknown }).serverTime;
       if (typeof serverTime === "number") noteServerTime(serverTime);
     }
+    // A proxy can acknowledge an EventSource request while buffering its
+    // response body indefinitely. Only call the stream open after an actual
+    // application event arrives, so consumers keep their REST polling
+    // fallback active behind tunnels that buffer SSE.
+    attempt = 0;
+    setStatus("open");
     options.onEvent(name, data);
   };
 
@@ -136,7 +142,6 @@ export function openEventStream(options: OpenEventStreamOptions): () => void {
     es.onopen = () => {
       if (closed || source !== es) return;
       attempt = 0;
-      setStatus("open");
     };
     es.onerror = () => {
       if (closed || source !== es) return;

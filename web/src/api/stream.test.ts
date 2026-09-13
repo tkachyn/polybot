@@ -84,6 +84,7 @@ describe("openEventStream", () => {
     };
     const close = start({ visibility, hiddenGraceMs: 1000 });
     sources[0]?.open();
+    sources[0]?.emit("fights", JSON.stringify({ serverTime: 1, fights: [] }));
 
     setHidden(true);
     vi.advanceTimersByTime(999);
@@ -130,6 +131,8 @@ describe("openEventStream", () => {
     sources[0]?.fail(false);
     expect(statuses.at(-1)).toBe("reconnecting");
     sources[0]?.open();
+    expect(statuses.at(-1)).toBe("reconnecting");
+    sources[0]?.emit("fights", JSON.stringify({ serverTime: 1, fights: [] }));
     expect(statuses.at(-1)).toBe("open");
     expect(sources).toHaveLength(1);
   });
@@ -148,6 +151,7 @@ describe("openEventStream", () => {
     vi.advanceTimersByTime(1);
     expect(sources).toHaveLength(3);
     sources[2]?.open();
+    sources[2]?.emit("fights", JSON.stringify({ serverTime: 1, fights: [] }));
     expect(statuses.at(-1)).toBe("open");
     close();
     vi.advanceTimersByTime(10_000);
@@ -161,6 +165,14 @@ describe("openEventStream", () => {
     vi.advanceTimersByTime(100);
     first?.emit("fights", JSON.stringify({ stale: true }));
     expect(events).toEqual([]);
+  });
+
+  it("keeps polling fallback active until an application event arrives", () => {
+    start();
+    sources[0]?.open();
+    expect(statuses.at(-1)).toBe("connecting");
+    sources[0]?.emit("fights", JSON.stringify({ serverTime: 1, fights: [] }));
+    expect(statuses.at(-1)).toBe("open");
   });
 });
 
