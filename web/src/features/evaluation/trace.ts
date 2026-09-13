@@ -1,15 +1,7 @@
 /**
  * Pure helpers over an agent's action trace and Steel trace.
  */
-import type { SabotageReaction, SteelTraceEntry, TraceEntry } from "@contract";
-
-/** The Steel trace excerpt covers this much time either side of a hit. */
-export const STEEL_EXCERPT_RADIUS_MS = 10_000;
-
-/** Steel events within ±`radiusMs` of `at`, in trace order (oldest first). */
-export function steelTraceAround(trace: readonly SteelTraceEntry[], at: number, radiusMs: number = STEEL_EXCERPT_RADIUS_MS): SteelTraceEntry[] {
-  return trace.filter((entry) => Math.abs(entry.at - at) <= radiusMs);
-}
+import type { SabotageReaction, TraceEntry } from "@contract";
 
 export type TraceRow = { kind: "step"; entry: TraceEntry } | { kind: "hit"; reaction: SabotageReaction };
 

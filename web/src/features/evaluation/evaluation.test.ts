@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { ReactionLabel, RobustnessCell, SabotageReaction, SteelTraceEntry, TraceEntry } from "@contract";
+import type { AgentOutcome, ReactionLabel, RobustnessCell, SabotageReaction, TraceEntry } from "@contract";
 import { datasetExportUrl, datasetFileUrl, evidenceFrameUrl, replayUrl } from "../../api/client";
 import { EMPTY, MINUS } from "../../lib/format";
 import { AGENT_OUTCOME_LABEL, BLOCKED_BY_LABEL, EVALUATION_MODE_LABEL, EVALUATION_STATUS_LABEL, REACTION_DESCRIPTION, REACTION_LABEL } from "../../lib/labels";
@@ -9,7 +9,6 @@ import {
   checkpointParts,
   describeHitOffset,
   evaluationDisplayStatus,
-  evidenceNotes,
   formatCheckpoint,
   formatFightTime,
   formatOffset,
@@ -19,13 +18,13 @@ import {
   formatSeconds,
   formatSurvival,
   matrixCellView,
+  rankAgents,
   robustnessView,
-  sabotageStepMeta,
   sabotageStepTitle,
 } from "./format";
 import { matchesSelection, parseEvaluationMode, parseEvaluationWindow } from "./params";
 import { EVALUATION_STATUS_TONE, OUTCOME_TONE, REACTION_TONE, TONE_COLOR_VAR } from "./tones";
-import { interleaveHits, isTraceStep, steelTraceAround, traceReasoning, traceTotals } from "./trace";
+import { interleaveHits, isTraceStep, traceReasoning, traceTotals } from "./trace";
 
 // ---------------------------------------------------------------------------
 // Fixtures (tests only)
@@ -58,8 +57,6 @@ const step = (n: number, at: number, extra: Partial<TraceEntry> = {}): TraceEntr
   clearedSabotage: false,
   ...extra,
 });
-
-const steel = (at: number, decoy = false): SteelTraceEntry => ({ at, type: "click", label: null, role: null, selector: null, url: null, decoy });
 
 const hit = (stepIndex: number, appliedAt: number, reaction: ReactionLabel = "recovered"): SabotageReaction => ({
   stepId: `step-${stepIndex}`,
@@ -180,6 +177,24 @@ describe("scores and survival", () => {
     });
   });
 
+  it("orders standings: the winner, then finishers by time, then the rest by checkpoints, ties in racer order", () => {
+    const agent = (id: string, outcome: AgentOutcome, checkpointsReached: number, durationMs: number | null = null) => ({
+      id,
+      outcome,
+      checkpointsReached,
+      durationMs,
+    });
+    const ranked = rankAgents([
+      agent("a", "stopped", 1),
+      agent("b", "finished", 3, 120_000),
+      agent("c", "failed", 2),
+      agent("d", "won", 3, 98_000),
+      agent("e", "finished", 3, 110_000),
+      agent("f", "timed_out", 1),
+    ]);
+    expect(ranked.map((a) => a.id)).toEqual(["d", "e", "b", "c", "a", "f"]);
+  });
+
   it("formats survival as a whole percent", () => {
     expect(formatSurvival(10 / 12)).toBe("83%");
     expect(formatSurvival(1)).toBe("100%");
@@ -248,6 +263,8 @@ describe("time formatting", () => {
     expect(formatCheckpoint(2, "Checkpoint 2")).toBe("Checkpoint 2");
     expect(formatCheckpoint(3, "Search results")).toBe("Checkpoint 3 · Search results");
     expect(formatCheckpoint(1, "")).toBe("Checkpoint 1");
+    expect(checkpointParts(3, "Seat map")).toEqual(["Checkpoint 3", "Seat map"]);
+    expect(checkpointParts(2, "checkpoint 2")).toEqual(["Checkpoint 2"]);
   });
 
   it("gives times into the fight", () => {
@@ -265,30 +282,6 @@ describe("report status", () => {
   });
 });
 
-describe("evidence notes", () => {
-  it("says why a hit has no replay or Steel trace", () => {
-    expect(evidenceNotes({ mode: "simulated", replayAvailable: false, traceAvailable: false })).toEqual([
-      "Replays and Steel traces exist for live fights only.",
-    ]);
-    expect(evidenceNotes({ mode: "live", replayAvailable: true, traceAvailable: true })).toEqual([]);
-    expect(evidenceNotes({ mode: "live", replayAvailable: false, traceAvailable: true })).toEqual(["No Steel recording was saved for this session."]);
-    expect(evidenceNotes({ mode: "live", replayAvailable: true, traceAvailable: false })).toEqual(["No Steel trace was saved for this session."]);
-    expect(evidenceNotes({ mode: "live", replayAvailable: false, traceAvailable: false })).toEqual([
-      "No Steel recording or trace was saved for this session.",
-    ]);
-  });
-
-  it("says what a fight that has left the lobby no longer serves", () => {
-    expect(evidenceNotes({ mode: "live", replayAvailable: true, traceAvailable: true, archived: true })).toEqual([
-      "Keyframes and the replay aren’t kept once a fight leaves the lobby.",
-    ]);
-    expect(evidenceNotes({ mode: "simulated", replayAvailable: false, traceAvailable: false, archived: true })).toEqual([
-      "Keyframes aren’t kept once a fight leaves the lobby.",
-      "Replays and Steel traces exist for live fights only.",
-    ]);
-  });
-});
-
 describe("sabotage step labels", () => {
   it("does not repeat a hazard the step is already named after", () => {
     // A step without a named preset is labelled after its hazard type.
@@ -302,20 +295,6 @@ describe("sabotage step labels", () => {
       hazard: "Decoy control",
     });
     expect(sabotageStepTitle({ label: "  ", hazardType: "rename_control" })).toEqual({ title: "Renamed control", hazard: null });
-  });
-
-  it("splits the facts under a step into items a line never breaks inside", () => {
-    const step = { tier: "difficult" as const, checkpoint: 3, checkpointLabel: "Seat map" };
-    expect(sabotageStepMeta({ ...step, label: "Blocking modal", hazardType: "blocking_modal" })).toEqual([
-      { text: "Difficult", wrap: false },
-      { text: "Checkpoint 3", wrap: false },
-      { text: "Seat map", wrap: true },
-    ]);
-    expect(
-      sabotageStepMeta({ ...step, label: "Cover the page with a modal", hazardType: "blocking_modal", checkpointLabel: "Checkpoint 3" }).map((item) => item.text),
-    ).toEqual(["Blocking modal", "Difficult", "Checkpoint 3"]);
-    expect(checkpointParts(3, "Seat map")).toEqual(["Checkpoint 3", "Seat map"]);
-    expect(checkpointParts(2, "checkpoint 2")).toEqual(["Checkpoint 2"]);
   });
 });
 
@@ -396,11 +375,6 @@ describe("dataset downloads", () => {
 });
 
 describe("trace helpers", () => {
-  it("keeps Steel events within ten seconds of the hit", () => {
-    const trace = [steel(0), steel(5_000), steel(15_000, true), steel(25_000), steel(25_001)];
-    expect(steelTraceAround(trace, 15_000).map((e) => e.at)).toEqual([5_000, 15_000, 25_000]);
-  });
-
   it("marks each hit before the first step taken at or after it", () => {
     const rows = interleaveHits([step(1, 100), step(2, 200), step(3, 300)], [hit(2, 250), hit(1, 150), hit(3, 900)]);
     expect(rows.map((r) => (r.kind === "hit" ? `hit${r.reaction.stepIndex}` : `s${r.entry.step}`))).toEqual(["s1", "hit1", "s2", "hit2", "s3", "hit3"]);

@@ -1,0 +1,29 @@
+.method {
+  padding: var(--space-2) var(--space-4);
+  border-top: 1px solid var(--color-hairline);
+}
+
+.body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  max-width: 96ch;
+  padding: var(--space-1) 0 var(--space-2);
+  color: var(--color-text-secondary);
+  font-size: var(--fs-body);
+  line-height: var(--lh-body);
+}
+
+.body strong {
+  color: var(--color-text);
+  font-weight: var(--fw-semibold);
+}
+
+.rules {
+  border: 1px solid var(--color-hairline);
+  border-radius: var(--radius-md);
+}
+
+.rules table td {
+  vertical-align: top;
+}

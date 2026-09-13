@@ -42,14 +42,13 @@ export function ArchivedFight({ evaluation, report }: ArchivedFightProps) {
           )
         }
         meta={[
-          { label: "Started", value: formatDateTime(evaluation.startedAt) },
-          { label: "Finished", value: formatDateTime(evaluation.finishedAt) },
           { label: "Duration", value: formatDuration(duration) },
+          { label: "Ended", value: formatDateTime(evaluation.finishedAt) },
         ]}
       />
       <p className={styles.archivedNote}>
         <IconAlert size={14} className={styles.archivedIcon} />
-        <span>This fight is no longer in the lobby, but its final report is kept. Its market, keyframes and replays are not.</span>
+        <span>This fight has left the lobby. Its results are kept; its market, keyframes and replays are not.</span>
       </p>
       <EvaluationReportView state={report} resolved archived />
     </div>

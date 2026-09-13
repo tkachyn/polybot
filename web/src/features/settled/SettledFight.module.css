@@ -14,11 +14,8 @@
 .header {
   display: flex;
   flex-direction: column;
-  gap: var(--space-2-5);
-  padding: var(--space-4) var(--space-5);
-  border: 1px solid var(--color-hairline);
-  border-radius: var(--radius-lg);
-  background-color: var(--color-surface);
+  gap: var(--space-2);
+  min-width: 0;
 }
 
 .headerTop {
@@ -34,6 +31,15 @@
   font-weight: var(--fw-semibold);
   letter-spacing: var(--tracking-tight);
   line-height: var(--lh-snug);
+}
+
+/* The result on the left, the fight's figures on the right; they stack when narrow. */
+.summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2) var(--space-6);
 }
 
 .winner {
@@ -56,24 +62,20 @@
 .meta {
   display: flex;
   flex-wrap: wrap;
-  gap: var(--space-3) var(--space-8);
-  margin-top: var(--space-1);
-  padding-top: var(--space-3);
-  border-top: 1px solid var(--color-hairline);
+  gap: var(--space-1-5) var(--space-5);
 }
 
 .metaItem {
   display: flex;
-  flex-direction: column;
-  gap: var(--space-1);
-  min-width: 0;
+  align-items: baseline;
+  gap: var(--space-1-5);
+  white-space: nowrap;
 }
 
 .metaItem dd {
   color: var(--color-text);
-  font-size: var(--fs-body-lg);
+  font-size: var(--fs-body);
   font-weight: var(--fw-medium);
-  white-space: nowrap;
 }
 
 /* A fight the lobby no longer has (ArchivedFight): why there is no market. */
@@ -93,78 +95,6 @@
   flex-shrink: 0;
   margin-top: 2px;
   color: var(--color-edge);
-}
-
-/* --- Sections ------------------------------------------------------------- */
-
-.section {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2-5);
-  min-width: 0;
-}
-
-.sectionTitle {
-  color: var(--color-text);
-  font-size: var(--fs-body-lg);
-  font-weight: var(--fw-semibold);
-}
-
-.checkpoints {
-  display: inline-flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: var(--space-2);
-}
-
-.progress {
-  width: 56px;
-}
-
-.nowrap {
-  white-space: nowrap;
-}
-
-.hitCell {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-1-5);
-  white-space: nowrap;
-}
-
-/* --- Sabotage recap --------------------------------------------------------- */
-
-.recap {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--space-1-5) var(--space-2-5);
-  padding: var(--space-2-5) var(--space-4);
-  border: 1px solid var(--tint-sabotage-border);
-  border-radius: var(--radius-lg);
-  background-color: var(--tint-sabotage);
-  font-size: var(--fs-body);
-}
-
-.recapNeutral {
-  border-color: var(--color-hairline);
-  background-color: var(--color-surface);
-}
-
-.recapText {
-  flex: 0 1 auto;
-  min-width: 0;
-  color: var(--color-text);
-  font-weight: var(--fw-medium);
-}
-
-.recapMeta {
-  color: var(--color-text-secondary);
-}
-
-.hitList {
-  display: inline-flex;
-  gap: var(--space-1);
 }
 
 /* --- Payout card ------------------------------------------------------------ */
@@ -188,17 +118,59 @@
   border-bottom: 1px solid var(--color-divider);
 }
 
-.cardBody {
+.sectionTitle {
+  color: var(--color-text);
+  font-size: var(--fs-body-lg);
+  font-weight: var(--fw-semibold);
+}
+
+/* Net and return first; what it came from beside it. */
+.payout {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--space-3) var(--space-6);
+  padding: var(--space-3-5) var(--space-4);
+}
+
+.net {
   display: flex;
   flex-direction: column;
-  gap: var(--space-2);
-  padding: var(--space-4);
+  gap: var(--space-1);
+}
+
+.netFigures {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2-5);
+}
+
+.figures {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-6);
+}
+
+.figure {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
 }
 
 .cardNote {
   padding: var(--space-3) var(--space-4);
+  border-top: 1px solid var(--color-hairline);
   color: var(--color-text-secondary);
   font-size: var(--fs-body);
+}
+
+.lines {
+  border-top: 1px solid var(--color-hairline);
+}
+
+.nowrap {
+  white-space: nowrap;
 }
 
 .side {
@@ -216,40 +188,10 @@
   color: var(--color-negative);
 }
 
-.totals {
-  display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
-  gap: var(--space-3);
-  padding: var(--space-3-5) var(--space-4);
-  border-top: 1px solid var(--color-hairline);
-}
-
-.total {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-1);
-  min-width: 0;
-}
-
-@media (max-width: 999px) {
-  .totals {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-  }
-
-  /* Keep the tables inside the column: the x/y count and Result tag stay. */
-  .progress,
-  .hideReflow {
-    display: none;
-  }
-}
-
+/* Phones keep agent, side, payout and result inside the card; the totals above give the cost. */
 @media (max-width: 759px) {
-  .header {
-    padding: var(--space-3-5) var(--space-4);
-  }
-
-  .totals {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+  .hideCompact {
+    display: none;
   }
 }
 

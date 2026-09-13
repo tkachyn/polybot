@@ -3,29 +3,27 @@
   flex-direction: column;
 }
 
+/* Step, then what happened and why, then the evidence. Below 760px the evidence drops under the text. */
 .row {
   display: grid;
-  grid-template-columns: 22px minmax(0, 1fr);
-  gap: var(--space-3);
-  padding: var(--space-3-5) 0;
+  grid-template-columns: 20px minmax(0, 1fr) auto;
+  align-items: start;
+  gap: var(--space-2) var(--space-3);
+  padding: var(--space-3) 0;
   border-top: 1px solid var(--color-hairline);
 }
 
 .row:first-child {
-  padding-top: var(--space-1);
+  padding-top: 0;
   border-top: 0;
-}
-
-.row:last-child {
-  padding-bottom: 0;
 }
 
 .step {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 22px;
-  height: 22px;
+  width: 20px;
+  height: 20px;
   border: 1px solid var(--tint-sabotage-border);
   border-radius: 50%;
   background-color: var(--tint-sabotage);
@@ -38,63 +36,22 @@
 .content {
   display: flex;
   flex-direction: column;
-  gap: var(--space-2-5);
+  gap: var(--space-1);
   min-width: 0;
 }
 
 .head {
   display: flex;
   flex-wrap: wrap;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: var(--space-2) var(--space-4);
+  align-items: center;
+  gap: var(--space-1-5) var(--space-2-5);
 }
 
-.what {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-0-5);
-  min-width: 0;
-}
-
-.preset {
+.title {
   color: var(--color-text);
   font-size: var(--fs-body-lg);
   font-weight: var(--fw-semibold);
   line-height: var(--lh-snug);
-}
-
-.where {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0 var(--space-1-5);
-  color: var(--color-text-secondary);
-  font-size: var(--fs-body-sm);
-}
-
-/* Lines break between items, never inside a short one ("Checkpoint / 3"). */
-.where > span {
-  white-space: nowrap;
-}
-
-.where > span + span::before {
-  content: "·";
-  content: "·" / "";
-  margin-right: var(--space-1-5);
-  color: var(--color-text-muted);
-}
-
-/* A checkpoint's own label can be long: it may wrap inside itself. */
-.where > .whereWrap {
-  min-width: 0;
-  white-space: normal;
-}
-
-.verdict {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2-5);
-  flex-shrink: 0;
 }
 
 .score {
@@ -105,73 +62,22 @@
 
 .scoreValue {
   color: var(--color-text);
-  font-size: var(--fs-body-lg);
   font-weight: var(--fw-semibold);
 }
 
-.metrics {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: flex-end;
-  gap: var(--space-2) var(--space-6);
-}
-
-.metric {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-0-5);
-  min-width: 0;
-}
-
-.metricValue {
-  color: var(--color-text);
-  font-size: var(--fs-body);
-  font-weight: var(--fw-medium);
-  white-space: nowrap;
-}
-
-.negative {
-  color: var(--color-negative);
-}
-
-.firstResponse {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: var(--space-1) var(--space-2);
-  font-size: var(--fs-body);
-}
-
-/* The step as the runner logged it: a log line, not a quotation. */
-.response {
-  min-width: 0;
-  padding: 1px var(--space-1-5);
-  border-radius: var(--radius-xs);
-  background-color: var(--color-inset);
-  color: var(--color-text);
-  overflow-wrap: anywhere;
-}
-
 .explanation {
-  max-width: 76ch;
+  max-width: 72ch;
   color: var(--color-text-secondary);
   font-size: var(--fs-body);
   line-height: var(--lh-body);
-}
-
-.muted,
-.none {
-  color: var(--color-text-muted);
-  font-size: var(--fs-body);
 }
 
 /* --- Evidence -------------------------------------------------------------------- */
 
 .evidence {
   display: flex;
-  flex-wrap: wrap;
-  align-items: flex-end;
-  gap: var(--space-2-5);
+  align-items: center;
+  gap: var(--space-2);
 }
 
 .thumb {
@@ -192,7 +98,7 @@
 .thumbImage {
   position: relative;
   display: block;
-  width: 128px;
+  width: 104px;
   aspect-ratio: 16 / 10;
   overflow: hidden;
   border: 1px solid var(--color-hairline);
@@ -237,27 +143,17 @@
   white-space: nowrap;
 }
 
-.replay {
-  margin-bottom: var(--space-5);
-}
-
-/* Where the replay and the Steel trace would be: why they aren't. */
-.evidenceNote {
-  color: var(--color-text-muted);
-  font-size: var(--fs-body-sm);
-  line-height: var(--lh-body);
-}
-
 @media (max-width: 759px) {
+  .row {
+    grid-template-columns: 20px minmax(0, 1fr);
+  }
+
+  .evidence {
+    grid-column: 2;
+    flex-wrap: wrap;
+  }
+
   .thumbImage {
-    width: 104px;
-  }
-
-  .metrics {
-    gap: var(--space-2) var(--space-4);
-  }
-
-  .replay {
-    margin-bottom: 0;
+    width: 96px;
   }
 }

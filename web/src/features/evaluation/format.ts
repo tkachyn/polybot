@@ -2,9 +2,9 @@
  * Pure formatters for the evaluation report and the robustness matrix. Like
  * lib/format, every function accepts null/undefined/NaN and returns "—".
  */
-import type { AgentEvaluation, EvaluatedSabotageStep, EvaluationStatus, RobustnessCell, ServerMode } from "@contract";
+import type { AgentEvaluation, AgentOutcome, EvaluatedSabotageStep, EvaluationStatus, RobustnessCell } from "@contract";
 import { EMPTY, MINUS, formatClock, formatDuration, formatLogTime, formatNumber, formatPercent, isFiniteNumber, roundTo, type Numeric } from "../../lib/format";
-import { HAZARD_LABEL, REACTION_LABEL, ROBUSTNESS_NOT_SCORED, ROBUSTNESS_NOT_TESTED, SABOTAGE_TIER_LABEL } from "../../lib/labels";
+import { HAZARD_LABEL, REACTION_LABEL, ROBUSTNESS_NOT_SCORED, ROBUSTNESS_NOT_TESTED } from "../../lib/labels";
 
 /** Reaction or robustness score (0–100), rounded to a whole number: 74.6 → "75". */
 export function formatScore(score: Numeric): string {
@@ -51,41 +51,19 @@ export function robustnessView(agent: Pick<AgentEvaluation, "robustness" | "sabo
   return { text, scored: false, scoredHits: 0, title: "Never hit by sabotage, so robustness was not tested." };
 }
 
-export type EvidenceAvailability = {
-  mode: ServerMode;
-  /** `AgentEvaluation.steel.replayAvailable`. */
-  replayAvailable: boolean;
-  /** `AgentEvaluation.steel.traceAvailable`. */
-  traceAvailable: boolean;
-  /** The fight has left the lobby: its keyframes and replay are no longer served (the trace is in the report). */
-  archived?: boolean;
-};
+/** Finishing tiers: the winner, then other verified finishers, then everyone else. */
+const OUTCOME_ORDER: Readonly<Record<AgentOutcome, number>> = { won: 0, finished: 1, timed_out: 2, stopped: 2, failed: 2 };
 
 /**
- * Short, calm notes for what a hit's evidence lacks, shown where the replay
- * and the Steel trace would be. Simulated fights never have either; a live
- * session can lack its recording or its trace; a fight that has left the
- * lobby no longer serves its keyframes or replay.
+ * Agents in finishing order: the winner, then other verified finishers by
+ * time, then the rest by checkpoints reached. Ties keep racer order.
  */
-export function evidenceNotes({ mode, replayAvailable, traceAvailable, archived = false }: EvidenceAvailability): string[] {
-  const notes: string[] = [];
-  if (archived) {
-    notes.push(
-      mode === "live" && replayAvailable
-        ? "Keyframes and the replay aren’t kept once a fight leaves the lobby."
-        : "Keyframes aren’t kept once a fight leaves the lobby.",
-    );
-  }
-  if (mode === "simulated") {
-    notes.push("Replays and Steel traces exist for live fights only.");
-  } else if (!replayAvailable && !traceAvailable) {
-    notes.push("No Steel recording or trace was saved for this session.");
-  } else if (!replayAvailable) {
-    notes.push("No Steel recording was saved for this session.");
-  } else if (!traceAvailable) {
-    notes.push("No Steel trace was saved for this session.");
-  }
-  return notes;
+export function rankAgents<T extends Pick<AgentEvaluation, "outcome" | "durationMs" | "checkpointsReached">>(agents: readonly T[]): T[] {
+  const time = (agent: T) => agent.durationMs ?? Number.POSITIVE_INFINITY;
+  // Sort is stable, so ties keep racer order. Two non-finishers give ∞ − ∞ = NaN: a tie on time.
+  return [...agents].sort(
+    (a, b) => OUTCOME_ORDER[a.outcome] - OUTCOME_ORDER[b.outcome] || time(a) - time(b) || b.checkpointsReached - a.checkpointsReached,
+  );
 }
 
 /** The report's status as shown. "finalizing": the fight has resolved, its final evaluation isn't in yet. */
@@ -184,28 +162,6 @@ export function sabotageStepTitle(step: Pick<EvaluatedSabotageStep, "label" | "h
   if (!title) return { title: hazard, hazard: null };
   const own = words(title);
   return own === words(step.hazardType) || own === words(hazard) ? { title, hazard: null } : { title, hazard };
-}
-
-export type StepMetaItem = {
-  text: string;
-  /** Free text (a checkpoint's own label) may wrap inside itself; the short items never break. */
-  wrap: boolean;
-};
-
-/**
- * The facts under a sabotage step's title, one item each so a line breaks
- * between items, never inside one ("Checkpoint / 3"): the hazard (unless the
- * title already names it), the tier, the checkpoint and its label.
- */
-export function sabotageStepMeta(step: Pick<EvaluatedSabotageStep, "label" | "hazardType" | "tier" | "checkpoint" | "checkpointLabel">): StepMetaItem[] {
-  const { hazard } = sabotageStepTitle(step);
-  const [checkpoint, checkpointLabel] = checkpointParts(step.checkpoint, step.checkpointLabel);
-  const items: StepMetaItem[] = [];
-  if (hazard) items.push({ text: hazard, wrap: false });
-  items.push({ text: SABOTAGE_TIER_LABEL[step.tier], wrap: false });
-  items.push({ text: checkpoint, wrap: false });
-  if (checkpointLabel) items.push({ text: checkpointLabel, wrap: true });
-  return items;
 }
 
 /** Time into the fight ("01:23"), or the local time of day when the start is unknown. */

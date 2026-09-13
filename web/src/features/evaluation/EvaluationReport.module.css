@@ -1,55 +1,26 @@
-.report {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-3);
-  min-width: 0;
-}
-
 .card {
   display: flex;
   flex-direction: column;
-  gap: var(--space-4);
   min-width: 0;
-  padding: var(--space-4) var(--space-5);
   border: 1px solid var(--color-hairline);
   border-radius: var(--radius-lg);
   background-color: var(--color-surface);
 }
 
-/* --- Header -------------------------------------------------------------------- */
-
 .header {
   display: flex;
-  flex-direction: column;
-  gap: var(--space-3);
-}
-
-.titleRow {
-  display: flex;
   flex-wrap: wrap;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
-  gap: var(--space-2) var(--space-4);
-}
-
-.titleText {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-1);
-  min-width: 0;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--color-divider);
 }
 
 .title {
   color: var(--color-text);
-  font-size: var(--fs-title);
+  font-size: var(--fs-body-lg);
   font-weight: var(--fw-semibold);
-  letter-spacing: var(--tracking-tight);
-  line-height: var(--lh-snug);
-}
-
-.lede {
-  color: var(--color-text-secondary);
-  font-size: var(--fs-body);
 }
 
 .badges {
@@ -63,109 +34,178 @@
   color: var(--color-text-muted);
 }
 
-.badges .simTag {
-  height: 20px;
-  padding: 0 var(--space-2);
-  font-size: var(--fs-label);
+.pad {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3-5) var(--space-4);
 }
 
-.simNote {
+.note {
   display: flex;
-  align-items: flex-start;
-  gap: var(--space-2);
-  padding: var(--space-2) var(--space-3);
-  border: 1px solid var(--tint-edge-border);
-  border-radius: var(--radius-md);
-  background-color: var(--tint-edge);
-  color: var(--color-text);
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+  padding: var(--space-3-5) var(--space-4);
+  color: var(--color-text-secondary);
   font-size: var(--fs-body);
 }
 
-.simIcon {
-  flex-shrink: 0;
-  margin-top: 2px;
-  color: var(--color-edge);
+/* --- Findings ------------------------------------------------------------------ */
+
+/* Lists are padded by a wrapper: the global ul[class] reset outranks a single class. */
+.findings {
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--color-hairline);
 }
 
-.task {
-  display: flex;
-  align-items: baseline;
-  gap: var(--space-2-5);
-  min-width: 0;
-}
-
-.taskLabel {
-  flex-shrink: 0;
-}
-
-.taskText {
-  min-width: 0;
-  color: var(--color-text);
-  font-size: var(--fs-body-lg);
-  line-height: var(--lh-snug);
-}
-
-.meta {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-3) var(--space-8);
-  padding-top: var(--space-3);
-  border-top: 1px solid var(--color-hairline);
-}
-
-.metaItem {
+.findingList {
   display: flex;
   flex-direction: column;
   gap: var(--space-1);
-  min-width: 0;
 }
 
-.metaItem dd {
-  display: flex;
-  align-items: center;
-  gap: var(--space-1-5);
-  color: var(--color-text);
+.findingList li {
+  position: relative;
+  max-width: 92ch;
+  padding-left: var(--space-3-5);
+  color: var(--color-text-secondary);
   font-size: var(--fs-body-lg);
-  font-weight: var(--fw-medium);
+  line-height: var(--lh-body);
+}
+
+.findingList li::before {
+  content: "";
+  position: absolute;
+  top: 0.62em;
+  left: var(--space-1);
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background-color: var(--color-text-muted);
+}
+
+/* --- Standings ----------------------------------------------------------------- */
+
+/* One grid for the column heads and every row. */
+.standings {
+  --standings-columns: minmax(0, 1.6fr) minmax(96px, 0.6fr) minmax(0, 1.5fr) 88px;
+}
+
+.head {
+  display: grid;
+  grid-template-columns: var(--standings-columns);
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-4);
+  border-bottom: 1px solid var(--color-divider);
+  color: var(--color-text-muted);
+  font-size: var(--fs-label);
+  font-weight: var(--fw-semibold);
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
   white-space: nowrap;
 }
 
-.code {
-  color: var(--color-text-secondary);
-  font-family: var(--font-mono);
-  font-size: var(--fs-body);
+.headScore {
+  text-align: right;
 }
 
-.muted {
-  color: var(--color-text-muted);
-  font-size: var(--fs-body);
-  font-weight: var(--fw-regular);
-}
-
-/* --- Sections ------------------------------------------------------------------- */
-
-.section {
+.rows {
   display: flex;
   flex-direction: column;
-  gap: var(--space-2);
-  min-width: 0;
 }
 
-.sequence {
+.agent + .agent {
+  border-top: 1px solid var(--color-hairline);
+}
+
+.row {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
-  gap: var(--space-2);
+  grid-template-columns: var(--standings-columns);
+  grid-template-areas: "who progress hits score";
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+  padding: var(--space-2-5) var(--space-4);
+  cursor: pointer;
+  transition: background-color var(--duration-fast) var(--ease-standard);
 }
 
-.sequenceStep {
+.row:hover {
+  background-color: var(--tint-hover);
+}
+
+.won .row {
+  background-color: var(--tint-positive);
+}
+
+.who {
+  grid-area: who;
   display: flex;
-  align-items: flex-start;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1-5) var(--space-2-5);
+  min-width: 0;
+}
+
+.toggle {
+  display: inline-flex;
+  align-items: center;
   gap: var(--space-2);
   min-width: 0;
-  padding: var(--space-2) var(--space-2-5);
-  border: 1px solid var(--color-hairline);
-  border-radius: var(--radius-md);
-  background-color: var(--color-inset);
+  max-width: 100%;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--color-text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.chevron {
+  flex-shrink: 0;
+  color: var(--color-text-muted);
+  transition: transform var(--duration-fast) var(--ease-standard);
+}
+
+.toggle[aria-expanded="true"] .chevron {
+  transform: rotate(90deg);
+}
+
+.name {
+  overflow: hidden;
+  font-size: var(--fs-body-lg);
+  font-weight: var(--fw-semibold);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.progress {
+  grid-area: progress;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--color-text);
+  font-size: var(--fs-body);
+}
+
+.bar {
+  width: 48px;
+}
+
+.hits {
+  grid-area: hits;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1-5) var(--space-3);
+  min-width: 0;
+}
+
+.hit {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
 }
 
 .stepBadge {
@@ -173,132 +213,31 @@
   flex-shrink: 0;
   align-items: center;
   justify-content: center;
-  width: 20px;
-  height: 20px;
+  width: 18px;
+  height: 18px;
   border: 1px solid var(--tint-sabotage-border);
   border-radius: 50%;
   background-color: var(--tint-sabotage);
   color: var(--color-sabotage);
-  font-size: var(--fs-label);
+  font-size: var(--fs-label-sm);
   font-weight: var(--fw-semibold);
   line-height: 1;
 }
 
-.sequenceText {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-0-5);
-  min-width: 0;
-}
-
-.sequenceLabel {
-  color: var(--color-text);
-  font-size: var(--fs-body);
-  font-weight: var(--fw-medium);
-}
-
-/* Hazard · tier · checkpoint · its label: lines break between items, never inside a short one. */
-.sequenceMeta {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0 var(--space-1-5);
-  color: var(--color-text-secondary);
-  font-size: var(--fs-body-sm);
-}
-
-.sequenceMeta > span {
-  white-space: nowrap;
-}
-
-.sequenceMeta > span + span::before {
-  content: "·";
-  content: "·" / "";
-  margin-right: var(--space-1-5);
+.none {
   color: var(--color-text-muted);
+  font-size: var(--fs-body);
 }
 
-/* A checkpoint's own label can be long: it may wrap inside itself. */
-.sequenceMeta > .metaWrap {
-  min-width: 0;
-  white-space: normal;
-}
-
-.findings {
+.score {
+  grid-area: score;
   display: flex;
-  flex-direction: column;
+  align-items: baseline;
+  justify-content: flex-end;
   gap: var(--space-1-5);
 }
 
-.finding {
-  position: relative;
-  max-width: 92ch;
-  padding-left: var(--space-4);
-  color: var(--color-text);
-  font-size: var(--fs-body-lg);
-  line-height: var(--lh-body);
-}
-
-.finding::before {
-  content: "";
-  position: absolute;
-  top: 0.62em;
-  left: var(--space-1);
-  width: 5px;
-  height: 5px;
-  border-radius: 50%;
-  background-color: var(--color-text-muted);
-}
-
-/* --- Overview tiles ---------------------------------------------------------------- */
-
-.overviewList {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: var(--space-2-5);
-}
-
-.tile {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-  height: 100%;
-  padding: var(--space-2-5) var(--space-3);
-  border: 1px solid var(--color-hairline);
-  border-radius: var(--radius-md);
-  background-color: var(--color-inset);
-  transition: border-color var(--duration-fast) var(--ease-standard);
-}
-
-.tile:hover {
-  border-color: var(--color-edge);
-}
-
-.tileTop {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  min-width: 0;
-}
-
-.tileName {
-  flex: 1 1 auto;
-  min-width: 0;
-  overflow: hidden;
-  color: var(--color-text);
-  font-size: var(--fs-body);
-  font-weight: var(--fw-semibold);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.tileScore {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: var(--space-2);
-}
-
-.tileValue {
+.scoreValue {
   color: var(--color-text);
   font-size: var(--fs-price);
   font-weight: var(--fw-semibold);
@@ -306,138 +245,107 @@
   line-height: var(--lh-tight);
 }
 
-.tileUntested {
-  color: var(--color-text-muted);
-  font-size: var(--fs-body);
-  font-weight: var(--fw-medium);
-  line-height: var(--lh-tight);
+/* The column head names the score on wide screens; narrow rows name it inline (see below). */
+.scoreLabel {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
 }
 
-.notHit {
-  color: var(--color-text-muted);
+/* Indented to the monogram, and tied to the row by the agent's colour. */
+.detail {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4) var(--space-4) calc(var(--space-4) + 20px);
+  box-shadow: inset 2px 0 0 var(--agent-color);
+}
+
+/* --- Sabotage legend ------------------------------------------------------------ */
+
+.legend {
+  padding: var(--space-3) var(--space-4);
+  border-top: 1px solid var(--color-divider);
+  color: var(--color-text-secondary);
   font-size: var(--fs-body-sm);
-  line-height: 16px;
 }
 
-.marks {
+.legendList {
   display: flex;
   flex-wrap: wrap;
-  gap: var(--space-1);
+  gap: var(--space-1-5) var(--space-5);
 }
 
-.mark {
+.legendItem {
   display: inline-flex;
   align-items: center;
-  justify-content: center;
-  width: 18px;
-  height: 16px;
-  border: 1px solid transparent;
-  border-radius: var(--radius-xs);
-  font-size: var(--fs-label-sm);
-  font-weight: var(--fw-semibold);
-  line-height: 1;
+  gap: var(--space-1-5);
+  min-width: 0;
 }
 
-.mark_positive {
-  color: var(--color-positive);
-  background-color: var(--tint-positive);
-  border-color: var(--tint-positive-border);
-}
-
-.mark_edge {
-  color: var(--color-edge);
-  background-color: var(--tint-edge);
-  border-color: var(--tint-edge-border);
-}
-
-.mark_negative {
-  color: var(--color-negative);
-  background-color: var(--tint-negative);
-  border-color: var(--tint-negative-border);
-}
-
-/* Stalled: the LOOPING treatment, as on the reaction chip. */
-.mark_warn {
-  color: var(--color-text-secondary);
-  background-color: transparent;
-  border-color: var(--color-divider);
-  border-style: dashed;
-}
-
-.mark_neutral {
-  color: var(--color-text-secondary);
-  background-color: transparent;
-  border-color: var(--color-divider);
-}
-
-.mark_muted {
-  color: var(--color-text-muted);
-  background-color: transparent;
-  border-color: var(--color-divider);
-}
-
-/* --- Agents and method ------------------------------------------------------------- */
-
-.agents {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-3);
-}
-
-.method {
-  padding: var(--space-2-5) var(--space-5);
-  border: 1px solid var(--color-hairline);
-  border-radius: var(--radius-lg);
-  background-color: var(--color-surface);
-}
-
-.methodBody {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-3);
-  max-width: 96ch;
-  padding: var(--space-1) 0 var(--space-2);
-  color: var(--color-text-secondary);
-  font-size: var(--fs-body);
-  line-height: var(--lh-body);
-}
-
-.methodBody strong {
+.legendTitle {
   color: var(--color-text);
-  font-weight: var(--fw-semibold);
+  font-weight: var(--fw-medium);
 }
 
-.rules {
-  border: 1px solid var(--color-hairline);
-  border-radius: var(--radius-md);
-}
-
-.rules table td {
-  vertical-align: top;
+.legendNone {
+  padding: var(--space-3) var(--space-4);
+  border-top: 1px solid var(--color-divider);
+  color: var(--color-text-muted);
+  font-size: var(--fs-body-sm);
 }
 
 @media (max-width: 999px) {
-  .overviewList {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+  .standings {
+    --standings-columns: minmax(0, 1.4fr) 64px minmax(0, 1.5fr) 72px;
+  }
+
+  .bar {
+    display: none;
   }
 }
 
+/* Narrow: each agent reads as two lines, name and score, then checkpoints and hits. */
 @media (max-width: 759px) {
-  .card {
-    padding: var(--space-3-5) var(--space-4);
+  .head {
+    display: none;
   }
 
-  .method {
-    padding: var(--space-2) var(--space-4);
+  .row {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    grid-template-areas:
+      "who who score"
+      "progress hits hits";
+    padding: var(--space-2-5) var(--space-3);
   }
 
-  .meta {
-    gap: var(--space-3) var(--space-5);
+  /* Under the monogram, past the chevron. */
+  .progress {
+    padding-left: calc(12px + var(--space-2));
+    color: var(--color-text-secondary);
   }
-}
 
-@media (max-width: 559px) {
-  .overviewList {
-    grid-template-columns: minmax(0, 1fr);
+  .scoreLabel {
+    position: static;
+    width: auto;
+    height: auto;
+    overflow: visible;
+    clip: auto;
+    color: var(--color-text-muted);
+    font-size: var(--fs-label-sm);
+    font-weight: var(--fw-semibold);
+    letter-spacing: var(--tracking-label);
+    text-transform: uppercase;
+  }
+
+  .detail {
+    padding: var(--space-2) var(--space-3) var(--space-3-5);
+  }
+
+  .legend {
+    padding: var(--space-3);
   }
 }

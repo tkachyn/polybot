@@ -1,52 +1,35 @@
 /**
- * One agent's sabotage timeline: a row per hit, in sequence order, with the
- * reaction and its cost, the evidence (keyframes and the Steel replay), the
- * Steel trace around the hit, and a short note where either doesn't exist.
+ * One agent's sabotage hits, in sequence order: the step, the reaction and
+ * its score, the one-line reason, and the evidence where it exists
+ * (keyframes either side of the hit, and the Steel replay opened at it).
  */
-import { useMemo, useState, type ReactNode } from "react";
-import type { AgentEvaluation, SabotageReaction, ServerMode } from "@contract";
+import { useMemo, useState } from "react";
+import type { AgentEvaluation, SabotageReaction } from "@contract";
 import { evidenceFrameUrl, replayUrl } from "../../api/client";
-import { Button, Tag } from "../../components";
+import { Button } from "../../components";
 import { cx } from "../../lib/cx";
-import { EMPTY, formatNumber } from "../../lib/format";
 import { ReactionChip } from "./Chip";
 import { EvidenceDialog, type EvidenceItem, type EvidenceSide } from "./EvidenceDialog";
-import {
-  describeHitOffset,
-  evidenceNotes,
-  formatFightTime,
-  formatOffset,
-  formatReplayOffset,
-  formatScore,
-  formatSeconds,
-  sabotageStepMeta,
-  sabotageStepTitle,
-} from "./format";
+import { describeHitOffset, formatOffset, formatReplayOffset, formatScore, sabotageStepTitle } from "./format";
 import { IconPlay } from "./icons";
 import { ReplayDialog } from "./ReplayPlayer";
-import { SteelExcerpt } from "./TraceTables";
 import styles from "./SabotageTimeline.module.css";
 
 export type SabotageTimelineProps = {
   raceId: string;
   agent: AgentEvaluation;
-  /** Fight start, for "hit at 01:12". */
-  startedAt: number | null;
-  /** The fight's mode: replays and Steel traces exist for live fights only. */
-  mode: ServerMode;
   /** The fight has left the lobby, so its keyframes and replay are no longer served. */
   archived?: boolean;
 };
 
-export function SabotageTimeline({ raceId, agent, startedAt, mode, archived = false }: SabotageTimelineProps) {
+/** Renders nothing for an agent that was never hit. */
+export function SabotageTimeline({ raceId, agent, archived = false }: SabotageTimelineProps) {
   const reactions = useMemo(() => [...agent.sabotage].sort((a, b) => a.stepIndex - b.stepIndex || a.appliedAt - b.appliedAt), [agent.sabotage]);
-  if (reactions.length === 0) {
-    return <p className={styles.none}>Not hit by any sabotage step, so robustness was not tested.</p>;
-  }
+  if (reactions.length === 0) return null;
   return (
-    <ol className={styles.timeline}>
+    <ol className={styles.timeline} aria-label={`Sabotage hits on ${agent.agent.name}`}>
       {reactions.map((reaction) => (
-        <ReactionRow key={reaction.stepId} raceId={raceId} agent={agent} reaction={reaction} startedAt={startedAt} mode={mode} archived={archived} />
+        <ReactionRow key={reaction.stepId} raceId={raceId} agent={agent} reaction={reaction} archived={archived} />
       ))}
     </ol>
   );
@@ -56,111 +39,51 @@ type ReactionRowProps = {
   raceId: string;
   agent: AgentEvaluation;
   reaction: SabotageReaction;
-  startedAt: number | null;
-  mode: ServerMode;
   archived: boolean;
 };
 
-function ReactionRow({ raceId, agent, reaction, startedAt, mode, archived }: ReactionRowProps) {
+function ReactionRow({ raceId, agent, reaction, archived }: ReactionRowProps) {
   const [evidenceOpen, setEvidenceOpen] = useState<EvidenceSide | null>(null);
   const [replayOpen, setReplayOpen] = useState(false);
   const name = agent.agent.name;
-  // The same title and de-duplicated hazard as the sequence card and the trace.
   const { title, hazard } = sabotageStepTitle(reaction);
   const { before, after, replayOffsetSec } = reaction.evidence;
-  const delay = reaction.progressedAt !== null ? reaction.progressedAt - reaction.appliedAt : null;
-  const active = reaction.expiredAt !== null ? reaction.expiredAt - reaction.appliedAt : null;
   // A fight that has left the lobby no longer serves its keyframes or replay: don't offer them.
   const replayOffset = agent.steel.replayAvailable && !archived ? replayOffsetSec : null;
   const frames: Record<EvidenceSide, EvidenceItem | null> = {
     before: before && !archived ? { frame: before, src: evidenceFrameUrl(raceId, agent.racerId, before.key) } : null,
     after: after && !archived ? { frame: after, src: evidenceFrameUrl(raceId, agent.racerId, after.key) } : null,
   };
-  const notes = evidenceNotes({ mode, replayAvailable: agent.steel.replayAvailable, traceAvailable: agent.steel.traceAvailable, archived });
 
   return (
     <li className={styles.row}>
-      <span className={cx("num", styles.step)} title={`Step ${reaction.stepIndex} of the sabotage sequence`}>
+      <span className={cx("num", styles.step)} title={`Sabotage ${reaction.stepIndex}`}>
         {reaction.stepIndex}
       </span>
       <div className={styles.content}>
-        <div className={styles.head}>
-          <div className={styles.what}>
-            <h5 className={styles.preset}>{title}</h5>
-            <p className={styles.where}>
-              {sabotageStepMeta(reaction).map((item, i) => (
-                <span key={i} className={item.wrap ? styles.whereWrap : undefined}>
-                  {item.text}
-                </span>
-              ))}
-              <span className="num">Hit at {formatFightTime(reaction.appliedAt, startedAt)}</span>
-            </p>
-          </div>
-          <div className={styles.verdict}>
-            <ReactionChip reaction={reaction.reaction} size="lg" />
-            <span className={styles.score}>
-              {reaction.score === null ? (
-                "Not scored"
-              ) : (
-                <>
-                  Score <span className={cx("num", styles.scoreValue)}>{formatScore(reaction.score)}</span>
-                </>
-              )}
+        <p className={styles.head}>
+          <span className={styles.title}>{title}</span>
+          <ReactionChip reaction={reaction.reaction} />
+          {reaction.score !== null && (
+            <span className={styles.score} title="Reaction score, 0 to 100">
+              Score <span className={cx("num", styles.scoreValue)}>{formatScore(reaction.score)}</span>
             </span>
-          </div>
-        </div>
-
-        <dl className={styles.metrics}>
-          <Metric label="Time lost" title="Delay beyond the agent’s normal pace">
-            {reaction.timeLostMs === null ? "Never progressed" : formatSeconds(reaction.timeLostMs)}
-          </Metric>
-          <Metric label="Progressed after" title="From the hit to the next verified checkpoint or the finish">
-            {delay === null ? EMPTY : formatSeconds(delay)}
-          </Metric>
-          <Metric label="Hazard active" title="How long the hazard stayed in place before it expired">
-            {active === null ? EMPTY : formatSeconds(active)}
-          </Metric>
-          <Metric label="Actions" title="Steps taken inside the window after the hit">
-            {formatNumber(reaction.actionsInWindow)}
-          </Metric>
-          <Metric label="Errors" title="Errors inside the window after the hit" negative={reaction.errorsInWindow > 0}>
-            {formatNumber(reaction.errorsInWindow)}
-          </Metric>
-          {reaction.deceived && (
-            <div className={styles.metric}>
-              <dt className="sr-only">Decoy</dt>
-              <dd>
-                <Tag tone="sabotage" title="Clicked a planted decoy inside the window">
-                  Decoy click
-                </Tag>
-              </dd>
-            </div>
           )}
-        </dl>
-
-        <p className={styles.firstResponse}>
-          <span className="label label-sm">First response</span>
-          {reaction.firstResponse ? <span className={styles.response}>{reaction.firstResponse}</span> : <span className={styles.muted}>No action after the hit</span>}
         </p>
         <p className={styles.explanation}>{reaction.explanation}</p>
-
-        {frames.before || frames.after || replayOffset !== null ? (
-          <div className={styles.evidence}>
-            {frames.before && <EvidenceThumb side="before" item={frames.before} appliedAt={reaction.appliedAt} onOpen={() => setEvidenceOpen("before")} />}
-            {frames.after && <EvidenceThumb side="after" item={frames.after} appliedAt={reaction.appliedAt} onOpen={() => setEvidenceOpen("after")} />}
-            {replayOffset !== null && (
-              <Button size="sm" variant="ghost" icon={<IconPlay size={12} />} onClick={() => setReplayOpen(true)} className={styles.replay}>
-                Watch replay at <span className="num">{formatReplayOffset(replayOffset)}</span>
-              </Button>
-            )}
-          </div>
-        ) : archived ? null : (
-          <p className={styles.muted}>No keyframes were captured for this hit.</p>
-        )}
-
-        {agent.steel.traceAvailable && <SteelExcerpt trace={agent.steel.trace} at={reaction.appliedAt} />}
-        {notes.length > 0 && <p className={styles.evidenceNote}>{notes.join(" ")}</p>}
       </div>
+
+      {(frames.before || frames.after || replayOffset !== null) && (
+        <div className={styles.evidence}>
+          {frames.before && <EvidenceThumb side="before" item={frames.before} appliedAt={reaction.appliedAt} onOpen={() => setEvidenceOpen("before")} />}
+          {frames.after && <EvidenceThumb side="after" item={frames.after} appliedAt={reaction.appliedAt} onOpen={() => setEvidenceOpen("after")} />}
+          {replayOffset !== null && (
+            <Button size="sm" variant="ghost" icon={<IconPlay size={12} />} onClick={() => setReplayOpen(true)}>
+              Replay <span className="num">{formatReplayOffset(replayOffset)}</span>
+            </Button>
+          )}
+        </div>
+      )}
 
       {evidenceOpen && (
         <EvidenceDialog
@@ -183,15 +106,6 @@ function ReactionRow({ raceId, agent, reaction, startedAt, mode, archived }: Rea
         />
       )}
     </li>
-  );
-}
-
-function Metric({ label, title, negative = false, children }: { label: string; title?: string; negative?: boolean; children: ReactNode }) {
-  return (
-    <div className={styles.metric} title={title}>
-      <dt className="label label-sm">{label}</dt>
-      <dd className={cx("num", styles.metricValue, negative && styles.negative)}>{children}</dd>
-    </div>
   );
 }
 

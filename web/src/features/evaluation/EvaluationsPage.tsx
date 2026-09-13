@@ -32,6 +32,7 @@ import { EVALUATION_MODE_LABEL, SIMULATED_AGENTS_COPY } from "../../lib/labels";
 import { useSession } from "../../state/session";
 import { DATASET_FILES, DATASET_ZIP_NAME, EMPTY_DATASET_COPY, datasetScope, simulatedDatasetWarning } from "./dataset";
 import { IconDownload, IconEvaluations } from "./icons";
+import { MethodNote } from "./MethodNote";
 import {
   DAYS_PARAM,
   EVALUATION_MODES,
@@ -193,6 +194,7 @@ export function EvaluationsPage() {
                 which the agent progressed again: immune, recovered or deceived) and the number of scored hits; hover a cell for the counts. Cut-short
                 hits are not scored. A hazard gets a column once it has a scored hit. Rows are ordered by mean robustness, then success rate.
               </p>
+              <MethodNote />
             </>
           ) : (
             <div className={styles.panelBody}>

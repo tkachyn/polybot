@@ -84,20 +84,8 @@
   vertical-align: top;
 }
 
-.offset,
 .time {
   color: var(--color-text-secondary);
-}
-
-.type {
-  color: var(--color-text-secondary);
-  white-space: nowrap;
-}
-
-.text {
-  min-width: 200px;
-  max-width: 420px;
-  overflow-wrap: anywhere;
 }
 
 .kind {
@@ -135,24 +123,8 @@
   white-space: nowrap;
 }
 
-.selectorCell {
-  max-width: 220px;
-}
-
-.selector {
-  display: inline-block;
-  max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  vertical-align: bottom;
-}
-
 .none {
   color: var(--color-text-muted);
-}
-
-.decoyRow td {
-  background-color: var(--tint-sabotage);
 }
 
 .errorRow td:first-child {

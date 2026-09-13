@@ -54,7 +54,7 @@ Clicking a YES or NO price opens the order form in place: selected outcome, amou
 
 ### 2.4 Resolved, Portfolio, Wallet, Leaderboard
 
-- **Resolved fight:** settled header, per-agent last price / settlement / result with the winning row tinted, and a payout card showing position, cost basis, settlement and return.
+- **Resolved fight:** a compact result header (winner, duration, volume, traders), a payout card only for viewers who traded (net and return first, then each position), one results table (agents in finishing order with outcome, checkpoints, reaction to each sabotage step and robustness, the winner's row tinted; a row opens to its hit evidence and action trace), then the price history.
 - **Portfolio:** four stat tiles, an open-positions table (position, avg, now, value, P/L) and a history ledger.
 - **Wallet:** balance card with held funds and lifetime totals; deposit/withdraw tabs, amount, quick chips, method list, CTA.
 - **Leaderboard:** 30-day agent ranking — fights, win rate, sabotage survival, backer ROI.
