@@ -3,7 +3,7 @@
  * expanded agent. Owns `focus` (handoff section 4); switching layout clears it.
  */
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
-import type { FightDetail } from "@contract";
+import type { FightAgentDetail, FightDetail } from "@contract";
 import type { StreamStatus } from "../../api/stream";
 import { ConnectionIndicator, IconGrid, IconLanes, SegmentedControl } from "../../components";
 import { cx } from "../../lib/cx";
@@ -112,11 +112,67 @@ export function Arena({ fight, roster, slip, streamStatus, className }: ArenaPro
       </div>
 
       <div className={styles.stage}>
-        {focused ? (
-          <FocusView fight={fight} agent={focused} visual={visualFor(roster, focused)} slip={slip} markers={markers} onClose={close} />
-        ) : layout === "grid" ? (
-          <div className={styles.grid} style={rowsStyle}>
-            {fight.agents.map((agent) => (
+        <ArenaStage
+          fight={fight}
+          roster={roster}
+          slip={slip}
+          layout={layout}
+          focused={focused}
+          markers={markers}
+          rowsStyle={rowsStyle}
+          laneStyle={laneStyle}
+          onOpen={open}
+          onClose={close}
+          buttonRef={setButton}
+        />
+      </div>
+    </section>
+  );
+}
+
+export type ArenaStageProps = {
+  fight: FightDetail;
+  roster: RosterVisuals;
+  slip: Slip | null;
+  layout: ArenaLayout;
+  focused: FightAgentDetail | null;
+  markers: ReturnType<typeof sabotageMarkers>;
+  rowsStyle: CSSProperties;
+  laneStyle: CSSProperties;
+  onOpen: (racerId: string) => void;
+  onClose: () => void;
+  buttonRef: (racerId: string, el: HTMLButtonElement | null) => void;
+};
+
+/**
+ * The base layout stays mounted while focus is open. Hiding it with CSS keeps
+ * each LiveCapture iframe (and its Steel WebSocket) alive during focus changes.
+ */
+export function ArenaStage({
+  fight,
+  roster,
+  slip,
+  layout,
+  focused,
+  markers,
+  rowsStyle,
+  laneStyle,
+  onOpen,
+  onClose,
+  buttonRef,
+}: ArenaStageProps) {
+  return (
+    <>
+      <div
+        className={cx(
+          layout === "grid" ? styles.grid : styles.lanes,
+          focused && styles.stageContentHidden,
+        )}
+        style={layout === "grid" ? rowsStyle : laneStyle}
+        aria-hidden={focused ? true : undefined}
+      >
+        {layout === "grid"
+          ? fight.agents.map((agent) => (
               <AgentPane
                 key={agent.racerId}
                 fight={fight}
@@ -124,27 +180,34 @@ export function Arena({ fight, roster, slip, streamStatus, className }: ArenaPro
                 visual={visualFor(roster, agent)}
                 slip={slip}
                 markers={markers}
-                onOpen={open}
-                buttonRef={setButton}
+                onOpen={onOpen}
+                buttonRef={buttonRef}
               />
-            ))}
-          </div>
-        ) : (
-          <div className={styles.lanes} style={laneStyle}>
-            {fight.agents.map((agent) => (
+            ))
+          : fight.agents.map((agent) => (
               <AgentLane
                 key={agent.racerId}
                 fight={fight}
                 agent={agent}
                 visual={visualFor(roster, agent)}
                 slip={slip}
-                onOpen={open}
-                buttonRef={setButton}
+                onOpen={onOpen}
+                buttonRef={buttonRef}
               />
             ))}
-          </div>
-        )}
       </div>
-    </section>
+      {focused && (
+        <div className={styles.focusOverlay}>
+          <FocusView
+            fight={fight}
+            agent={focused}
+            visual={visualFor(roster, focused)}
+            slip={slip}
+            markers={markers}
+            onClose={onClose}
+          />
+        </div>
+      )}
+    </>
   );
 }
