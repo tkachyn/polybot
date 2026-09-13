@@ -77,19 +77,23 @@ function isActive(racer: Racer): boolean {
 
 /**
  * Active racer with c ≥ 1 cleared: (now - startedAt) / c × (N - c); c = N
- * (awaiting finish): 0; c = 0 or not active: null.
+ * (awaiting finish): 0; c = 0 or not active: null. Like the estimated
+ * resolution, it never runs past the hard stop: the fight ends at `closesAt`
+ * whatever the pace says.
  */
 export function racerEtaMs(
   racer: Pick<Racer, "status" | "checkpoint" | "startedAt">,
   checkpointCount: number,
   now: number,
+  closesAt: number | null = null,
 ): number | null {
   if (!isActive(racer as Racer) || racer.startedAt === undefined) return null;
   const cleared = racer.checkpoint;
   if (cleared >= checkpointCount) return 0;
   if (cleared < 1) return null;
   const elapsed = Math.max(0, now - racer.startedAt);
-  return Math.round((elapsed / cleared) * (checkpointCount - cleared));
+  const eta = Math.round((elapsed / cleared) * (checkpointCount - cleared));
+  return closesAt === null ? eta : Math.min(eta, Math.max(0, closesAt - now));
 }
 
 /** now + fastest ETA, clamped to closesAt; null when unknown or not live. */
@@ -205,18 +209,25 @@ function sabotageDetail(view: FightView): SabotageDetail | null {
   };
 }
 
+/** Freeze and hard stop; before the start, projected from the scheduled start. */
+function deadlines(view: FightView): { freezesAt: number | null; closesAt: number | null } {
+  const race = view.coordinator.engine.race;
+  const projectedStart = race.startedAt ?? view.fight.startsAt;
+  return {
+    freezesAt: race.targetDurationAt ??
+      (projectedStart === null ? null : projectedStart + race.targetDurationMs),
+    closesAt: race.absoluteDeadlineAt ??
+      (projectedStart === null ? null : projectedStart + race.absoluteDurationMs),
+  };
+}
+
 function fightBase(view: FightView): Omit<FightSummary, "agents" | "sabotage"> {
   const { coordinator, fight, status, now } = view;
   const race = coordinator.engine.race;
   const stats = coordinator.market.stats();
   const startsAt = fight.startsAt;
-  // Before the start, project the deadlines from the scheduled start.
-  const projectedStart = race.startedAt ?? startsAt;
-  const freezesAt = race.targetDurationAt ??
-    (projectedStart === null ? null : projectedStart + race.targetDurationMs);
-  const closesAt = race.absoluteDeadlineAt ??
-    (projectedStart === null ? null : projectedStart + race.absoluteDurationMs);
-  const etas = view.racers.map((racer) => racerEtaMs(racer, race.checkpointCount, now));
+  const { freezesAt, closesAt } = deadlines(view);
+  const etas = view.racers.map((racer) => racerEtaMs(racer, race.checkpointCount, now, closesAt));
   return {
     raceId: race.id,
     number: fight.number,
@@ -255,6 +266,7 @@ export function presentFightSummary(
 function agentDetail(view: FightView, racer: Racer, index: number): FightAgentDetail {
   const { coordinator, fight, now } = view;
   const checkpointCount = coordinator.engine.race.checkpointCount;
+  const { closesAt } = deadlines(view);
   const telemetry = coordinator.racerTelemetry(racer.racerId);
   const sabotageCheckpoint = view.sabotage?.plan.checkpoint ?? null;
   const checkpoints: AgentCheckpointState[] = Array.from({ length: checkpointCount }, (_, i) => {
@@ -286,7 +298,7 @@ function agentDetail(view: FightView, racer: Racer, index: number): FightAgentDe
     maxSteps: telemetry.maxSteps,
     url: telemetry.url,
     currentAction: telemetry.currentAction,
-    etaMs: racerEtaMs(racer, checkpointCount, now),
+    etaMs: racerEtaMs(racer, checkpointCount, now, closesAt),
     startedAt: racer.startedAt ?? null,
     finishedAt: racer.finishedAt ?? null,
     sabotageHitAt: telemetry.sabotageHitAt,
