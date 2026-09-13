@@ -5,6 +5,7 @@
  * is logged, and the key only ever travels in the `steel-api-key` header.
  */
 import type { DatasetSteelEvent, SteelTraceEntry } from "../api/dto.js";
+import type { ReplayArtifact, ReplayFile } from "../application/contracts.js";
 
 export const STEEL_API_BASE_URL = "https://api.steel.dev/v1";
 /** At most this many normalised trace events are kept per session, oldest first. */
@@ -306,6 +307,138 @@ export async function fetchSteelHlsPlaylist(
   } catch {
     return null;
   }
+}
+
+const MAX_REPLAY_FILES = 512;
+const MAX_REPLAY_BYTES = 256 * 1024 * 1024;
+
+type ReplayResource = {
+  body: Buffer;
+  contentType: string;
+};
+
+function replayContentType(url: URL, response: Response): string {
+  const header = response.headers.get("content-type")?.split(";")[0]?.trim();
+  if (header) return header;
+  const lower = url.pathname.toLowerCase();
+  if (lower.endsWith(".m4s")) return "video/iso.segment";
+  if (lower.endsWith(".mp4")) return "video/mp4";
+  if (lower.endsWith(".ts")) return "video/mp2t";
+  return "application/octet-stream";
+}
+
+function isAllowedReplayHost(url: URL, options: SteelRequestOptions): boolean {
+  if (url.protocol !== "https:" && url.protocol !== "http:") return false;
+  const baseHost = new URL(options.baseUrl ?? STEEL_API_BASE_URL).hostname;
+  return url.hostname === baseHost || url.hostname === "steel.dev" || url.hostname.endsWith(".steel.dev");
+}
+
+async function fetchReplayResource(
+  credentials: SteelSessionCredentials,
+  url: URL,
+  options: SteelRequestOptions,
+): Promise<ReplayResource | null> {
+  const fetchImpl = options.fetch ?? globalThis.fetch;
+  if (typeof fetchImpl !== "function" || !isAllowedReplayHost(url, options)) return null;
+  try {
+    const response = await fetchImpl(url, {
+      method: "GET",
+      headers: { "steel-api-key": credentials.apiKey },
+      signal: requestSignal(options),
+    });
+    if (!response.ok) {
+      await response.body?.cancel().catch(() => undefined);
+      return null;
+    }
+    const body = Buffer.from(await response.arrayBuffer());
+    return { body, contentType: replayContentType(url, response) };
+  } catch {
+    return null;
+  }
+}
+
+function replayFileName(index: number, url: URL, contentType: string): string {
+  const suffix = url.pathname.toLowerCase().match(/\.(m4s|mp4|ts|aac|m3u8)$/)?.[0] ??
+    (contentType.includes("mpeg") ? ".ts" : ".bin");
+  return `segment-${String(index).padStart(5, "0")}${suffix}`;
+}
+
+/**
+ * Copies a Steel HLS recording into application-owned files. Steel's manifest
+ * and segment URLs are short-lived/provider-owned, so retaining only the
+ * playlist is not enough for a replay that survives session release.
+ */
+export async function downloadSteelReplay(
+  credentials: SteelSessionCredentials,
+  options: SteelRequestOptions = {},
+): Promise<ReplayArtifact | null> {
+  const response = await steelGet(credentials, "/hls", options);
+  if (!response) return null;
+  let playlist: string;
+  try {
+    playlist = await response.text();
+  } catch {
+    return null;
+  }
+  if (!playlist.trimStart().startsWith("#EXTM3U")) return null;
+
+  const fallbackUrl = new URL(
+    `${(options.baseUrl ?? STEEL_API_BASE_URL).replace(/\/+$/, "")}/sessions/${encodeURIComponent(credentials.steelSessionId)}/hls`,
+  );
+  const playlistUrl = response.url ? new URL(response.url) : fallbackUrl;
+  // Steel may return a master playlist. Select its first media rendition,
+  // keeping the stored artifact a single playable VOD playlist.
+  if (playlist.includes("#EXT-X-STREAM-INF")) {
+    const rendition = playlist
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .find((line) => line.length > 0 && !line.startsWith("#"));
+    if (!rendition) return null;
+    const renditionUrl = new URL(rendition, playlistUrl);
+    const resource = await fetchReplayResource(credentials, renditionUrl, options);
+    if (!resource) return null;
+    const text = resource.body.toString("utf8");
+    if (!text.trimStart().startsWith("#EXTM3U")) return null;
+    playlist = text;
+    playlistUrl.href = renditionUrl.href;
+  }
+
+  const files: ReplayFile[] = [];
+  const byUrl = new Map<string, string>();
+  let totalBytes = 0;
+  let nextFile = 0;
+
+  const saveUri = async (rawUri: string): Promise<string> => {
+    const uri = new URL(rawUri, playlistUrl).toString();
+    const existing = byUrl.get(uri);
+    if (existing) return existing;
+    if (files.length >= MAX_REPLAY_FILES) throw new Error("replay has too many media files");
+    const resource = await fetchReplayResource(credentials, new URL(uri), options);
+    if (!resource) throw new Error("replay media file could not be fetched");
+    totalBytes += resource.body.byteLength;
+    if (totalBytes > MAX_REPLAY_BYTES) throw new Error("replay exceeds storage limit");
+    const path = replayFileName(nextFile++, new URL(uri), resource.contentType);
+    byUrl.set(uri, `replay/${path}`);
+    files.push({ path, contentType: resource.contentType, body: resource.body });
+    return `replay/${path}`;
+  };
+
+  const lines = playlist.split(/\r?\n/);
+  const rewritten: string[] = [];
+  for (const line of lines) {
+    const uriAttributes = [...line.matchAll(/URI="([^"]+)"/g)];
+    let nextLine = line;
+    for (const match of uriAttributes) {
+      const replacement = await saveUri(match[1]!);
+      nextLine = nextLine.replace(`URI="${match[1]}"`, `URI="${replacement}"`);
+    }
+    if (nextLine.trim() && !nextLine.trimStart().startsWith("#")) {
+      nextLine = await saveUri(nextLine.trim());
+    }
+    rewritten.push(nextLine);
+  }
+
+  return { playlist: rewritten.join("\n"), files };
 }
 
 /** The first EXT-X-PROGRAM-DATE-TIME (nanoseconds trimmed to ms): the replay start. */

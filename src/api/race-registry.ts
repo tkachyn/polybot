@@ -9,6 +9,8 @@ import { normalizeFightMetadata, type SabotageBrief } from "../application/fight
 import { DomainError } from "../domain/errors.js";
 import { InMemoryDatasetStore, type DatasetStore } from "../dataset/store.js";
 import { InMemoryEvaluationStore, type EvaluationStore } from "../evaluation/index.js";
+import { InMemoryReplayStore } from "../infra/replay-store.js";
+import type { ReplayStore } from "../application/contracts.js";
 import { InMemoryCreditLedger, type CreditLedger } from "../wallet/credit-ledger.js";
 import type { AgentIdentity } from "./dto.js";
 import { fightStatusOf, leaderboardRecord, type LeaderboardRecord } from "./presenters.js";
@@ -49,6 +51,7 @@ export type CoordinatorFactory = (
     fight: FightMetadata;
     evaluationStore: EvaluationStore;
     datasetStore: DatasetStore;
+    replayStore: ReplayStore;
   },
 ) => RaceCoordinator | Promise<RaceCoordinator>;
 
@@ -67,6 +70,8 @@ export type RaceRegistryOptions = {
   evaluationStore?: EvaluationStore;
   /** Where coordinators keep fight dataset records. Default: in memory. */
   datasetStore?: DatasetStore;
+  /** Where released browser replays are kept. Default: in memory. */
+  replayStore?: ReplayStore;
 };
 
 /** Enough of a pruned fight to enrich history and the leaderboard. */
@@ -152,6 +157,7 @@ export class RaceRegistry {
   readonly evaluations: EvaluationStore;
   /** Fight dataset records and their files; they outlive pruned fights. */
   readonly datasets: DatasetStore;
+  readonly replays: ReplayStore;
 
   private readonly races = new Map<string, RaceCoordinator>();
   private readonly unsubscribers = new Map<string, () => void>();
@@ -174,6 +180,7 @@ export class RaceRegistry {
     });
     this.evaluations = options.evaluationStore ?? new InMemoryEvaluationStore();
     this.datasets = options.datasetStore ?? new InMemoryDatasetStore();
+    this.replays = options.replayStore ?? new InMemoryReplayStore();
   }
 
   /**
@@ -193,6 +200,7 @@ export class RaceRegistry {
       fight: structuredClone(fight),
       evaluationStore: this.evaluations,
       datasetStore: this.datasets,
+      replayStore: this.replays,
     });
     if (coordinator.raceId !== input.raceId) {
       throw new Error(`factory returned race ${coordinator.raceId} for ${input.raceId}`);

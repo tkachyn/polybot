@@ -59,6 +59,24 @@ export interface RacerSessionManager {
   evidence?(racerId: string): { steelSessionId: string; apiKey: string } | null;
 }
 
+export type ReplayFile = {
+  path: string;
+  contentType: string;
+  body: Buffer;
+};
+
+export type ReplayArtifact = {
+  playlist: string;
+  files: readonly ReplayFile[];
+};
+
+/** Durable browser replay storage, independent of a live Steel session. */
+export interface ReplayStore {
+  put(raceId: string, racerId: string, artifact: ReplayArtifact): Promise<void>;
+  playlist(raceId: string, racerId: string): Promise<string | null>;
+  file(raceId: string, racerId: string, path: string): Promise<ReplayFile | null>;
+}
+
 /** One step of a competitor's loop, reported for spectator telemetry. */
 export type AgentActionReport = {
   kind: "action" | "error" | "note";

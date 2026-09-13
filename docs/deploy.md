@@ -32,7 +32,7 @@ curl -s "https://polybot-course.fly.dev/?courseId=arena-shop"
 
 ```bash
 fly launch --config fly.toml --no-deploy
-fly volumes create polybot_data --size 1 --app polybot-api   # keeps the event log
+fly volumes create polybot_data --size 1 --app polybot-api   # keeps events, evaluations, datasets and replays
 ```
 
 Secrets never go in `fly.toml` — it is committed:
@@ -48,6 +48,12 @@ fly secrets set --app polybot-api \
 
 `COURSE_BASE_URL` is the public course app: the API verifies against it and the
 racers load from it, so there is one URL for both and no tunnel anywhere.
+
+The checked-in `fly.toml` points `EVALUATION_FILE`, `DATASET_DIR` and
+`REPLAY_DIR` at `/data`. Finished Steel HLS playlists and media segments are
+copied into `/data/replays` before the fight is published as final, so releasing
+the Steel session no longer removes the replay. Increase the volume size if
+you expect many long fights.
 
 ```bash
 fly deploy --config fly.toml

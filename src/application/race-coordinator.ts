@@ -43,6 +43,7 @@ import type { EvaluationStore } from "../evaluation/store.js";
 import { validateDisruptionCommand } from "../infra/cdp-obstacle-provider.js";
 import {
   collectSteelEvidence,
+  downloadSteelReplay,
   fetchSteelHlsPlaylist,
   mergeSteelEvidence,
   STEEL_EVIDENCE_RETRY_MS,
@@ -63,6 +64,7 @@ import type {
   CourseVerifier,
   RacerSessionHandle,
   RacerSessionManager,
+  ReplayStore,
   RaceEventStore,
   WorkerStateObservation,
 } from "./contracts.js";
@@ -125,6 +127,8 @@ export type RaceCoordinatorDependencies = {
    * A failure never reaches the race or the evaluation.
    */
   datasetStore?: DatasetStore;
+  /** Durable HLS replay storage, independent of the released Steel session. */
+  replayStore?: ReplayStore;
   /** Stamped on evaluations; Steel evidence is read in live mode only. Default "live". */
   mode?: ServerMode;
   /** Fetch used for Steel evidence (agent traces, HLS). Default: the global fetch. */
@@ -226,6 +230,7 @@ export const PRICE_HEARTBEAT_MS = 5_000;
 
 /** Overall budget for reading Steel traces and recordings once the fight closes. */
 export const STEEL_EVIDENCE_TIMEOUT_MS = 8_000;
+const REPLAY_COPY_TIMEOUT_MS = 20_000;
 
 /**
  * Steel publishes a released session's traces, and sometimes its recording,
@@ -1099,6 +1104,8 @@ export class RaceCoordinator {
   async replayPlaylist(racerId: string): Promise<string | null> {
     if (this.mode !== "live" || !this.engine.racers.has(racerId)) return null;
     try {
+      const stored = await this.dependencies.replayStore?.playlist(this.engine.race.id, racerId);
+      if (stored) return stored;
       const credentials = this.dependencies.sessionManager.evidence?.(racerId) ?? null;
       if (!credentials) return null;
       return await fetchSteelHlsPlaylist(credentials, { fetch: this.dependencies.steelFetch });
@@ -1580,7 +1587,10 @@ export class RaceCoordinator {
    */
   private async finalizeEvaluation(): Promise<void> {
     await this.shutdownRace().catch(() => undefined);
-    const steel = await this.readSteelEvidence().catch(() => undefined);
+    const [steel] = await Promise.all([
+      this.readSteelEvidence().catch(() => undefined),
+      this.persistSteelReplays().catch(() => undefined),
+    ]);
     const race = this.engine.race;
     // Event times, not the wall clock: history seeded in the past stays in the past.
     const generatedAt = Math.max(
@@ -1784,7 +1794,34 @@ export class RaceCoordinator {
         })),
       });
     }
+    void this.persistSteelReplays().catch(() => undefined);
     this.publishFinalEvaluation(evaluation);
+  }
+
+  /** Copies provider-owned HLS media into the configured durable replay store. */
+  private async persistSteelReplays(): Promise<void> {
+    const store = this.dependencies.replayStore;
+    if (this.mode !== "live" || !store) return;
+    await Promise.all([...this.engine.racers.keys()].map(async (racerId) => {
+      if (await store.playlist(this.engine.race.id, racerId)) return;
+      const credentials = this.steelCredentials(racerId);
+      if (!credentials) return;
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), REPLAY_COPY_TIMEOUT_MS);
+      timer.unref?.();
+      try {
+        const artifact = await downloadSteelReplay(credentials, {
+          fetch: this.dependencies.steelFetch,
+          timeoutMs: this.dependencies.steelEvidenceTimeoutMs ?? STEEL_EVIDENCE_TIMEOUT_MS,
+          signal: controller.signal,
+        });
+        if (artifact) {
+          await store.put(this.engine.race.id, racerId, artifact);
+        }
+      } finally {
+        clearTimeout(timer);
+      }
+    }));
   }
 
   /** Ends the backfill for good: its timer is cleared and a read in flight aborted. */

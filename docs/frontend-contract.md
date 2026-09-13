@@ -172,7 +172,8 @@ Every fight produces an evaluation: how well each agent did the task, and how it
 | --- | --- | --- |
 | GET | `/api/fights/:raceId/evaluation` | `FightEvaluationResponse`. 404 `not_found` for an unknown fight. |
 | GET | `/api/fights/:raceId/agents/:racerId/evidence/:key` | Keyframe bytes (`EvidenceFrame.key`), `Cache-Control: private, max-age=3600`. |
-| GET | `/api/fights/:raceId/agents/:racerId/replay.m3u8` | Live Steel sessions only: the session's HLS playlist, proxied with the key that created it. Segment URLs inside are pre-signed Steel storage URLs. 404 when there is no replay. |
+| GET | `/api/fights/:raceId/agents/:racerId/replay.m3u8` | The durable HLS playlist copied from the released Steel session. Its segment URLs point back to this API, so playback does not depend on a live Steel browser or provider URL. 404 when there is no replay. |
+| GET | `/api/fights/:raceId/agents/:racerId/replay/:path` | A stored HLS media segment for the fight replay. |
 | GET | `/api/evaluations/matrix?days=30&mode=` | `RobustnessMatrixResponse`. `mode` is `live`, `simulated` or `all`; default: the server's mode. |
 | GET | `/api/datasets/export.zip?days=&mode=` | The training dataset as `application/zip`, attachment `sabotage-markets-dataset-YYYY-MM-DD.zip`. It contains `manifest.json` (`DatasetManifest`); `episodes.jsonl` (`DatasetEpisode`), `steps.jsonl` (`DatasetStep`), `sft.jsonl` (`DatasetSftExample`) and `preferences.jsonl` (`DatasetPreference`); `assets/<raceId>/<racerId>/step-NNNN.<ext>` screenshots; and `steel/<raceId>/<racerId>.trace.json` raw Steel traces. Rules: [docs/training-data.md](training-data.md). |
 | GET | `/api/datasets/manifest.json?days=&mode=` | `DatasetManifest` for the same window and mode. |

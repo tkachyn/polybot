@@ -1,4 +1,5 @@
 import type { FastifyInstance } from "fastify";
+import type { ReplayStore } from "../application/contracts.js";
 import { DomainError } from "../domain/errors.js";
 import {
   MATRIX_DEFAULT_DAYS,
@@ -61,6 +62,7 @@ export type SpectatorContext = {
   demoMode: boolean;
   showSabotageUpfront: boolean;
   throttles: StreamThrottles;
+  replayStore: ReplayStore;
 };
 
 const FIGHT_STATUSES: readonly FightStatus[] = ["upcoming", "live", "resolved"];
@@ -401,13 +403,35 @@ export function registerSpectatorRoutes(app: FastifyInstance, context: Spectator
   app.get<{ Params: { raceId: string; racerId: string } }>(
     "/api/fights/:raceId/agents/:racerId/replay.m3u8",
     async (request, reply) => {
-      const race = registry.get(request.params.raceId);
-      const playlist = await race.replayPlaylist(request.params.racerId);
+      const stored = await context.replayStore.playlist(
+        request.params.raceId,
+        request.params.racerId,
+      );
+      const race = registry.find(request.params.raceId);
+      const playlist = stored ?? (race
+        ? await race.replayPlaylist(request.params.racerId)
+        : null);
       if (playlist === null) throw new DomainError("not_found", "no replay for this agent");
       return reply
         .header("Content-Type", "application/vnd.apple.mpegurl")
         .header("Cache-Control", "no-store")
         .send(playlist);
+    },
+  );
+
+  app.get<{ Params: { raceId: string; racerId: string; path: string } }>(
+    "/api/fights/:raceId/agents/:racerId/replay/:path",
+    async (request, reply) => {
+      const file = await context.replayStore.file(
+        request.params.raceId,
+        request.params.racerId,
+        request.params.path,
+      );
+      if (!file) throw new DomainError("not_found", "no replay media for this agent");
+      return reply
+        .header("Content-Type", file.contentType)
+        .header("Cache-Control", "public, max-age=31536000, immutable")
+        .send(file.body);
     },
   );
 

@@ -18,6 +18,8 @@ import {
   DefaultSteelBrowserSessionService,
   type SteelBrowserSessionService,
 } from "../infra/steel-browser-session-service.js";
+import { FileReplayStore, InMemoryReplayStore } from "../infra/replay-store.js";
+import type { ReplayStore } from "../application/contracts.js";
 import {
   DEFAULT_STREAM_THROTTLES,
   registerSpectatorRoutes,
@@ -68,10 +70,13 @@ export type ApiServerOptions = {
   evaluationStore?: EvaluationStore;
   /** Where fight dataset records and their files are kept. Default: `defaultDatasetStore(mode)`. */
   datasetStore?: DatasetStore;
+  /** Where released browser replays are kept. Default: `defaultReplayStore(mode)`. */
+  replayStore?: ReplayStore;
 };
 
 export const DEFAULT_EVALUATION_FILE = "data/evaluations.jsonl";
 export const DEFAULT_DATASET_DIR = "data/dataset";
+export const DEFAULT_REPLAY_DIR = "data/replays";
 
 /**
  * Live mode appends final evaluations to EVALUATION_FILE (default
@@ -100,6 +105,16 @@ export function defaultDatasetStore(
   const dir = env.DATASET_DIR?.trim();
   if (mode === "simulated" && !dir) return new InMemoryDatasetStore();
   return new JsonlDatasetStore(resolve(dir || DEFAULT_DATASET_DIR));
+}
+
+/** Live mode copies HLS playlists and media segments to this store. */
+export function defaultReplayStore(
+  mode: ServerMode,
+  env: NodeJS.ProcessEnv = process.env,
+): ReplayStore {
+  const dir = env.REPLAY_DIR?.trim();
+  if (mode === "simulated" && !dir) return new InMemoryReplayStore();
+  return new FileReplayStore(resolve(dir || DEFAULT_REPLAY_DIR));
 }
 
 const ERROR_STATUS: Record<ApiErrorCode, number> = {
@@ -154,6 +169,7 @@ export function buildApi(options: ApiServerOptions): FastifyInstance {
     startingBalance: options.startingBalance,
     evaluationStore: options.evaluationStore ?? defaultEvaluationStore(mode),
     datasetStore: options.datasetStore ?? defaultDatasetStore(mode),
+    replayStore: options.replayStore ?? defaultReplayStore(mode),
   });
   const hub = new SseHub(options.ssePingMs ?? SSE_PING_MS);
   const now = options.now ?? (() => Date.now());
@@ -234,6 +250,7 @@ export function buildApi(options: ApiServerOptions): FastifyInstance {
     demoMode: options.demoMode ?? false,
     showSabotageUpfront: options.showSabotageUpfront ?? true,
     throttles: { ...DEFAULT_STREAM_THROTTLES, ...options.streamThrottles },
+    replayStore: registry.replays,
   });
   registerDatasetRoutes(app, { store: registry.datasets, now, mode });
 

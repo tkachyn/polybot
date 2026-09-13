@@ -6,6 +6,7 @@ import {
   STEEL_RAW_TRACE_LIMIT,
   STEEL_TRACE_LIMIT,
   collectSteelEvidence,
+  downloadSteelReplay,
   fetchSteelAgentTraces,
   fetchSteelHlsPlaylist,
   mergeSteelEvidence,
@@ -192,6 +193,23 @@ test("fetches the HLS playlist with the creating key; null when there is none", 
   assert.equal(await fetchSteelHlsPlaylist(credentials, { fetch: missing.fetchImpl }), null);
   const notPlaylist = mockFetch(() => new Response("{}", { status: 200 }));
   assert.equal(await fetchSteelHlsPlaylist(credentials, { fetch: notPlaylist.fetchImpl }), null);
+});
+
+test("copies HLS media into a replay artifact with local segment URLs", async () => {
+  const { fetchImpl, calls } = mockFetch((url) => {
+    if (url.pathname.endsWith("/hls")) return new Response(PLAYLIST);
+    if (url.pathname.endsWith("/segment-0.ts")) return new Response(new Uint8Array([1, 2, 3]));
+    if (url.pathname.endsWith("/segment-1.ts")) return new Response(new Uint8Array([4, 5]));
+    return new Response("not found", { status: 404 });
+  });
+
+  const replay = await downloadSteelReplay(credentials, { fetch: fetchImpl });
+  assert.ok(replay);
+  assert.equal(replay.files.length, 2);
+  assert.match(replay.playlist, /replay\/segment-00000\.ts/);
+  assert.match(replay.playlist, /replay\/segment-00001\.ts/);
+  assert.deepEqual([...replay.files].map((file) => file.body.length), [3, 2]);
+  assert.ok(calls.every((call) => call.headers["steel-api-key"] === credentials.apiKey));
 });
 
 test("collects traces and the replay start together; a timeout yields nothing", async () => {

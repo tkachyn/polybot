@@ -2,7 +2,7 @@
  * Steel session replay (HLS), opened at the moment of a hit.
  *
  * GET /api/fights/:raceId/agents/:racerId/replay.m3u8 serves the playlist for
- * live Steel sessions only and 404s otherwise. Browsers that play HLS
+ * released live sessions when a replay was captured and 404s otherwise. Browsers that play HLS
  * natively (`canPlayType("application/vnd.apple.mpegurl")`, e.g. Safari) use
  * the <video> element directly; the rest load hls.js on demand, as its own
  * chunk. Playback starts at `startAt` seconds; a missing recording, a load
@@ -147,7 +147,7 @@ export function ReplayPlayer({ src, startAt, label }: ReplayPlayerProps) {
           </div>
         )}
         {status === "not_found" && (
-          <PlayerMessage title="No replay for this session">Steel records live sessions only, and this one has no recording.</PlayerMessage>
+          <PlayerMessage title="No replay for this session">No durable recording was captured for this agent.</PlayerMessage>
         )}
         {status === "unsupported" && (
           <PlayerMessage title="This browser can’t play the replay">HLS video needs native HLS support or Media Source Extensions.</PlayerMessage>

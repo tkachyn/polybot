@@ -21,8 +21,10 @@ import { CdpObstacleProvider } from "../infra/cdp-obstacle-provider.js";
 import { SteelSessionManager } from "../infra/steel-session-manager.js";
 import type { DatasetStore } from "../dataset/store.js";
 import type { EvaluationStore } from "../evaluation/store.js";
+import { FileReplayStore } from "../infra/replay-store.js";
 import { JsonlRaceEventStore } from "../persistence/jsonl-event-store.js";
 import type { CreditLedger } from "../wallet/credit-ledger.js";
+import type { ReplayStore } from "./contracts.js";
 import type { FightMetadata } from "./fight-metadata.js";
 import { RaceCoordinator } from "./race-coordinator.js";
 
@@ -39,6 +41,8 @@ export type ProductionRaceContext = {
   evaluationStore?: EvaluationStore;
   /** Where the fight's training record is stored once it closes. */
   datasetStore?: DatasetStore;
+  /** Where released Steel recordings are copied for durable replay. */
+  replayStore?: ReplayStore;
 };
 
 export const OPENROUTER_PROVIDER = "openrouter";
@@ -273,6 +277,7 @@ export function createProductionRaceCoordinator(
       llmUsage: () => budget.snapshot(),
       evaluationStore: context.evaluationStore,
       datasetStore: context.datasetStore,
+      replayStore: context.replayStore ?? new FileReplayStore(resolve(process.env.REPLAY_DIR ?? "data/replays")),
       mode: "live",
     },
   );
