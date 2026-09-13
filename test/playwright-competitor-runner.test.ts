@@ -114,7 +114,7 @@ class FakePage {
   }
   async evaluate<T>(_pageFunction: unknown, argument?: unknown): Promise<T> {
     if (typeof argument === "string") {
-      if (argument.includes("__arenaRecoverDisruptions")) this.activeDisruption = false;
+      if (`${String(_pageFunction)} ${argument}`.includes("__arenaRecoverDisruptions")) this.activeDisruption = false;
       return 1 as T;
     }
     return this.activeDisruption as T;
@@ -147,11 +147,11 @@ class CursorPage extends FakePage {
 
 type DecisionInput = Parameters<CompetitorDecisionModel["decide"]>[0];
 
-test("evaluate recovery clears an active disruption and reports manual recovery", async () => {
+test("a successful evaluate recovery always clears the active disruption and reports recovery", async () => {
   const page = new FakePage();
   page.activeDisruption = true;
   const model = new SequenceModel([
-    { type: "evaluate", script: "window.__arenaRecoverDisruptions?.()" },
+    { type: "evaluate", script: "document.querySelector('[role=dialog]')?.remove()" },
     { type: "finish" },
   ]);
   const runner = new PlaywrightCompetitorRunner({
@@ -180,7 +180,7 @@ test("evaluate recovery clears an active disruption and reports manual recovery"
   assert.equal(finished, true);
   // The step that cleared the sabotage says so, with the agent's own script.
   assert.equal(reports[0].evidence?.clearedSabotage, true);
-  assert.deepEqual(reports[0].action, { type: "evaluate", script: "window.__arenaRecoverDisruptions?.()" });
+  assert.deepEqual(reports[0].action, { type: "evaluate", script: "document.querySelector('[role=dialog]')?.remove()" });
   assert.equal(reports[1].evidence?.clearedSabotage, undefined);
 });
 
