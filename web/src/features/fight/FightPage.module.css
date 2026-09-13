@@ -1,7 +1,9 @@
 /*
- * Header strips take their natural height; the body absorbs the rest. Short
- * viewports get a tall enough arena to keep all four agent footers reachable,
- * with this screen acting as the scroll container instead of clipping them.
+ * Fixed, non-scrolling screen (handoff 2.2 and 5: all four agents and a bet
+ * without scrolling). Header strips take their natural height; the body
+ * absorbs the rest and every region in it has a floor. Only below 720px of
+ * height, or in the compact phone layout, does the screen scroll internally
+ * rather than clip.
  */
 .screen {
   display: grid;
@@ -10,10 +12,7 @@
   flex: 1 1 auto;
   min-width: 0;
   min-height: 0;
-  overflow-x: hidden;
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  scrollbar-gutter: stable;
+  overflow: hidden;
 }
 
 .body {
@@ -76,14 +75,16 @@
 
 /* --- Short viewports and compact layout -------------------------------------- */
 
-@media (max-height: 899px) {
+/* Too short for the fixed screen: scroll it, with a body tall enough for the rail's open slip. */
+@media (max-height: 719px) {
   .screen {
     grid-template-rows: auto auto auto;
     overflow-y: auto;
+    overscroll-behavior: contain;
   }
 
   .body {
-    min-height: 620px;
+    min-height: 600px;
     overflow: visible;
   }
 }

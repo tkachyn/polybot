@@ -1,5 +1,5 @@
 /**
- * Live / upcoming fight screen (handoff 2.2). Never scrolls at 1280x720 and
+ * Live / upcoming fight screen (handoff 2.2). Never scrolls at 1024x720 and
  * up: header strips on top, arena + 344px market rail beneath, every region
  * floored and clipped. Owns the bet slip and passes it to the rail and arena.
  */
