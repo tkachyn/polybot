@@ -314,8 +314,57 @@ export function parseHlsReplayStart(playlist: string): number | null {
   return match ? parseSteelTimestamp(match[1]) : null;
 }
 
+/**
+ * Steel had published events for the session. A released session's traces
+ * read as empty until Steel publishes them, seconds to minutes later.
+ */
+export function hasSteelTraceEvents(
+  traces: { raw: readonly unknown[] | null } | null | undefined,
+): boolean {
+  return (traces?.raw?.length ?? 0) > 0;
+}
+
+/** Nothing left to read again: the trace has events and the recording was read. */
+export function steelEvidenceComplete(evidence: SteelEvidence | null | undefined): boolean {
+  return hasSteelTraceEvents(evidence) && evidence?.replayAvailable === true;
+}
+
+/** -1 without a readable trace, else its raw event count. */
+function traceRank(evidence: SteelEvidence | undefined): number {
+  return evidence?.raw ? evidence.raw.length : -1;
+}
+
+/** 0 without a recording, 1 without its start, 2 with it. */
+function replayRank(evidence: SteelEvidence | undefined): number {
+  if (!evidence?.replayAvailable) return 0;
+  return evidence.replayStart === null ? 1 : 2;
+}
+
+/**
+ * The better of two reads of one session, field by field: the trace with
+ * more events (an empty read beats a failed one) and a readable recording.
+ * Returns `previous` itself when `next` adds nothing.
+ */
+export function mergeSteelEvidence(
+  previous: SteelEvidence | undefined,
+  next: SteelEvidence | undefined,
+): SteelEvidence | undefined {
+  const trace = traceRank(next) > traceRank(previous) ? next : previous;
+  const replay = replayRank(next) > replayRank(previous) ? next : previous;
+  if (trace === previous && replay === previous) return previous;
+  return {
+    trace: trace?.trace ?? null,
+    raw: trace?.raw ?? null,
+    replayAvailable: replay?.replayAvailable ?? false,
+    replayStart: replay?.replayStart ?? null,
+  };
+}
+
 export type SteelEvidenceOptions = SteelRequestOptions & {
-  /** Attempts in total; later attempts fetch only what is still missing. Default 1. */
+  /**
+   * Attempts in total; later attempts fetch only what is still missing, and a
+   * trace with no events counts as missing. Default 1.
+   */
   attempts?: number;
   /** Wait between attempts. Default 1.5 s. */
   retryMs?: number;
@@ -327,8 +376,9 @@ export const STEEL_EVIDENCE_RETRY_MS = 1_500;
 
 /**
  * Traces and the replay start of one session, fetched in parallel. A session
- * released moments ago may still be publishing its recording, so later
- * attempts refetch whatever is missing. Never throws.
+ * released moments ago may still be publishing its traces and recording, so
+ * later attempts refetch whatever is missing, a trace with no events
+ * included. The best read so far is kept. Never throws.
  */
 export async function collectSteelEvidence(
   credentials: SteelSessionCredentials,
@@ -340,10 +390,13 @@ export async function collectSteelEvidence(
   let evidence: SteelEvidence = { trace: null, raw: null, replayAvailable: false, replayStart: null };
   try {
     for (let attempt = 1; ; attempt += 1) {
-      [traces, playlist] = await Promise.all([
-        traces ?? fetchSteelAgentTraces(credentials, options),
+      const [nextTraces, nextPlaylist]: [SteelAgentTraces | null, string | null] = await Promise.all([
+        hasSteelTraceEvents(traces) ? traces : fetchSteelAgentTraces(credentials, options),
         playlist ?? fetchSteelHlsPlaylist(credentials, options),
       ]);
+      // A failed read never replaces an empty one.
+      traces = nextTraces ?? traces;
+      playlist = nextPlaylist;
       evidence = {
         trace: traces?.trace ?? null,
         raw: traces?.raw ?? null,
@@ -351,7 +404,7 @@ export async function collectSteelEvidence(
         replayStart: playlist === null ? null : parseHlsReplayStart(playlist),
       };
       options.onProgress?.(evidence);
-      if ((traces !== null && playlist !== null) || attempt >= attempts) return evidence;
+      if ((hasSteelTraceEvents(traces) && playlist !== null) || attempt >= attempts) return evidence;
       if (!(await pause(options.retryMs ?? STEEL_EVIDENCE_RETRY_MS, options.signal))) return evidence;
     }
   } catch {

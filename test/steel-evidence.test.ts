@@ -8,10 +8,13 @@ import {
   collectSteelEvidence,
   fetchSteelAgentTraces,
   fetchSteelHlsPlaylist,
+  mergeSteelEvidence,
   normalizeSteelDatasetEvent,
   normalizeSteelTraceEvent,
   parseHlsReplayStart,
   parseSteelTimestamp,
+  steelEvidenceComplete,
+  type SteelEvidence,
 } from "../src/infra/steel-evidence.js";
 import { SteelSessionManager } from "../src/infra/steel-session-manager.js";
 
@@ -247,6 +250,75 @@ test("later attempts fetch only what is still missing and report progress", asyn
     { trace: [], raw: [], replayAvailable: false, replayStart: null },
   );
   assert.equal(never.calls.filter((call) => call.url.pathname.endsWith("/hls")).length, 2);
+  assert.equal(
+    never.calls.filter((call) => call.url.pathname.endsWith("/agent-traces")).length,
+    2,
+    "a trace with no events is read again",
+  );
+});
+
+test("a trace with no events is read again until Steel publishes it; the best read is kept", async () => {
+  let traceCalls = 0;
+  let hlsCalls = 0;
+  const { fetchImpl } = mockFetch((url) => {
+    if (url.pathname.endsWith("/hls")) {
+      hlsCalls += 1;
+      return new Response(PLAYLIST);
+    }
+    traceCalls += 1;
+    // A released session's traces read as empty until Steel publishes them.
+    return Response.json(traceCalls < 3
+      ? { events: [], total: 0, hasMore: false }
+      : { events: [navigate, clickOnDecoy], total: 2, hasMore: false });
+  });
+  const progress: Array<number | null> = [];
+  const evidence = await collectSteelEvidence(credentials, {
+    fetch: fetchImpl,
+    attempts: 5,
+    retryMs: 5,
+    onProgress: (next) => progress.push(next.raw?.length ?? null),
+  });
+  assert.deepEqual(evidence.raw, [navigate, clickOnDecoy]);
+  assert.deepEqual(evidence.trace?.map((entry) => [entry.type, entry.decoy]), [["navigate", false], ["click", true]]);
+  assert.equal(traceCalls, 3);
+  assert.equal(hlsCalls, 1, "the recording is not fetched again once read");
+  assert.deepEqual(progress, [0, 0, 2]);
+
+  // A failed read never replaces an empty one: the trace stays readable.
+  let flakyCalls = 0;
+  const flaky = mockFetch((url) => {
+    if (url.pathname.endsWith("/hls")) return new Response(PLAYLIST);
+    flakyCalls += 1;
+    return flakyCalls === 1
+      ? Response.json({ events: [], total: 0, hasMore: false })
+      : new Response("unavailable", { status: 503 });
+  });
+  assert.deepEqual(
+    await collectSteelEvidence(credentials, { fetch: flaky.fetchImpl, attempts: 3, retryMs: 5 }),
+    { trace: [], raw: [], replayAvailable: true, replayStart: Date.parse("2026-09-12T21:11:11.610Z") },
+  );
+  assert.equal(flakyCalls, 3);
+});
+
+test("merging two reads of a session keeps the trace with more events and a readable recording", () => {
+  const failed: SteelEvidence = { trace: null, raw: null, replayAvailable: false, replayStart: null };
+  const empty: SteelEvidence = { trace: [], raw: [], replayAvailable: true, replayStart: 5 };
+  const entry = normalizeSteelTraceEvent(clickOnDecoy);
+  assert.ok(entry);
+  const published: SteelEvidence = { trace: [entry], raw: [clickOnDecoy], replayAvailable: false, replayStart: null };
+
+  assert.equal(mergeSteelEvidence(empty, failed), empty, "a failed read adds nothing");
+  assert.equal(mergeSteelEvidence(empty, { ...empty }), empty);
+  assert.equal(mergeSteelEvidence(undefined, failed), undefined);
+  assert.deepEqual(mergeSteelEvidence(undefined, empty), empty);
+  const merged = mergeSteelEvidence(empty, published);
+  assert.deepEqual(merged, { trace: [entry], raw: [clickOnDecoy], replayAvailable: true, replayStart: 5 });
+  assert.equal(mergeSteelEvidence(merged, empty), merged, "never downgraded");
+
+  assert.equal(steelEvidenceComplete(undefined), false);
+  assert.equal(steelEvidenceComplete(empty), false, "no events yet");
+  assert.equal(steelEvidenceComplete(published), false, "no recording yet");
+  assert.equal(steelEvidenceComplete(merged), true);
 });
 
 // Full Agent Traces shapes, as verified against real Steel sessions on 2026-09-12.

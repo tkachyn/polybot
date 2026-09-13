@@ -10,7 +10,7 @@ import type {
   SabotageState,
   ServerMode,
 } from "../api/dto.js";
-import { captureFightDataset } from "../dataset/capture.js";
+import { captureFightDataset, type FightCaptureInput } from "../dataset/capture.js";
 import type { DatasetStore } from "../dataset/store.js";
 import { DomainError } from "../domain/errors.js";
 import { RaceEngine } from "../domain/race-engine.js";
@@ -37,14 +37,18 @@ import {
   sabotageStepIdOf,
   type EvaluationAgentInput,
   type EvaluationInput,
+  type EvaluationSteelInput,
 } from "../evaluation/evaluator.js";
 import type { EvaluationStore } from "../evaluation/store.js";
 import { validateDisruptionCommand } from "../infra/cdp-obstacle-provider.js";
 import {
   collectSteelEvidence,
   fetchSteelHlsPlaylist,
+  mergeSteelEvidence,
   STEEL_EVIDENCE_RETRY_MS,
+  steelEvidenceComplete,
   type SteelEvidence,
+  type SteelSessionCredentials,
 } from "../infra/steel-evidence.js";
 import { isTransientCourseStateError } from "../course/deterministic-course-verifier.js";
 import { VirtualPredictionMarket } from "../prediction/virtual-market.js";
@@ -116,18 +120,28 @@ export type RaceCoordinatorDependencies = {
   evaluationStore?: EvaluationStore;
   /**
    * The fight's training record (docs/training-data.md), with its step
-   * screenshots and raw Steel traces, is stored here once, after the final
-   * evaluation. A failure never reaches the race or the evaluation.
+   * screenshots and raw Steel traces, is stored here after the final
+   * evaluation, and again whenever Steel evidence published late updates it.
+   * A failure never reaches the race or the evaluation.
    */
   datasetStore?: DatasetStore;
   /** Stamped on evaluations; Steel evidence is read in live mode only. Default "live". */
   mode?: ServerMode;
   /** Fetch used for Steel evidence (agent traces, HLS). Default: the global fetch. */
   steelFetch?: typeof fetch;
-  /** Overall budget for reading Steel evidence once the fight closes. Default 8 s. */
+  /**
+   * Overall budget for reading Steel evidence once the fight closes, and for
+   * each later read. Default 8 s.
+   */
   steelEvidenceTimeoutMs?: number;
   /** Wait before refetching Steel evidence that was not ready yet. Default 1.5 s. */
   steelEvidenceRetryMs?: number;
+  /**
+   * When, after the evaluation became final, Steel evidence still missing (a
+   * trace with no events, or no recording) is read again. Default 15 s,
+   * 45 s, 2 min and 5 min.
+   */
+  steelBackfillDelaysMs?: readonly number[];
 };
 
 export type RaceSnapshot = {
@@ -213,11 +227,35 @@ export const PRICE_HEARTBEAT_MS = 5_000;
 /** Overall budget for reading Steel traces and recordings once the fight closes. */
 export const STEEL_EVIDENCE_TIMEOUT_MS = 8_000;
 
+/**
+ * Steel publishes a released session's traces, and sometimes its recording,
+ * seconds to minutes late. Evidence still missing when the evaluation became
+ * final is read again this long after it did.
+ */
+export const STEEL_BACKFILL_DELAYS_MS: readonly number[] = [15_000, 45_000, 120_000, 300_000];
+
 type PendingChanges = {
   fight: boolean;
   points: PricePoint[];
   frames: Set<string>;
   accounts: Set<string>;
+};
+
+/** Steel evidence still missing when the evaluation became final, read again in the background. */
+type SteelBackfill = {
+  /** What the final evaluation was computed from; only its Steel evidence changes. */
+  input: EvaluationInput;
+  /** What the dataset record was built from; only its evaluation and raw traces change. */
+  dataset: FightCaptureInput | null;
+  /** The best evidence read so far, by racer. */
+  steel: Map<string, SteelEvidence>;
+  /** Wall-clock time the evaluation became final; the delays count from here. */
+  finalizedAt: number;
+  /** Index of the next delay. */
+  next: number;
+  timer?: ReturnType<typeof setTimeout>;
+  /** Aborts a read in flight on shutdown. */
+  controller: AbortController;
 };
 
 const RECOVERY_TEXT: Record<string, string> = {
@@ -271,7 +309,8 @@ export class RaceCoordinator {
   private evaluationCache: { key: string; evaluation: FightEvaluation } | null = null;
   private finalEvaluation: FightEvaluation | null = null;
   private finalizeRequested = false;
-  private datasetStored = false;
+  private steelBackfill: SteelBackfill | null = null;
+  private steelBackfillStopped = false;
   private readonly finalWaiters: Array<(evaluation: FightEvaluation) => void> = [];
 
   constructor(
@@ -1015,7 +1054,8 @@ export class RaceCoordinator {
   /**
    * The fight's evaluation (docs/frontend-contract.md, "Evaluation").
    * Provisional while the fight runs and until the closing evidence is in,
-   * cached until its inputs change; final and fixed once finalized.
+   * cached until its inputs change; final once finalized, after which only
+   * Steel evidence published late can still update it.
    */
   evaluation(now = Date.now()): FightEvaluation {
     if (this.finalEvaluation) return structuredClone(this.finalEvaluation);
@@ -1072,6 +1112,7 @@ export class RaceCoordinator {
   }
 
   async shutdown(): Promise<void> {
+    this.stopSteelBackfill();
     await this.shutdownRace();
     this.scheduleFinalEvaluation();
   }
@@ -1534,7 +1575,8 @@ export class RaceCoordinator {
   /**
    * Waits for the sessions to be released, reads the Steel evidence (live
    * only, bounded), computes and stores the final evaluation, then marks it
-   * final and publishes the new pointer on the fight stream.
+   * final and publishes the new pointer on the fight stream. Steel evidence
+   * still missing by then is read again in the background.
    */
   private async finalizeEvaluation(): Promise<void> {
     await this.shutdownRace().catch(() => undefined);
@@ -1545,13 +1587,15 @@ export class RaceCoordinator {
       race.finishedAt ?? this.closedAtValue ?? -Infinity,
       this.lastEvaluationInputAt ?? -Infinity,
     );
+    let input: EvaluationInput;
     let evaluation: FightEvaluation;
     try {
-      evaluation = evaluateFight(this.evaluationInput(
+      input = this.evaluationInput(
         "final",
         Number.isFinite(generatedAt) ? generatedAt : Date.now(),
         steel,
-      ));
+      );
+      evaluation = evaluateFight(input);
     } catch {
       return;
     }
@@ -1561,33 +1605,38 @@ export class RaceCoordinator {
       // A storage failure must not keep the evaluation provisional.
     }
     // Captured now, stored in the background: the dataset never delays finality.
-    const dataset = this.storeDataset(evaluation, steel);
+    const source = this.datasetSource(evaluation, steel);
+    const dataset = this.storeDataset(source);
+    this.publishFinalEvaluation(evaluation);
+    this.scheduleSteelBackfill(input, source, steel);
+    await dataset;
+  }
+
+  /** Makes `evaluation` the final one and publishes the new pointer on the fight stream. */
+  private publishFinalEvaluation(evaluation: FightEvaluation): void {
     this.finalEvaluation = evaluation;
     this.evaluationCache = null;
     this.evaluationVersion += 1;
     this.evaluationUpdatedAt = Math.max(this.evaluationUpdatedAt + 1, evaluation.generatedAt);
     for (const resolve of this.finalWaiters.splice(0)) resolve(structuredClone(evaluation));
     this.flush({ ...createChanges(), fight: true });
-    await dataset;
   }
 
   /**
-   * Hands the fight's training record (docs/training-data.md) and its files
-   * to the dataset store, exactly once: every racer's step records and step
-   * screenshots, the engine events, and the Steel evidence the evaluation
-   * already read (never fetched again). Never throws and never rejects.
+   * What the fight's training record (docs/training-data.md) is built from:
+   * every racer's step records and step screenshots, the engine events, and
+   * the Steel evidence the evaluation already read (never fetched again).
+   * Null without a dataset store. Never throws.
    */
-  private storeDataset(
+  private datasetSource(
     evaluation: FightEvaluation,
     steel: ReadonlyMap<string, SteelEvidence> | undefined,
-  ): Promise<void> {
-    const store = this.dependencies.datasetStore;
-    if (!store || this.datasetStored) return Promise.resolve();
-    this.datasetStored = true;
+  ): FightCaptureInput | null {
+    if (!this.dependencies.datasetStore) return null;
     try {
       const race = this.engine.race;
       const fight = this.fightMeta;
-      const { record, files } = captureFightDataset({
+      return {
         raceId: race.id,
         fightNumber: fight.number,
         title: fight.title,
@@ -1602,7 +1651,7 @@ export class RaceCoordinator {
         startedAt: evaluation.startedAt,
         finishedAt: evaluation.finishedAt,
         evaluation,
-        events: this.engine.events,
+        events: [...this.engine.events],
         racers: [...this.engine.racers.keys()].map((racerId, index) => ({
           racerId,
           agent: this.agentIdentity(index, racerId),
@@ -1610,7 +1659,23 @@ export class RaceCoordinator {
           frame: (step: number) => this.telemetry.stepFrame(racerId, step),
           steelRaw: steel?.get(racerId)?.raw ?? null,
         })),
-      });
+      };
+    } catch {
+      // The dataset must never break the race or hold up its evaluation.
+      return null;
+    }
+  }
+
+  /**
+   * Hands a training record and its files (step screenshots, raw Steel
+   * traces) to the dataset store, where the latest put per fight wins. Never
+   * throws and never rejects.
+   */
+  private storeDataset(source: FightCaptureInput | null): Promise<void> {
+    const store = this.dependencies.datasetStore;
+    if (!store || !source) return Promise.resolve();
+    try {
+      const { record, files } = captureFightDataset(source);
       return Promise.resolve(store.put(record, files)).catch(() => undefined);
     } catch {
       // The dataset must never break the race or hold up its evaluation.
@@ -1618,29 +1683,163 @@ export class RaceCoordinator {
     }
   }
 
-  /** Live mode: each racer's Steel traces and replay start, within the overall budget. */
-  private async readSteelEvidence(): Promise<Map<string, SteelEvidence> | undefined> {
+  /**
+   * Steel publishes a released session's traces, and sometimes its recording,
+   * seconds to minutes late. Sessions whose trace had no events or whose
+   * recording was missing at finalization are read again in the background,
+   * once per backfill delay, until nothing is missing. Live mode only.
+   */
+  private scheduleSteelBackfill(
+    input: EvaluationInput,
+    dataset: FightCaptureInput | null,
+    steel: ReadonlyMap<string, SteelEvidence> | undefined,
+  ): void {
+    if (!steel || this.steelBackfillStopped) return;
+    const backfill: SteelBackfill = {
+      input: { ...input, events: [...input.events] },
+      dataset,
+      steel: new Map(steel),
+      finalizedAt: Date.now(),
+      next: 0,
+      controller: new AbortController(),
+    };
+    if (this.incompleteSteelRacers(backfill.steel).length === 0) return;
+    this.steelBackfill = backfill;
+    this.armSteelBackfill(backfill);
+  }
+
+  /** Waits for the next backfill delay; the backfill ends after the last. */
+  private armSteelBackfill(backfill: SteelBackfill): void {
+    if (this.steelBackfill !== backfill) return;
+    const after = (this.dependencies.steelBackfillDelaysMs ?? STEEL_BACKFILL_DELAYS_MS)[backfill.next];
+    if (typeof after !== "number" || !Number.isFinite(after)) {
+      this.steelBackfill = null;
+      return;
+    }
+    backfill.next += 1;
+    const timer = setTimeout(() => {
+      backfill.timer = undefined;
+      void this.runSteelBackfill(backfill).catch(() => undefined);
+    }, Math.max(0, backfill.finalizedAt + after - Date.now()));
+    timer.unref?.();
+    backfill.timer = timer;
+  }
+
+  /** Reads the sessions still missing evidence once, and applies whatever is newer. */
+  private async runSteelBackfill(backfill: SteelBackfill): Promise<void> {
+    const read = await this.readSteelEvidence(this.incompleteSteelRacers(backfill.steel), {
+      attempts: 1,
+      signal: backfill.controller.signal,
+    }).catch(() => undefined);
+    // Shut down meanwhile: nothing more is applied or scheduled.
+    if (this.steelBackfill !== backfill) return;
+    let changed = false;
+    for (const [racerId, evidence] of read ?? []) {
+      const previous = backfill.steel.get(racerId);
+      const merged = mergeSteelEvidence(previous, evidence);
+      if (merged && merged !== previous) {
+        backfill.steel.set(racerId, merged);
+        changed = true;
+      }
+    }
+    if (changed) await this.applySteelBackfill(backfill);
+    if (this.incompleteSteelRacers(backfill.steel).length > 0) {
+      this.armSteelBackfill(backfill);
+    } else if (this.steelBackfill === backfill) {
+      this.steelBackfill = null;
+    }
+  }
+
+  /**
+   * Re-derives the final evaluation from the input it was computed from, with
+   * the newer Steel evidence, stores and publishes it (it stays final), and
+   * stores the fight's dataset record again with the new traces.
+   */
+  private async applySteelBackfill(backfill: SteelBackfill): Promise<void> {
+    let evaluation: FightEvaluation;
+    try {
+      evaluation = evaluateFight({
+        ...backfill.input,
+        agents: backfill.input.agents.map((agent) => ({
+          ...agent,
+          steel: steelInput(backfill.steel.get(agent.racerId)),
+        })),
+      });
+    } catch {
+      return;
+    }
+    try {
+      await this.dependencies.evaluationStore?.put(structuredClone(evaluation));
+    } catch {
+      // A storage failure must not hold back the newer evidence.
+    }
+    const source = backfill.dataset;
+    if (source) {
+      void this.storeDataset({
+        ...source,
+        evaluation,
+        racers: source.racers.map((racer) => ({
+          ...racer,
+          steelRaw: backfill.steel.get(racer.racerId)?.raw ?? null,
+        })),
+      });
+    }
+    this.publishFinalEvaluation(evaluation);
+  }
+
+  /** Ends the backfill for good: its timer is cleared and a read in flight aborted. */
+  private stopSteelBackfill(): void {
+    this.steelBackfillStopped = true;
+    const backfill = this.steelBackfill;
+    this.steelBackfill = null;
+    if (backfill?.timer) clearTimeout(backfill.timer);
+    backfill?.controller.abort();
+  }
+
+  /** Racers with a Steel session whose trace had no events or whose recording was missing. */
+  private incompleteSteelRacers(steel: ReadonlyMap<string, SteelEvidence>): string[] {
+    return [...this.engine.racers.keys()].filter((racerId) =>
+      !steelEvidenceComplete(steel.get(racerId)) && this.steelCredentials(racerId) !== null);
+  }
+
+  /** The racer's Steel session and the key that created it; null without one. */
+  private steelCredentials(racerId: string): SteelSessionCredentials | null {
+    try {
+      return this.dependencies.sessionManager.evidence?.(racerId) ?? null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Live mode: the Steel traces and replay start of each racer (default:
+   * every racer), within the overall budget. What is missing is read again
+   * while the budget lasts, up to `attempts`; `signal` ends the read early.
+   */
+  private async readSteelEvidence(
+    racerIds: readonly string[] = [...this.engine.racers.keys()],
+    options: { attempts?: number; signal?: AbortSignal } = {},
+  ): Promise<Map<string, SteelEvidence> | undefined> {
     const manager = this.dependencies.sessionManager;
     if (this.mode !== "live" || typeof manager.evidence !== "function") return undefined;
     const timeoutMs = this.dependencies.steelEvidenceTimeoutMs ?? STEEL_EVIDENCE_TIMEOUT_MS;
     const retryMs = Math.max(10, this.dependencies.steelEvidenceRetryMs ?? STEEL_EVIDENCE_RETRY_MS);
     const controller = new AbortController();
+    const signal = options.signal
+      ? AbortSignal.any([controller.signal, options.signal])
+      : controller.signal;
     const collected = new Map<string, SteelEvidence>();
-    const work = Promise.all([...this.engine.racers.keys()].map(async (racerId) => {
-      let credentials: { steelSessionId: string; apiKey: string } | null = null;
-      try {
-        credentials = manager.evidence?.(racerId) ?? null;
-      } catch {
-        credentials = null;
-      }
+    const work = Promise.all(racerIds.map(async (racerId) => {
+      const credentials = this.steelCredentials(racerId);
       if (!credentials) return;
-      // A just-released session may still be publishing its recording, so
-      // what is missing is fetched again while the budget lasts. Progress is
-      // kept as it arrives, so the deadline never discards what was read.
+      // A just-released session may still be publishing its traces and
+      // recording, so what is missing is fetched again while the budget
+      // lasts. Progress is kept as it arrives, so the deadline never
+      // discards what was read.
       await collectSteelEvidence(credentials, {
         fetch: this.dependencies.steelFetch,
-        signal: controller.signal,
-        attempts: Math.max(1, Math.floor(timeoutMs / retryMs)),
+        signal,
+        attempts: options.attempts ?? Math.max(1, Math.floor(timeoutMs / retryMs)),
         retryMs,
         onProgress: (evidence) => {
           collected.set(racerId, evidence);
@@ -1651,6 +1850,8 @@ export class RaceCoordinator {
     const deadline = new Promise<void>((resolve) => {
       timer = setTimeout(resolve, timeoutMs);
       timer.unref?.();
+      if (signal.aborted) resolve();
+      signal.addEventListener("abort", () => resolve(), { once: true });
     });
     try {
       await Promise.race([work.then(() => undefined, () => undefined), deadline]);
@@ -1672,7 +1873,6 @@ export class RaceCoordinator {
     const agents = [...this.engine.racers.keys()].map((racerId, index): EvaluationAgentInput => {
       const telemetry = this.telemetry.racer(racerId);
       const stats = this.telemetry.traceStats(racerId);
-      const evidence = steel?.get(racerId);
       return {
         racerId,
         agent: this.agentIdentity(index, racerId),
@@ -1682,14 +1882,7 @@ export class RaceCoordinator {
         loops: stats.loops,
         trace: this.telemetry.trace(racerId),
         keyframes: this.telemetry.keyframes(racerId),
-        steel: evidence
-          ? {
-              traceAvailable: evidence.trace !== null,
-              replayAvailable: evidence.replayAvailable,
-              trace: evidence.trace ?? [],
-              replayStart: evidence.replayStart,
-            }
-          : null,
+        steel: steelInput(steel?.get(racerId)),
       };
     });
     return {
@@ -1734,6 +1927,18 @@ export class RaceCoordinator {
     this.persisting = run.catch(() => undefined);
     return run;
   }
+}
+
+/** A session's Steel evidence as the evaluator reads it; null when none was read. */
+function steelInput(evidence: SteelEvidence | undefined): EvaluationSteelInput | null {
+  return evidence
+    ? {
+        traceAvailable: evidence.trace !== null,
+        replayAvailable: evidence.replayAvailable,
+        trace: evidence.trace ?? [],
+        replayStart: evidence.replayStart,
+      }
+    : null;
 }
 
 function delay(ms: number): Promise<void> {

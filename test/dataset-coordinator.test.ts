@@ -9,7 +9,7 @@ import type {
   RacerSessionHandle,
   RacerSessionManager,
 } from "../src/application/contracts.js";
-import { RaceCoordinator } from "../src/application/race-coordinator.js";
+import { RaceCoordinator, type RaceCoordinatorDependencies } from "../src/application/race-coordinator.js";
 import { buildDatasetRows } from "../src/dataset/build.js";
 import { InMemoryDatasetStore, type DatasetStore } from "../src/dataset/store.js";
 import type { DatasetFileInput, FightDatasetRecord } from "../src/dataset/types.js";
@@ -51,6 +51,12 @@ const STEEL_EVENTS = [{
     attributes: { id: "arena-decoy-1" },
     selector: { css: "#arena-decoy-1", id: "arena-decoy-1" },
   },
+}];
+/** Every other session: one page load. */
+const PAGE_LOAD = [{
+  timestamp: new Date(T + 500).toISOString(),
+  type: "navigate",
+  navigation: { url: "https://course.test/product" },
 }];
 
 class Sessions implements RacerSessionManager {
@@ -121,10 +127,12 @@ type Setup = {
   mode?: "live" | "simulated";
   steelFetch?: typeof fetch;
   runner?: Runner;
+  /** Steel read timing. */
+  steel?: Pick<RaceCoordinatorDependencies, "steelEvidenceTimeoutMs" | "steelEvidenceRetryMs" | "steelBackfillDelaysMs">;
 };
 
 /** Three checkpoints; a fixed decoy fires at checkpoint 2. */
-function setup({ store, mode = "simulated", steelFetch, runner = new Runner() }: Setup): RaceCoordinator {
+function setup({ store, mode = "simulated", steelFetch, runner = new Runner(), steel }: Setup): RaceCoordinator {
   return new RaceCoordinator(
     {
       raceId: "race-data",
@@ -147,6 +155,7 @@ function setup({ store, mode = "simulated", steelFetch, runner = new Runner() }:
       datasetStore: store,
       mode,
       steelFetch,
+      ...steel,
     },
   );
 }
@@ -206,6 +215,15 @@ function settle(): Promise<void> {
   return new Promise((resolve) => setImmediate(resolve));
 }
 
+/** The Steel backfill runs on real timers: waits until `done()` holds. */
+async function until(done: () => boolean, timeoutMs = 5_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!done()) {
+    if (Date.now() > deadline) throw new Error("timed out waiting for the Steel backfill");
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+}
+
 test("a closed live fight is stored once: steps, step screenshots and the Steel trace it already read", async () => {
   const store = new CountingDatasetStore();
   const calls: string[] = [];
@@ -215,7 +233,7 @@ test("a closed live fight is stored once: steps, step screenshots and the Steel 
     if (url.pathname.endsWith("/hls")) {
       return new Response("#EXTM3U\n#EXT-X-PROGRAM-DATE-TIME:2023-11-14T22:13:10.000Z\n#EXT-X-ENDLIST\n");
     }
-    const events = url.pathname.includes("/steel-racer-1/") ? STEEL_EVENTS : [];
+    const events = url.pathname.includes("/steel-racer-1/") ? STEEL_EVENTS : PAGE_LOAD;
     return Response.json({ events, total: events.length, hasMore: false });
   }) as typeof fetch;
   const coordinator = setup({ store, mode: "live", steelFetch });
@@ -257,7 +275,9 @@ test("a closed live fight is stored once: steps, step screenshots and the Steel 
   const trace = await store.readFile(gpt.steelTraceFile);
   assert.deepEqual(JSON.parse(trace?.body.toString("utf8") ?? "null"), STEEL_EVENTS);
   assert.deepEqual(gpt.steelEvents.map((event) => [event.type, event.label, event.decoy]), [["click", "Continue", true]]);
-  assert.equal(record.agents[1].steelTraceFile, "steel/race-data/racer-2.trace.json", "an empty trace is still a file");
+  assert.equal(record.agents[1].steelTraceFile, "steel/race-data/racer-2.trace.json");
+  const pageLoad = await store.readFile("steel/race-data/racer-2.trace.json");
+  assert.deepEqual(JSON.parse(pageLoad?.body.toString("utf8") ?? "null"), PAGE_LOAD);
   assert.deepEqual(record.agents[1].steps, []);
 
   // The rows derive from the stored record.
@@ -276,6 +296,61 @@ test("a closed live fight is stored once: steps, step screenshots and the Steel 
   await coordinator.shutdown();
   await settle();
   assert.equal(store.puts, 1, "stored exactly once");
+});
+
+test("a live fight is stored again, with its Steel traces, when Steel publishes them after the fight", async () => {
+  const store = new CountingDatasetStore();
+  let published = false;
+  const steelFetch = (async (input: string | URL | Request) => {
+    const url = new URL(String(input));
+    if (url.pathname.endsWith("/hls")) {
+      return new Response("#EXTM3U\n#EXT-X-PROGRAM-DATE-TIME:2023-11-14T22:13:10.000Z\n#EXT-X-ENDLIST\n");
+    }
+    // A released session's traces read as empty until Steel publishes them.
+    const racerOne = url.pathname.includes("/steel-racer-1/");
+    const events = published ? (racerOne ? STEEL_EVENTS : PAGE_LOAD) : [];
+    return Response.json({ events, total: events.length, hasMore: false });
+  }) as typeof fetch;
+  const coordinator = setup({
+    store,
+    mode: "live",
+    steelFetch,
+    steel: { steelEvidenceTimeoutMs: 200, steelEvidenceRetryMs: 50, steelBackfillDelaysMs: [20, 60] },
+  });
+  await coordinator.prepareAndStart(T);
+  await playWin(coordinator, "image/jpeg");
+
+  const first = await coordinator.whenEvaluationFinal();
+  published = true;
+  const [stored] = await store.list();
+  assert.equal(store.puts, 1);
+  assert.deepEqual(stored.evaluation, first);
+  assert.ok(stored.agents.every((agent) => agent.steelEvents.length === 0));
+  assert.equal(stored.agents[0].steelTraceFile, "steel/race-data/racer-1.trace.json", "an empty trace is still a file");
+  const emptyTrace = await store.readFile("steel/race-data/racer-1.trace.json");
+  assert.deepEqual(JSON.parse(emptyTrace?.body.toString("utf8") ?? "null"), []);
+
+  await until(() => store.puts === 2);
+  const [record] = await store.list();
+  const updated = coordinator.evaluation();
+  assert.equal(updated.status, "final");
+  assert.deepEqual(updated.agents[0].steel.trace.map((entry) => entry.label), ["Continue"]);
+  assert.deepEqual(record.evaluation, updated, "the record carries the updated final evaluation");
+  const gpt = record.agents[0];
+  assert.deepEqual(gpt.steelEvents.map((event) => [event.type, event.label, event.decoy]), [["click", "Continue", true]]);
+  const trace = await store.readFile("steel/race-data/racer-1.trace.json");
+  assert.deepEqual(JSON.parse(trace?.body.toString("utf8") ?? "null"), STEEL_EVENTS);
+  assert.deepEqual(record.agents[1].steelEvents.map((event) => event.type), ["navigate"]);
+  // The rest of the record is kept, step screenshots included.
+  assert.deepEqual([gpt.steps, gpt.screenshots], [stored.agents[0].steps, stored.agents[0].screenshots]);
+  assert.deepEqual((await store.readFile(gpt.screenshots[2]))?.body, Buffer.from([0xff, 0xd8, 2, 0xff, 0xd9]));
+  assert.deepEqual(record.events, stored.events);
+
+  // The per-step Steel slices derive from the new record.
+  const rows = buildDatasetRows([record], { now: T + 60_000, days: 1, mode: "live" });
+  const decoy = rows.steps.find((step) => step.id === "race-data:racer-1:3");
+  assert.deepEqual(decoy?.steel.map((event) => event.label), ["Continue"]);
+  await coordinator.shutdown();
 });
 
 test("a simulated fight is stored with SVG step screenshots and no Steel data", async () => {

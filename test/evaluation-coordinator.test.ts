@@ -10,6 +10,7 @@ import type {
   RacerSessionManager,
 } from "../src/application/contracts.js";
 import { RaceCoordinator } from "../src/application/race-coordinator.js";
+import type { DatasetStore } from "../src/dataset/store.js";
 import type {
   DisruptionCommand,
   DisruptionResult,
@@ -25,6 +26,28 @@ const DECOY: DisruptionCommand = {
   targetRole: "primary-action",
   durationMs: 5_000,
   intensity: 1,
+};
+/** A recording that started 10 s before the fight: a hit at T + 40 s is 50 s in. */
+const PLAYLIST = "#EXTM3U\n#EXT-X-PROGRAM-DATE-TIME:2023-11-14T22:13:10.000Z\n#EXT-X-ENDLIST\n";
+/** racer-1's click on the planted decoy, as Steel records it: 3 s after the hit. */
+const DECOY_CLICK = {
+  timestamp: new Date(T + 43_000).toISOString(),
+  type: "click",
+  page: { url: "https://course.test/shipping" },
+  target: {
+    tagName: "BUTTON",
+    role: "button",
+    accessibleName: "Continue",
+    text: "Continue",
+    attributes: { id: "arena-decoy-1" },
+    selector: { css: "#arena-decoy-1", id: "arena-decoy-1" },
+  },
+};
+/** Every other session: one page load. */
+const PAGE_LOAD = {
+  timestamp: new Date(T + 5_000).toISOString(),
+  type: "navigate",
+  navigation: { url: "https://course.test/cart" },
 };
 
 class Sessions implements RacerSessionManager {
@@ -104,6 +127,17 @@ class CountingStore extends InMemoryEvaluationStore {
   }
 }
 
+/** Stores the first evaluation, then rejects every later put. */
+class FirstPutOnlyStore extends InMemoryEvaluationStore {
+  puts = 0;
+
+  override async put(evaluation: FightEvaluation): Promise<void> {
+    this.puts += 1;
+    if (this.puts > 1) throw new Error("disk full");
+    await super.put(evaluation);
+  }
+}
+
 type SetupOptions = {
   store?: InMemoryEvaluationStore;
   mode?: "live" | "simulated";
@@ -112,6 +146,8 @@ type SetupOptions = {
   steelFetch?: typeof fetch;
   steelEvidenceTimeoutMs?: number;
   steelEvidenceRetryMs?: number;
+  steelBackfillDelaysMs?: readonly number[];
+  datasetStore?: DatasetStore;
 };
 
 /** Three checkpoints; a fixed decoy (5 s) fires at checkpoint 2. */
@@ -142,6 +178,8 @@ function setup(options: SetupOptions = {}) {
       steelFetch: options.steelFetch,
       steelEvidenceTimeoutMs: options.steelEvidenceTimeoutMs,
       steelEvidenceRetryMs: options.steelEvidenceRetryMs,
+      steelBackfillDelaysMs: options.steelBackfillDelaysMs,
+      datasetStore: options.datasetStore,
     },
   );
   return { coordinator, sessions, runner };
@@ -154,6 +192,19 @@ function pointerOf(coordinator: RaceCoordinator) {
 
 function settle(): Promise<void> {
   return new Promise((resolve) => setImmediate(resolve));
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** The Steel backfill runs on real timers: waits until `done()` holds. */
+async function until(done: () => boolean, timeoutMs = 5_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!done()) {
+    if (Date.now() > deadline) throw new Error("timed out waiting for the Steel backfill");
+    await sleep(5);
+  }
 }
 
 /** Plays racer-1 through a won fight with explicit times; the decoy hits at T + 40 s. */
@@ -313,21 +364,7 @@ test("live fights read Steel traces and the replay start after the sessions are 
     if (url.pathname.endsWith("/hls")) {
       return new Response(playlist, { headers: { "content-type": "application/vnd.apple.mpegurl" } });
     }
-    const events = url.pathname.includes("/steel-racer-1/")
-      ? [{
-          timestamp: new Date(T + 43_000).toISOString(),
-          type: "click",
-          page: { url: "https://course.test/shipping" },
-          target: {
-            tagName: "BUTTON",
-            role: "button",
-            accessibleName: "Continue",
-            text: "Continue",
-            attributes: { id: "arena-decoy-1" },
-            selector: { css: "#arena-decoy-1", id: "arena-decoy-1" },
-          },
-        }]
-      : [];
+    const events = url.pathname.includes("/steel-racer-1/") ? [DECOY_CLICK] : [PAGE_LOAD];
     return Response.json({ events, total: events.length, hasMore: false });
   }) as typeof fetch;
   const { coordinator } = setup({ store, mode: "live", sessions, steelFetch });
@@ -357,7 +394,7 @@ test("live fights read Steel traces and the replay start after the sessions are 
     "Clicked the decoy “Continue” 3 s after the hit, then found the real button; 10 s lost against a 20 s pace.",
   );
   assert.equal(final.agents[1].steel.traceAvailable, true);
-  assert.deepEqual(final.agents[1].steel.trace, []);
+  assert.deepEqual(final.agents[1].steel.trace.map((entry) => entry.type), ["navigate"]);
   assert.ok(!JSON.stringify(final).includes(LIVE_KEY), "the key never reaches the evaluation");
   assert.equal(store.puts, 1);
 
@@ -380,7 +417,7 @@ test("a recording that is not published yet is fetched again within the budget",
         : new Response("#EXTM3U\n#EXT-X-PROGRAM-DATE-TIME:2023-11-14T22:13:10.000Z\n#EXT-X-ENDLIST\n");
     }
     traceCalls += 1;
-    return Response.json({ events: [], total: 0, hasMore: false });
+    return Response.json({ events: [PAGE_LOAD], total: 1, hasMore: false });
   }) as typeof fetch;
   const { coordinator } = setup({
     mode: "live",
@@ -394,23 +431,33 @@ test("a recording that is not published yet is fetched again within the budget",
   const final = await coordinator.whenEvaluationFinal();
   assert.ok(final.agents.every((agent) => agent.steel.replayAvailable && agent.steel.traceAvailable));
   assert.deepEqual([...hlsCalls.values()], [2, 2, 2, 2]);
-  assert.equal(traceCalls, 4, "traces already read are not fetched again");
+  assert.equal(traceCalls, 4, "traces with events are not fetched again");
   assert.equal(final.agents[0].sabotage[0].evidence.replayOffsetSec, 50);
 });
 
-test("simulated fights never read Steel evidence and have no replay", async () => {
+test("simulated fights never read Steel evidence, have no replay and backfill nothing", async () => {
   let fetches = 0;
   const steelFetch = (async () => {
     fetches += 1;
     return new Response("#EXTM3U\n");
   }) as typeof fetch;
-  const { coordinator } = setup({ mode: "simulated", sessions: new SteelSessions(), steelFetch });
+  const store = new CountingStore();
+  const { coordinator } = setup({
+    store,
+    mode: "simulated",
+    sessions: new SteelSessions(),
+    steelFetch,
+    steelBackfillDelaysMs: [0, 5],
+  });
   await coordinator.prepareAndStart(T);
   await coordinator.tick(T + 300_000);
   const final = await coordinator.whenEvaluationFinal();
   assert.equal(await coordinator.replayPlaylist("racer-1"), null);
-  assert.equal(fetches, 0);
   assert.deepEqual(final.agents[0].steel, { traceAvailable: false, replayAvailable: false, trace: [] });
+  await sleep(50);
+  assert.equal(fetches, 0);
+  assert.equal(store.puts, 1);
+  assert.deepEqual(coordinator.evaluation(), final);
 });
 
 test("Steel evidence that never arrives is abandoned at the budget", async () => {
@@ -432,6 +479,196 @@ test("Steel evidence that never arrives is abandoned at the budget", async () =>
   assert.equal(final.agents[0].steel.traceAvailable, false);
   assert.equal(final.agents[0].steel.replayAvailable, false);
   assert.equal(store.puts, 1);
+});
+
+test("Steel traces published after the fight ends are backfilled into the final evaluation", async () => {
+  const store = new CountingStore();
+  let published = false;
+  const traceReads: string[] = [];
+  // Until Steel publishes them, the released sessions' traces read as empty
+  // and there is no recording.
+  const steelFetch = (async (input: string | URL | Request) => {
+    const url = new URL(String(input));
+    if (url.pathname.endsWith("/hls")) {
+      return published ? new Response(PLAYLIST) : new Response("recording not ready", { status: 404 });
+    }
+    traceReads.push(url.pathname);
+    const events = !published ? [] : url.pathname.includes("/steel-racer-1/") ? [DECOY_CLICK] : [PAGE_LOAD];
+    return Response.json({ events, total: events.length, hasMore: false });
+  }) as typeof fetch;
+  const { coordinator } = setup({
+    store,
+    mode: "live",
+    sessions: new SteelSessions(),
+    steelFetch,
+    steelEvidenceTimeoutMs: 200,
+    steelEvidenceRetryMs: 50,
+    steelBackfillDelaysMs: [20, 60],
+  });
+  const streamed: Array<number | undefined> = [];
+  coordinator.subscribe((change) => {
+    if (change.kind === "fight") streamed.push(pointerOf(coordinator)?.updatedAt);
+  });
+  await coordinator.prepareAndStart(T);
+  await playWin(coordinator);
+
+  const first = await coordinator.whenEvaluationFinal();
+  published = true;
+  const firstPointer = pointerOf(coordinator);
+  const gptFirst = first.agents[0];
+  assert.deepEqual(
+    [gptFirst.steel.traceAvailable, gptFirst.steel.trace, gptFirst.steel.replayAvailable],
+    [true, [], false],
+  );
+  assert.equal(gptFirst.sabotage[0].reaction, "recovered");
+  assert.equal(gptFirst.sabotage[0].evidence.replayOffsetSec, null);
+  assert.equal(store.puts, 1);
+
+  await until(() => store.puts === 2);
+  const updated = coordinator.evaluation(T + 500_000);
+  assert.equal(updated.status, "final");
+  assert.equal(updated.generatedAt, first.generatedAt);
+  const gpt = updated.agents[0];
+  assert.deepEqual(gpt.steel.trace.map((entry) => [entry.type, entry.label, entry.decoy]), [["click", "Continue", true]]);
+  assert.equal(gpt.steel.replayAvailable, true);
+  // What depends on the evidence is re-derived: Steel saw the decoy click, and the replay has a start.
+  assert.deepEqual([gpt.sabotage[0].reaction, gpt.sabotage[0].deceived], ["deceived", true]);
+  assert.equal(gpt.sabotage[0].evidence.replayOffsetSec, 50);
+  assert.deepEqual(updated.agents[1].steel.trace.map((entry) => entry.type), ["navigate"]);
+  const unchanged = (evaluation: FightEvaluation) => evaluation.agents.map((agent) =>
+    [agent.outcome, agent.durationMs, agent.steps, agent.trace, agent.crowd]);
+  assert.deepEqual(unchanged(updated), unchanged(first));
+
+  // Stored, where the latest put wins, and published like the first final evaluation.
+  assert.deepEqual(await store.get("race-eval"), updated);
+  assert.deepEqual(await coordinator.whenEvaluationFinal(), updated);
+  const pointer = pointerOf(coordinator);
+  assert.ok(pointer && firstPointer && pointer.updatedAt > firstPointer.updatedAt);
+  assert.equal(pointer.status, "final");
+  assert.equal(streamed.at(-1), pointer.updatedAt, "the fight stream carries the new pointer");
+
+  // Nothing is missing any more, so nothing is read again.
+  const reads = traceReads.length;
+  await sleep(100);
+  assert.equal(traceReads.length, reads);
+  assert.equal(store.puts, 2);
+
+  // The backfilled evaluation is the one a timely read would have produced.
+  const { coordinator: timely } = setup({ mode: "live", sessions: new SteelSessions(), steelFetch });
+  await timely.prepareAndStart(T);
+  await playWin(timely);
+  assert.deepEqual(updated, await timely.whenEvaluationFinal());
+});
+
+test("the Steel backfill stops for good when the coordinator shuts down", async () => {
+  const reads: string[] = [];
+  // Steel never publishes: every trace reads as empty and there is no recording.
+  const steelFetch = (async (input: string | URL | Request) => {
+    const url = new URL(String(input));
+    reads.push(url.pathname);
+    return url.pathname.endsWith("/hls")
+      ? new Response("recording not ready", { status: 404 })
+      : Response.json({ events: [], total: 0, hasMore: false });
+  }) as typeof fetch;
+  const options = {
+    mode: "live" as const,
+    steelFetch,
+    steelEvidenceTimeoutMs: 200,
+    steelEvidenceRetryMs: 50,
+    steelBackfillDelaysMs: [20, 40, 60, 80],
+  };
+
+  const store = new CountingStore();
+  const { coordinator } = setup({ ...options, store, sessions: new SteelSessions() });
+  await coordinator.prepareAndStart(T);
+  await playWin(coordinator);
+  const final = await coordinator.whenEvaluationFinal();
+  const atFinal = reads.length;
+  await until(() => reads.length > atFinal);
+  await coordinator.shutdown();
+  const atShutdown = reads.length;
+  await sleep(150);
+  assert.equal(reads.length, atShutdown, "no Steel reads after shutdown");
+  assert.equal(store.puts, 1);
+  assert.deepEqual(coordinator.evaluation(), final);
+
+  // Shut down while the closing evidence is still being read: no backfill ever starts.
+  const closing = setup({ ...options, sessions: new SteelSessions() }).coordinator;
+  await closing.prepareAndStart(T);
+  await playWin(closing);
+  await closing.shutdown();
+  await closing.whenEvaluationFinal();
+  const atClose = reads.length;
+  await sleep(150);
+  assert.equal(reads.length, atClose);
+});
+
+test("Steel backfill failures are absorbed and never undo the final evaluation", async () => {
+  const unhandled: unknown[] = [];
+  const onUnhandled = (reason: unknown): void => {
+    unhandled.push(reason);
+  };
+  process.on("unhandledRejection", onUnhandled);
+  try {
+    let phase: "closing" | "down" | "published" = "closing";
+    let downRequests = 0;
+    const steelFetch = (async (input: string | URL | Request) => {
+      const url = new URL(String(input));
+      if (phase === "down") {
+        // The first background read finds Steel unreachable (8 requests); the next one works.
+        downRequests += 1;
+        if (downRequests >= 8) phase = "published";
+        throw new Error("getaddrinfo ENOTFOUND api.steel.dev");
+      }
+      if (url.pathname.endsWith("/hls")) {
+        return phase === "published" ? new Response(PLAYLIST) : new Response("not ready", { status: 404 });
+      }
+      const events = phase !== "published" ? [] : url.pathname.includes("/steel-racer-1/") ? [DECOY_CLICK] : [PAGE_LOAD];
+      return Response.json({ events, total: events.length, hasMore: false });
+    }) as typeof fetch;
+    const store = new FirstPutOnlyStore();
+    let datasetPuts = 0;
+    const datasetStore: DatasetStore = {
+      put: () => {
+        datasetPuts += 1;
+        if (datasetPuts > 1) throw new Error("dataset disk full");
+        return Promise.resolve();
+      },
+      list: async () => [],
+      readFile: async () => null,
+    };
+    const { coordinator } = setup({
+      store,
+      datasetStore,
+      mode: "live",
+      sessions: new SteelSessions(),
+      steelFetch,
+      steelEvidenceTimeoutMs: 200,
+      steelEvidenceRetryMs: 50,
+      steelBackfillDelaysMs: [10, 30, 60],
+    });
+    coordinator.subscribe(() => {
+      throw new Error("a broken subscriber");
+    });
+    await coordinator.prepareAndStart(T);
+    await playWin(coordinator);
+    const first = await coordinator.whenEvaluationFinal();
+    phase = "down";
+
+    await until(() => coordinator.evaluation().agents[0].steel.trace.length > 0);
+    const updated = coordinator.evaluation();
+    assert.equal(updated.status, "final");
+    assert.equal(pointerOf(coordinator)?.status, "final");
+    assert.equal(updated.agents[0].sabotage[0].reaction, "deceived");
+    assert.equal(downRequests, 8, "one background read found Steel down");
+    assert.equal(store.puts, 2, "the rejected put was attempted");
+    assert.deepEqual(await store.get("race-eval"), first, "the store keeps what it last wrote");
+    assert.equal(datasetPuts, 2, "the throwing put was attempted");
+    await settle();
+    assert.deepEqual(unhandled, []);
+  } finally {
+    process.off("unhandledRejection", onUnhandled);
+  }
 });
 
 test("keeps the frame before a hit and the first one 1.5 s after it as evidence", async () => {
