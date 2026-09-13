@@ -414,10 +414,20 @@ browserTest("the runner reports decoy clicks and blocked actions against real ha
         ["action", null, null],
       ],
     );
-    assert.deepEqual(reports[1].evidence, {
+    const decoyEvidence = reports[1].evidence;
+    assert.ok(decoyEvidence);
+    const { cursor: decoyCursor, ...decoyRest } = decoyEvidence;
+    assert.deepEqual(decoyRest, {
       target: { role: ROLE, text: "Continue", decoy: true },
       navigated: false,
     });
+    // The paced cursor records where the click landed, inside the viewport.
+    assert.equal(decoyCursor?.action, "click");
+    assert.ok(
+      decoyCursor &&
+        decoyCursor.x > 0 && decoyCursor.x < decoyCursor.viewportWidth &&
+        decoyCursor.y > 0 && decoyCursor.y < decoyCursor.viewportHeight,
+    );
     assert.deepEqual(reports[2].evidence?.target, { role: ROLE, text: REAL_LABEL, decoy: false });
     assert.equal(await clicks(page), 1, "only the labelled click reached the real control");
     assert.equal(syncs, reports.length);
