@@ -37,12 +37,16 @@ const policy: DisruptionCommand = {
 
 class FakeSessions implements RacerSessionManager {
   released = false;
+  /** Racers whose own session was released, in order. */
+  releasedRacers: string[] = [];
 
   async create(racerId: string): Promise<RacerSessionHandle> {
     return { racerId, steelSessionId: `steel-${racerId}` };
   }
 
-  async release(_racerId: string): Promise<void> {}
+  async release(racerId: string): Promise<void> {
+    this.releasedRacers.push(racerId);
+  }
 
   async releaseAll(): Promise<void> {
     this.released = true;
@@ -664,6 +668,32 @@ test("a failed racer collapses to the price floor", async () => {
     coordinator.engine.events.find((event) => event.type === "racer_failed")?.metadata?.reason,
     "model crashed",
   );
+  await coordinator.shutdown();
+});
+
+test("a browser that dies mid-race fails only its racer, readably, and releases only its session", async () => {
+  const { coordinator, runner, sessions } = setup();
+  await coordinator.prepareAndStart(1_000);
+  // As in shop-mtzaxsks-cacac3: racer-2 stops on the budget, then Steel's
+  // session timeout closes racer-3's browser 1.4 s later.
+  runner.rejecters.get("racer-2")?.(new Error(
+    "racer-2 model decision failed after 3 provider/protocol retries: OpenRouter race budget of $0.25 was exhausted",
+  ));
+  await flushAsync();
+  runner.rejecters.get("racer-3")?.(new Error("page.title: Target page, context or browser has been closed"));
+  await flushAsync();
+
+  assert.deepEqual(sessions.releasedRacers, ["racer-2", "racer-3"]);
+  assert.equal(coordinator.engine.racers.get("racer-3")?.status, "failed");
+  assert.equal(
+    coordinator.telemetry.racer("racer-3").log.at(-1)?.text,
+    "Failed: stopped when its browser crashed",
+  );
+  // The others race on in their own browsers.
+  assert.equal(coordinator.engine.racers.get("racer-1")?.status, "running");
+  assert.equal(coordinator.engine.racers.get("racer-4")?.status, "running");
+  assert.equal(coordinator.engine.race.status, "running");
+  assert.equal(sessions.released, false);
   await coordinator.shutdown();
 });
 

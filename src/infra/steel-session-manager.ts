@@ -1,6 +1,34 @@
 import { chromium, type Browser, type Page } from "playwright";
 import Steel from "steel-sdk";
+import { DEFAULT_ABSOLUTE_DURATION_MS } from "../domain/race-engine.js";
 import { SteelKeyPool, steelKeysFromEnv } from "./steel-key-pool.js";
+
+/**
+ * What a race's Steel sessions must last beyond the race itself: creating
+ * them, preparing every racer before the start, and stopping and releasing
+ * them after the safety cap.
+ */
+export const STEEL_SESSION_MARGIN_SECONDS = 180;
+/** No race session is created with a shorter Steel timeout. */
+export const MIN_STEEL_SESSION_TIMEOUT_SECONDS = 300;
+
+/**
+ * Steel's timeout for a race's sessions. Steel closes a session when its
+ * timeout passes, so a timeout inside the race kills racers mid-fight: it is
+ * the race's absolute cap plus the margin, never below the floor. The
+ * default 300 s race gets 480 s.
+ */
+export function raceSessionTimeoutSeconds(
+  absoluteDurationMs: number = DEFAULT_ABSOLUTE_DURATION_MS,
+): number {
+  const raceMs = Number.isFinite(absoluteDurationMs) && absoluteDurationMs > 0
+    ? absoluteDurationMs
+    : DEFAULT_ABSOLUTE_DURATION_MS;
+  return Math.max(
+    MIN_STEEL_SESSION_TIMEOUT_SECONDS,
+    Math.ceil(raceMs / 1_000) + STEEL_SESSION_MARGIN_SECONDS,
+  );
+}
 
 export type SteelRacerSession = {
   racerId: string;
@@ -20,6 +48,11 @@ export type SteelSessionManagerOptions = {
   apiKey?: string;
   /** Keys tried in order; the next one is used once the current one runs out. */
   apiKeys?: string[];
+  /**
+   * Steel's timeout for each session. A race passes
+   * raceSessionTimeoutSeconds(its absolute duration); the default suits the
+   * default race.
+   */
   sessionTimeoutSeconds?: number;
   /** Builds the Steel client for one key. Default: the steel-sdk client. */
   createClient?: (apiKey: string) => Steel;
@@ -55,7 +88,7 @@ export class SteelSessionManager {
           `Steel API key #${fromKeyIndex + 1} unavailable (${reason}); rotating to the next key`,
         ),
     });
-    this.sessionTimeoutSeconds = options.sessionTimeoutSeconds ?? 240;
+    this.sessionTimeoutSeconds = options.sessionTimeoutSeconds ?? raceSessionTimeoutSeconds();
     this.connect = options.connectOverCDP ?? ((endpointUrl) => chromium.connectOverCDP(endpointUrl));
   }
 

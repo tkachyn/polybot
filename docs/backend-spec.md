@@ -82,7 +82,9 @@ At race creation, the session manager creates four Steel sessions in parallel.
 const racers = await Promise.all(
   [0, 1, 2, 3].map(async (index) => {
     const session = await steel.sessions.create({
-      sessionTimeout: 240,
+      // Steel closes a session at its timeout, so it must outlive the race:
+      // the absolute cap plus a preparation margin (480 s for a 300 s race).
+      timeout: raceSessionTimeoutSeconds(race.absoluteDurationMs) * 1000,
     });
 
     return {

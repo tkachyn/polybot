@@ -139,6 +139,12 @@ or a credit/quota message and temporarily on 429, and the call retries on the ne
 live session must be released with the same client that created it, which is why
 `SteelSessionManager` keeps a per-racer client map.
 
+Steel closes a session once the `timeout` it was created with passes, whatever the race is
+doing. The factory creates a race's sessions with `raceSessionTimeoutSeconds`: the race's
+absolute cap plus 180 s for preparation and release, never below 300 s (480 s for the default
+race). The old fixed 240 s closed every browser inside the 300 s cap. A racer whose browser
+dies anyway fails with a readable cause, and only its own session is released.
+
 Steel browsers run remotely and cannot reach your machine. A live race needs a public
 `startUrl`, though `COURSE_BASE_URL` can stay on localhost because verification is
 server-to-server.

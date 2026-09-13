@@ -124,7 +124,7 @@ reasoning models enough room to produce the required browser-action tool call. A
 provider retry or rate-limit pause does not consume a browser action; the live log
 reports it as a model-provider pause.
 
-`STEEL_API_KEYS` accepts a comma-separated list. New sessions rotate to the next key when Steel rejects the current key for authentication, credits, quota or rate limits. Live sessions retain the key that created them.
+`STEEL_API_KEYS` accepts a comma-separated list. New sessions rotate to the next key when Steel rejects the current key for authentication, credits, quota or rate limits. Live sessions retain the key that created them. Steel closes a session when its timeout passes, so each is created with the race's absolute cap plus 180 s (480 s for the default 300 s race).
 
 ### Local course
 

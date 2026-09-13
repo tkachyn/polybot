@@ -11,6 +11,9 @@ import type {
 } from "./types.js";
 import { normalizeSabotageSchedule } from "./sabotage.js";
 
+/** A race's safety cap when it sets none: it times out this long after the start. */
+export const DEFAULT_ABSOLUTE_DURATION_MS = 300_000;
+
 export type RaceEngineOptions = {
   targetDurationMs?: number;
   absoluteDurationMs?: number;
@@ -54,7 +57,7 @@ export class RaceEngine {
       checkpointCount: input.checkpointCount,
       status: "starting",
       targetDurationMs: options.targetDurationMs ?? 180_000,
-      absoluteDurationMs: options.absoluteDurationMs ?? 300_000,
+      absoluteDurationMs: options.absoluteDurationMs ?? DEFAULT_ABSOLUTE_DURATION_MS,
       sabotageSchedule: normalizeSabotageSchedule(input.sabotageSchedule ?? options.sabotageSchedule),
     };
     this.racers = new Map(

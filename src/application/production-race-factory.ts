@@ -20,7 +20,7 @@ import {
 } from "../course/deterministic-course-verifier.js";
 import type { DisruptionCommand, SabotageTier } from "../domain/types.js";
 import { CdpObstacleProvider } from "../infra/cdp-obstacle-provider.js";
-import { SteelSessionManager } from "../infra/steel-session-manager.js";
+import { raceSessionTimeoutSeconds, SteelSessionManager } from "../infra/steel-session-manager.js";
 import type { DatasetStore } from "../dataset/store.js";
 import type { EvaluationStore } from "../evaluation/store.js";
 import { FileReplayStore } from "../infra/replay-store.js";
@@ -217,7 +217,11 @@ export function createProductionRaceCoordinator(
     ]),
   );
 
-  const sessionManager = new SteelSessionManager();
+  // Steel closes a session at its timeout, so every browser must outlive the
+  // race's own safety cap, preparation and release included.
+  const sessionManager = new SteelSessionManager({
+    sessionTimeoutSeconds: raceSessionTimeoutSeconds(input.absoluteDurationMs),
+  });
   const agentRunner = new PlaywrightCompetitorRunner({
     task: context.fight.task ?? input.task,
     startUrl: input.startUrl,
