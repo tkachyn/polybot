@@ -61,6 +61,11 @@ function maxAmountText(balance: number): string {
   return (Math.floor(maxAmount(balance) * 100 + 1e-6) / 100).toFixed(2);
 }
 
+/** The server answered and refused the order, so it did not fill. */
+function isRejection(failure: ApiFailure): boolean {
+  return !failure.unconfirmed && failure.code !== "network" && failure.code !== "timeout" && failure.code !== "server";
+}
+
 /** Connection trouble, which fresh live data shows is over. An unconfirmed order is not. */
 function clearsWithFreshData(failure: ApiFailure): boolean {
   return !failure.unconfirmed && (failure.code === "network" || failure.code === "timeout" || failure.code === "server");
@@ -72,7 +77,7 @@ export function OrderForm({ fight, agent, visual, side, amount, onAmountChange, 
   const [failure, setFailure] = useState<ApiFailure | null>(null);
   const [requote, setRequote] = useState<Requote | null>(null);
   const pendingRef = useRef(false);
-  /** The id of an order that may have filled: a retry reuses it, so it can never fill twice. */
+  /** The id of an order that may have reached the server: a retry reuses it, so it can never fill twice. */
   const unconfirmedRef = useRef<{ signature: string; clientOrderId: string } | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const inputId = useId();
@@ -154,7 +159,9 @@ export function OrderForm({ fight, agent, visual, side, amount, onAmountChange, 
     } catch (err) {
       if (!isAbortError(err)) {
         const next = toApiFailure(err);
-        unconfirmedRef.current = next.unconfirmed ? { signature, clientOrderId } : null;
+        // Unless the server answered with a refusal (a lost connection, a
+        // timeout), the order may have filled: resend it under the same id.
+        unconfirmedRef.current = isRejection(next) ? null : { signature, clientOrderId };
         const details = next.code === "price_moved" ? next.details : undefined;
         if (details && details.racerId === agent.racerId) {
           setRequote({
