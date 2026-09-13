@@ -18,6 +18,18 @@
   min-width: 0;
 }
 
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.sectionHead {
+  margin: 0;
+  color: var(--color-text-secondary);
+}
+
 @media (max-width: 1099px) {
   .layout {
     grid-template-columns: minmax(0, 1fr);

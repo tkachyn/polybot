@@ -6,15 +6,17 @@
  * The cards beneath it are hardcoded previews (./placeholders) that look like
  * real fights but are not interactive.
  *
- * Each status has one home: the featured card is the live fight, and the rail
- * on the right carries the standings, what is coming up, and everything
- * already settled.
+ * The featured card is the live fight and the grid beneath it is what is
+ * coming up, in full. The rail on the right is the compact read: standings,
+ * the next few fights, and everything already settled.
  */
 import { useCallback, useMemo, useState } from "react";
-import { ErrorBanner, Page } from "../../components";
+import { EmptyState, ErrorBanner, Page } from "../../components";
+import { cx } from "../../lib/cx";
 import { useSearchQuery } from "../../state/search";
 import { useFights } from "../../state/fights";
 import { FeaturedFightCard, FeaturedFightEmpty, FeaturedFightSkeleton } from "./FeaturedFightCard";
+import { FightCardList, FightCardListSkeleton } from "./FightCard";
 import { filterFights } from "./filter";
 import { buildPlaceholderFights } from "./placeholders";
 import { LobbyRail } from "./LobbyRail";
@@ -69,6 +71,22 @@ export function HomePage() {
           )}
 
           {!loaded ? <FeaturedFightSkeleton /> : featured ? <FeaturedFightCard fight={featured} /> : <FeaturedFightEmpty />}
+
+          <section className={styles.section} aria-labelledby="upcoming-heading">
+            <h2 id="upcoming-heading" className={cx("label", styles.sectionHead)}>
+              Upcoming
+            </h2>
+            {!loaded ? (
+              <FightCardListSkeleton count={2} />
+            ) : upcoming.length === 0 ? (
+              <EmptyState
+                title="Nothing scheduled"
+                description="Fights are listed here before they open, with the sabotage they will face."
+              />
+            ) : (
+              <FightCardList fights={upcoming} label="Upcoming fights" preview={scheduled.length === 0} />
+            )}
+          </section>
         </div>
 
         <LobbyRail
