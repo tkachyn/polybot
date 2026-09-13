@@ -334,6 +334,17 @@ test("matrix and export read final evaluations in the window and mode, with vali
       [defaults.rows[0].overall.hits, defaults.rows[0].overall.recovered, defaults.rows[0].meanRobustness],
       [1, 1, 80],
     );
+    // Recent reports follow the same window and mode as the figures.
+    assert.deepEqual(defaults.recent.map((report) => report.raceId), ["live-new"]);
+    assert.deepEqual(
+      [defaults.recent[0]?.number, defaults.recent[0]?.mode, defaults.recent[0]?.winner?.key, defaults.recent[0]?.voided],
+      [12, "live", "gpt", false],
+    );
+    const recent = async (query: string) =>
+      ((await matrix(query)).json() as RobustnessMatrixResponse).recent.map((report) => report.raceId);
+    assert.deepEqual(await recent("?mode=all"), ["live-new", "sim-1"]);
+    assert.deepEqual(await recent("?mode=simulated"), ["sim-1"]);
+    assert.deepEqual(await recent("?days=365&mode=all"), ["live-new", "sim-1", "live-old"]);
     const count = async (query: string) => ((await matrix(query)).json() as RobustnessMatrixResponse).evaluations;
     assert.equal(await count("?mode=all"), 2);
     assert.equal(await count("?mode=simulated"), 1);

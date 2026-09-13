@@ -9,6 +9,7 @@ import type {
 } from "../src/api/dto.js";
 import {
   MATRIX_HAZARDS,
+  MATRIX_RECENT_LIMIT,
   buildRobustnessMatrix,
   selectFinalEvaluations,
 } from "../src/evaluation/matrix.js";
@@ -240,6 +241,48 @@ test("only final evaluations of started fights in the window and mode count, onc
   );
   const empty = buildRobustnessMatrix([], matrixOptions);
   assert.deepEqual([empty.rows, empty.hazards, empty.evaluations], [[], [], 0]);
+});
+
+test("recent lists the newest included fights, at most eight, with their winner", () => {
+  const evaluations = [
+    ...Array.from({ length: 9 }, (_, i) =>
+      fight(`sim-${i}`, NOW - (i + 1) * DAY, roster({ claude: { outcome: "won", success: true } }), {
+        number: 100 + i,
+        winnerRacerId: "racer-2",
+      })),
+    // A voided fight never has a winner, whatever winnerRacerId says.
+    fight("void-1", NOW - DAY / 2, roster(), { number: 200, voided: true, winnerRacerId: "racer-1" }),
+    fight("live-1", NOW - DAY / 4, roster(), { mode: "live", number: 300, winnerRacerId: "racer-1" }),
+    fight("sim-draft", NOW, roster(), { status: "provisional" }),
+  ];
+  const all = buildRobustnessMatrix(evaluations, matrixOptions);
+  assert.equal(all.evaluations, 11);
+  assert.equal(all.recent.length, MATRIX_RECENT_LIMIT);
+  assert.deepEqual(
+    all.recent.map((report) => report.raceId),
+    ["live-1", "void-1", "sim-0", "sim-1", "sim-2", "sim-3", "sim-4", "sim-5"],
+  );
+  assert.deepEqual(all.recent[0], {
+    raceId: "live-1",
+    number: 300,
+    title: "Fight live-1",
+    mode: "live",
+    finishedAt: NOW - DAY / 4,
+    winner: { key: "gpt", name: "GPT", provider: "simulated", model: "simulated" },
+    voided: false,
+  });
+  assert.equal(all.recent[1]?.winner, null);
+  assert.equal(all.recent[2]?.winner?.key, "claude");
+
+  // Same filters as the figures: the mode and the window.
+  const simulated = buildRobustnessMatrix(evaluations, {
+    ...matrixOptions,
+    mode: "simulated",
+    windowDays: 3,
+    since: NOW - 3 * DAY,
+  });
+  assert.deepEqual(simulated.recent.map((report) => report.raceId), ["void-1", "sim-0", "sim-1", "sim-2"]);
+  assert.deepEqual(buildRobustnessMatrix([], matrixOptions).recent, []);
 });
 
 test("hazard columns follow the catalogue order", () => {

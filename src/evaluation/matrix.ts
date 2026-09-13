@@ -7,6 +7,7 @@
 import type {
   AgentEvaluation,
   AgentIdentity,
+  EvaluationReportSummary,
   FightEvaluation,
   HazardType,
   ReactionLabel,
@@ -31,6 +32,8 @@ export const MATRIX_HAZARDS: readonly HazardType[] = [
 
 export const MATRIX_DEFAULT_DAYS = 30;
 export const MATRIX_MAX_DAYS = 365;
+/** How many of the newest included fights the matrix lists as recent reports. */
+export const MATRIX_RECENT_LIMIT = 8;
 
 const RATE_PRECISION = 1_000_000;
 const SCORE_PRECISION = 100;
@@ -91,6 +94,22 @@ export function selectFinalEvaluations(
     }
   }
   return [...byRace.values()].sort(newestFirst);
+}
+
+/** A final evaluation as a row of the matrix's recent reports. */
+export function summarizeEvaluation(evaluation: FightEvaluation): EvaluationReportSummary {
+  const winner = evaluation.voided || evaluation.winnerRacerId === null
+    ? undefined
+    : evaluation.agents.find((agent) => agent.racerId === evaluation.winnerRacerId);
+  return {
+    raceId: evaluation.raceId,
+    number: evaluation.number,
+    title: evaluation.title,
+    mode: evaluation.mode,
+    finishedAt: evaluation.finishedAt,
+    winner: winner ? { ...winner.agent } : null,
+    voided: evaluation.voided,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -270,5 +289,6 @@ export function buildRobustnessMatrix(
     hazards,
     rows,
     evaluations: included.length,
+    recent: included.slice(0, MATRIX_RECENT_LIMIT).map(summarizeEvaluation),
   };
 }
