@@ -1072,6 +1072,61 @@ test("reports what the model saw, the exact tool call, its reasoning and timing"
   });
 });
 
+test("compacts external-site controls around the Amazon checkout path", async () => {
+  const page = new FakePage();
+  const control = (
+    text: string,
+    arenaRole: string,
+    href = "",
+  ) => ({
+    tag: arenaRole === "link" ? "a" : "button",
+    role: null,
+    arenaRole,
+    text,
+    disabled: false,
+    visible: true,
+    masked: false,
+    href,
+  });
+  page.controls = [
+    ...Array.from({ length: 110 }, (_, index) =>
+      control(`Amazon footer link ${index}`, "link", `https://www.amazon.com/help/${index}`)),
+    control("Wireless Mouse Model A", "link", "https://www.amazon.com/dp/B000000001"),
+    control("Wireless Mouse Model A", "link", "https://www.amazon.com/dp/B000000001"),
+    control("Add to Cart", "button"),
+    control("More options", "button"),
+    control("Close", "button"),
+    control("Proceed to checkout", "button"),
+    control("Search Amazon", "searchbox"),
+    control("Sort by", "combobox"),
+    control("Next", "link", "https://www.amazon.com/s?page=2"),
+    control("Buy Now", "button"),
+    control("Sign in", "button"),
+  ];
+
+  const { model } = await runWith(
+    page,
+    [{ type: "inspect" }, { type: "finish" }],
+    {},
+    { externalSite: true },
+  );
+  const labels = model.inputs[0].observation.controls.map((item) => item.text);
+
+  assert.deepEqual(labels, [
+    "More options",
+    "Close",
+    "Add to Cart",
+    "Proceed to checkout",
+    "Wireless Mouse Model A",
+    "Search Amazon",
+    "Sort by",
+    "Next",
+  ]);
+  assert.ok(!labels.some((label) => label.startsWith("Amazon footer link")));
+  assert.ok(!labels.includes("Buy Now"));
+  assert.ok(!labels.includes("Sign in"));
+});
+
 test("tags the screenshot taken with each observation, before the model decides", async () => {
   const page = new ScreenshotPage();
   const shoot = page.screenshot.bind(page);
