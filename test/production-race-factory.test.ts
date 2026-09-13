@@ -8,12 +8,24 @@ import {
   DEFAULT_COMPETITOR_MAX_ACTIONS,
   DEFAULT_RACE_LLM_BUDGET_USD,
   displayNameForModel,
+  fixedSabotagePresetIds,
   MASTER_BUDGET_SHARE,
   masterCapacityShare,
   modelRateLimits,
   openRouterAgents,
   raceBudgetShares,
 } from "../src/application/production-race-factory.js";
+
+test("pins Amazon fights to the rehearsed two-sabotage sequence", () => {
+  assert.deepEqual(
+    fixedSabotagePresetIds({ courseId: "amazon-checkout", startUrl: "https://www.amazon.com/s?k=wireless+computer+mouse" }),
+    ["cover-with-modal", "plant-decoy-control"],
+  );
+  assert.equal(
+    fixedSabotagePresetIds({ courseId: "arena-shop", startUrl: "https://course.example.test" }),
+    undefined,
+  );
+});
 
 test("labels OpenRouter models with readable names", () => {
   assert.equal(displayNameForModel("openai/gpt-5.6-luna"), "GPT-5.6 Luna");

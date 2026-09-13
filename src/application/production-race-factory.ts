@@ -21,6 +21,7 @@ import {
 } from "../course/deterministic-course-verifier.js";
 import { AmazonCheckoutVerifier } from "./amazon-checkout-verifier.js";
 import { isAmazonCheckoutRun } from "./site-modes.js";
+import type { SabotagePresetId } from "../domain/sabotage-presets.js";
 import type { DisruptionCommand, SabotageTier } from "../domain/types.js";
 import { CdpObstacleProvider } from "../infra/cdp-obstacle-provider.js";
 import { raceSessionTimeoutSeconds, SteelSessionManager } from "../infra/steel-session-manager.js";
@@ -52,6 +53,17 @@ export type ProductionRaceContext = {
 
 export const OPENROUTER_PROVIDER = "openrouter";
 export const COMPETITOR_ROSTER_SIZE = 4;
+export const AMAZON_SABOTAGE_PRESET_IDS = [
+  "cover-with-modal",
+  "plant-decoy-control",
+] as const satisfies readonly SabotagePresetId[];
+
+/** Amazon demo fights use the rehearsed sequence; other courses keep model selection. */
+export function fixedSabotagePresetIds(
+  input: Pick<ApiCreateRaceInput, "courseId" | "startUrl">,
+): readonly SabotagePresetId[] | undefined {
+  return isAmazonCheckoutRun(input) ? AMAZON_SABOTAGE_PRESET_IDS : undefined;
+}
 
 function requiredEnv(name: string): string {
   const value = process.env[name];
@@ -340,6 +352,7 @@ export function createProductionRaceCoordinator(
         observationSource,
         cdpExecutor,
         fallbackPolicies,
+        { fixedPresetIds: fixedSabotagePresetIds(input) },
       )
     : undefined;
 

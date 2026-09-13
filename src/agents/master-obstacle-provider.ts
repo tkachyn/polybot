@@ -195,11 +195,11 @@ export class MasterObstacleProvider implements ObstacleProvider {
     );
     if (checkpoints.length === 0) return null;
     if (this.fixedPresetIds) {
-      if (this.fixedPresetIds.length !== checkpoints.length) {
-        throw new Error(`Expected ${checkpoints.length} fixed sabotage presets, received ${this.fixedPresetIds.length}`);
+      if (this.fixedPresetIds.length < checkpoints.length) {
+        throw new Error(`Expected at least ${checkpoints.length} fixed sabotage presets, received ${this.fixedPresetIds.length}`);
       }
       const selectedAt = Date.now();
-      const steps = this.fixedPresetIds.map((presetId, index) => {
+      const steps = this.fixedPresetIds.slice(0, checkpoints.length).map((presetId, index) => {
         const preset = sabotagePreset(presetId)!;
         return {
           stepId: preset.id,
