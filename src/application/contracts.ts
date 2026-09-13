@@ -188,6 +188,12 @@ export type CompetitorContext = {
 };
 
 export interface CompetitorAgentRunner {
+  /**
+   * The per-racer action budget, when the runner knows it before the start,
+   * so spectators see "step 0/90" rather than a placeholder until the first
+   * report. Omit when unknown; every action report still carries it.
+   */
+  readonly maxSteps?: number;
   prepare(context: Omit<CompetitorContext, "reportCheckpoint" | "reportFinish">): Promise<void>;
   run(context: CompetitorContext): Promise<void>;
   stop(racerId: string): Promise<void>;

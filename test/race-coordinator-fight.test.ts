@@ -13,6 +13,7 @@ import {
   RaceCoordinator,
   type RaceChange,
 } from "../src/application/race-coordinator.js";
+import { DEFAULT_MAX_STEPS } from "../src/application/race-telemetry.js";
 import { DomainError } from "../src/domain/errors.js";
 import { describeHazard } from "../src/domain/sabotage.js";
 import type {
@@ -103,9 +104,14 @@ function setup(options: {
   prepareError?: Error;
   fight?: Parameters<typeof normalizeFightMetadata>[0]["fight"];
   completionJudge?: CompletionJudge;
+  /** A step budget the runner declares before the start. */
+  maxSteps?: number;
 } = {}) {
   const sessions = new FakeSessions();
-  const runner = new FakeRunner(options.prepareError);
+  const runner = Object.assign(
+    new FakeRunner(options.prepareError),
+    options.maxSteps === undefined ? {} : { maxSteps: options.maxSteps },
+  );
   const verifier = new FakeVerifier();
   const events = new InMemoryRaceEventStore();
   const ledger = new InMemoryCreditLedger();
@@ -499,6 +505,17 @@ test("a failed start refunds positions, aborts the race and rethrows", async () 
   const last = (await events.list("race-1")).at(-1);
   assert.equal(last?.type, "race_timed_out");
   assert.deepEqual(last?.metadata, { reason: "start_failed" });
+});
+
+test("a runner's declared step budget shows before its first report", async () => {
+  const declared = setup({ maxSteps: 90 });
+  assert.equal(declared.coordinator.telemetry.racer("racer-1").maxSteps, 90);
+  await declared.coordinator.prepareAndStart(1_000);
+  assert.equal(declared.coordinator.telemetry.racer("racer-4").maxSteps, 90);
+
+  // Without one, the placeholder stands until a report brings the budget.
+  const undeclared = setup();
+  assert.equal(undeclared.coordinator.telemetry.racer("racer-1").maxSteps, DEFAULT_MAX_STEPS);
 });
 
 test("competitor reports feed telemetry and never throw into the runner", async () => {
