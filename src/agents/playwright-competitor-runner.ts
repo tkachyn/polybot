@@ -15,6 +15,7 @@ import type {
 } from "../application/contracts.js";
 import {
   datasetAction,
+  DecisionRetryError,
   describeDecision,
   EVALUATE_SCRIPT_MAX_LENGTH,
   normalizeLabel,
@@ -55,12 +56,19 @@ export type AgentDecision =
   | { type: "finish"; reasoning?: string };
 
 export interface CompetitorDecisionModel {
-  /** Optional provider pacing hook; returns after the next call is allowed. */
+  /**
+   * Optional provider pacing hook; returns after the next call is allowed,
+   * with how long it waited (for rate-limit capacity or a paced retry).
+   */
   prepareForCall?(signal?: AbortSignal): Promise<{
     waitedMs: number;
     maxCalls?: number;
     windowMs?: number;
   }>;
+  /**
+   * The next decision. A model with `prepareForCall` may throw
+   * DecisionRetryError for a transient provider failure that it waits out there.
+   */
   decide(input: {
     task: string;
     racerId: string;
@@ -334,11 +342,13 @@ export class PlaywrightCompetitorRunner implements CompetitorAgentRunner {
         let decisionIssue: DecisionIssue | null = null;
         for (;;) {
           const wait = await model.prepareForCall?.(controller.signal);
-          rateLimitWaitMs = wait && wait.waitedMs > 0 ? wait.waitedMs : 0;
-          if (rateLimitWaitMs > 0) {
+          const waitedMs = wait && wait.waitedMs > 0 ? wait.waitedMs : 0;
+          if (waitedMs > 0) {
+            // A step can pause more than once; it records every pause.
+            rateLimitWaitMs += waitedMs;
             this.reportNote(context, step, {
-              text: `Rate limit pause complete; resumed after ${Math.ceil(rateLimitWaitMs / 1_000)}s`,
-              signature: `rate-limit:${Math.ceil(rateLimitWaitMs / 1_000)}`,
+              text: `Rate limit pause complete; resumed after ${Math.ceil(waitedMs / 1_000)}s`,
+              signature: `rate-limit:${Math.ceil(waitedMs / 1_000)}`,
             });
           }
           promptedAt = Date.now();
@@ -356,6 +366,16 @@ export class PlaywrightCompetitorRunner implements CompetitorAgentRunner {
             break;
           } catch (error) {
             if (controller.signal.aborted) return;
+            if (error instanceof DecisionRetryError && model.prepareForCall) {
+              // A transient provider failure that the model paces and bounds:
+              // prepareForCall waits it out, so it is not a decision failure.
+              const seconds = Math.ceil(error.retryAfterMs / 1_000);
+              this.reportNote(context, step, {
+                text: `Model provider pause: ${error.message}; retrying in ${seconds}s`,
+                signature: `model-provider-pause:${seconds}`,
+              });
+              continue;
+            }
             totalDecisionFailures += 1;
             consecutiveDecisionFailures += 1;
             const reason = error instanceof Error ? error.message : String(error);

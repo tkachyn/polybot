@@ -845,11 +845,12 @@ export type DatasetSteelEvent = {
 
 /**
  * A decision that was not one valid tool call on the first try. After a
- * malformed payload the provider is asked once more; when it never gives a
- * usable call, the runner inspects the page instead (`fallback`).
+ * malformed payload, or a reply without the tool call, the provider is asked
+ * once more; when it never gives a usable call, the runner inspects the page
+ * instead (`fallback`).
  */
 export type DecisionIssue = {
-  /** Malformed tool payloads before the decision (or before giving up). */
+  /** Malformed payloads and replies without the tool call, before the decision (or giving up). */
   malformedAttempts: number;
   /** No usable tool call: the recorded action is the runner's substitute, not the model's. */
   fallback: boolean;

@@ -7,6 +7,19 @@ import type {
 /** The input every competitor decision model receives. */
 export type CompetitorDecisionInput = Parameters<CompetitorDecisionModel["decide"]>[0];
 
+/**
+ * Thrown by `decide` for a transient provider failure (a rate limit, a 5xx,
+ * a dropped connection) that the model retries itself: its `prepareForCall`
+ * waits out `retryAfterMs`, then the runner asks again. The model bounds
+ * these retries, so the runner never counts them as decision failures.
+ */
+export class DecisionRetryError extends Error {
+  constructor(message: string, readonly retryAfterMs: number, options?: ErrorOptions) {
+    super(message, options);
+    this.name = "DecisionRetryError";
+  }
+}
+
 export const COMPETITOR_TOOL_NAME = "take_browser_action";
 export const COMPETITOR_TOOL_DESCRIPTION =
   "Take one browser action or report verified progress. Persistent challenges must be actively cleared with bounded DOM recovery, never waited out.";

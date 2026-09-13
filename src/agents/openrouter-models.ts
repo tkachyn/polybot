@@ -1,4 +1,9 @@
-import OpenAI from "openai";
+import OpenAI, {
+  APIConnectionError,
+  APIConnectionTimeoutError,
+  APIError,
+  APIUserAbortError,
+} from "openai";
 import type {
   AgentDecision,
   BrowserObservation,
@@ -10,6 +15,7 @@ import {
   COMPETITOR_TOOL_NAME,
   COMPETITOR_TOOL_SCHEMA,
   competitorPromptInput,
+  DecisionRetryError,
   parseDecision,
 } from "./competitor-decision.js";
 import type { MasterPolicyModel } from "./master-obstacle-provider.js";
@@ -36,6 +42,8 @@ type OpenRouterModelOptions = {
   budget?: OpenRouterUsageBudget;
   maxOutputTokens?: number;
   rateLimiter?: OpenRouterModelRateLimiter;
+  /** Competitor decisions only: pacing for transient provider failures. */
+  providerRetry?: ProviderRetryPolicy;
 };
 
 /**
@@ -43,6 +51,15 @@ type OpenRouterModelOptions = {
  * cannot be parsed, so this errs on the generous side.
  */
 export const OPENROUTER_DEFAULT_MAX_OUTPUT_TOKENS = 400;
+
+/**
+ * Paced retries after transient provider failures: the first wait without a
+ * provider hint (it doubles with each failure), and the most back-off in
+ * total before the provider answers again.
+ */
+export type ProviderRetryPolicy = { baseMs: number; windowMs: number };
+
+export const DEFAULT_PROVIDER_RETRY: ProviderRetryPolicy = { baseMs: 1_000, windowMs: 30_000 };
 
 export type OpenRouterUsageSnapshot = {
   limitUsd: number;
@@ -148,15 +165,21 @@ export type RateLimitWait = {
 };
 
 /**
- * A shared per-model sliding window. Models without a configured entry never
- * wait, so adding pacing for one provider cannot throttle the others.
+ * A shared per-model sliding window, keyed by the configured OpenRouter model
+ * id in any letter case. Models without an entry never wait, so adding pacing
+ * for one provider cannot throttle the others.
  */
 export class OpenRouterModelRateLimiter {
   private readonly calls = new Map<string, number[]>();
+  private readonly limits = new Map<string, ModelRateLimit>();
 
   constructor(
-    private readonly limits: Readonly<Record<string, ModelRateLimit>> = {
+    limits: Readonly<Record<string, ModelRateLimit>> = {
       "openai/gpt-5.6-luna": { maxCalls: 20, windowMs: 60_000 },
+      // New OpenRouter accounts get 20 requests a minute for this model. Its 429
+      // names the provider's id (anthropic/claude-4.5-haiku-20251001), but calls
+      // are counted under the id racers are configured with.
+      "anthropic/claude-haiku-4.5": { maxCalls: 20, windowMs: 60_000 },
     },
   ) {
     for (const [model, limit] of Object.entries(limits)) {
@@ -164,12 +187,13 @@ export class OpenRouterModelRateLimiter {
         !Number.isFinite(limit.windowMs) || limit.windowMs <= 0) {
         throw new Error(`Invalid rate limit for ${model}`);
       }
+      this.limits.set(modelKey(model), limit);
     }
   }
 
   async acquire(model: string, signal?: AbortSignal): Promise<RateLimitWait> {
-    const key = model.trim().toLowerCase();
-    const limit = this.limits[key];
+    const key = modelKey(model);
+    const limit = this.limits.get(key);
     if (!limit) return { waitedMs: 0, maxCalls: 0, windowMs: 0 };
     const startedAt = Date.now();
     for (;;) {
@@ -183,30 +207,99 @@ export class OpenRouterModelRateLimiter {
         this.calls.set(key, calls);
         return { waitedMs: now - startedAt, ...limit };
       }
-      const waitMs = Math.max(1, calls[0] + limit.windowMs - now);
-      await new Promise<void>((resolve, reject) => {
-        let timer: ReturnType<typeof setTimeout>;
-        const onAbort = () => {
-          clearTimeout(timer);
-          signal?.removeEventListener("abort", onAbort);
-          reject(new DOMException("Rate-limit wait aborted", "AbortError"));
-        };
-        timer = setTimeout(() => {
-          signal?.removeEventListener("abort", onAbort);
-          resolve();
-        }, waitMs);
-        signal?.addEventListener("abort", onAbort, { once: true });
-        if (signal?.aborted) onAbort();
-      });
+      await pause(Math.max(1, calls[0] + limit.windowMs - now), signal, "Rate-limit wait aborted");
     }
   }
+}
+
+/** The limiter's key for a model id: trimmed and lower-cased. */
+function modelKey(model: string): string {
+  return model.trim().toLowerCase();
+}
+
+/** Resolves after `ms`, or rejects with an AbortError as soon as `signal` aborts. */
+function pause(ms: number, signal: AbortSignal | undefined, reason: string): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    let timer: ReturnType<typeof setTimeout>;
+    const onAbort = () => {
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", onAbort);
+      reject(new DOMException(reason, "AbortError"));
+    };
+    timer = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    signal?.addEventListener("abort", onAbort, { once: true });
+    if (signal?.aborted) onAbort();
+  });
+}
+
+/**
+ * Why a failed request is worth retrying (a rate limit, a timeout, a 5xx, a
+ * dropped connection), or null when retrying cannot help: an auth or credit
+ * error, a bad request, an abort.
+ */
+function transientFailure(error: unknown): string | null {
+  if (!(error instanceof APIError) || error instanceof APIUserAbortError) return null;
+  if (error instanceof APIConnectionTimeoutError) return "request timed out";
+  if (error instanceof APIConnectionError) return "connection failed";
+  const status = error.status ?? 0;
+  if (status === 429) return "rate limited (HTTP 429)";
+  return status === 408 || status >= 500 ? `provider error (HTTP ${status})` : null;
+}
+
+/**
+ * How long the provider asked callers to wait, in ms: `retry-after-ms`,
+ * `Retry-After` (seconds or an HTTP date), or a rate-limit reset time, which
+ * OpenRouter sends in the error body's metadata. Null without a usable hint.
+ */
+function retryHintMs(error: unknown, now: number): number | null {
+  if (!(error instanceof APIError)) return null;
+  const afterMs = Number.parseFloat(error.headers?.get("retry-after-ms") ?? "");
+  if (Number.isFinite(afterMs)) return Math.max(0, afterMs);
+  const after = error.headers?.get("retry-after")?.trim();
+  if (after) {
+    const seconds = Number(after);
+    const at = Number.isFinite(seconds) ? now + seconds * 1_000 : Date.parse(after);
+    if (Number.isFinite(at)) return Math.max(0, at - now);
+  }
+  const reset = error.headers?.get("x-ratelimit-reset") ?? bodyHeader(error.error, "x-ratelimit-reset");
+  return reset === null ? null : resetDelayMs(reset, now);
+}
+
+/** A response header that OpenRouter repeats in the error body's `metadata.headers`. */
+function bodyHeader(body: unknown, name: string): string | null {
+  const metadata = isRecord(body) && isRecord(body.metadata) ? body.metadata : null;
+  const headers = metadata && isRecord(metadata.headers) ? metadata.headers : {};
+  for (const [key, value] of Object.entries(headers)) {
+    if (key.toLowerCase() === name && (typeof value === "string" || typeof value === "number")) {
+      return String(value);
+    }
+  }
+  return null;
+}
+
+/** A reset time as a wait from `now`: epoch ms, epoch seconds, or seconds from now. */
+function resetDelayMs(value: string, now: number): number | null {
+  const number = value.trim() === "" ? Number.NaN : Number(value);
+  if (!Number.isFinite(number)) return null;
+  const at = number >= 1e12 ? number : number >= 1e9 ? number * 1_000 : now + number * 1_000;
+  return Math.max(0, at - now);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 abstract class OpenRouterModelBase {
   protected readonly client: OpenAI;
   protected readonly maxOutputTokens: number;
   private capacityReserved = false;
-  /** Malformed tool payloads in the latest call; the provider is asked once more after the first. */
+  /**
+   * Malformed tool payloads, and replies without the tool call, in the latest
+   * call; the provider is asked once more after the first.
+   */
   protected malformedAttempts = 0;
 
   constructor(protected readonly options: OpenRouterModelOptions) {
@@ -222,6 +315,11 @@ abstract class OpenRouterModelBase {
     return wait;
   }
 
+  /**
+   * One tool call from the model. A malformed payload, or a reply without the
+   * tool call, is asked for once more; a second one is thrown as an
+   * OpenRouterToolArgumentsError.
+   */
   protected async call(
     system: string,
     input: unknown,
@@ -231,13 +329,14 @@ abstract class OpenRouterModelBase {
       | ReturnType<typeof sabotageTool>
       | ReturnType<typeof sabotageSequenceTool>
       | ReturnType<typeof completionTool>,
-    signal?: AbortSignal,
+    request: { signal?: AbortSignal; maxRetries?: number } = {},
   ): Promise<unknown> {
     this.malformedAttempts = 0;
+    let redo: "malformed" | "missing" | null = null;
     for (let attempt = 0; attempt < 2; attempt += 1) {
       this.options.budget?.assertAvailable();
       if (!this.capacityReserved) {
-        await this.options.rateLimiter?.acquire(this.options.model, signal);
+        await this.options.rateLimiter?.acquire(this.options.model, request.signal);
       }
       this.capacityReserved = false;
       const response = await this.client.chat.completions.create({
@@ -245,21 +344,34 @@ abstract class OpenRouterModelBase {
         max_tokens: this.maxOutputTokens,
         messages: [{
           role: "system",
-          content: attempt === 0
+          content: redo === null
             ? system
-            : `${system}\nYour previous tool payload was malformed. Return only strict JSON matching the tool schema; do not use markdown or prose.`,
+            : redo === "malformed"
+              ? `${system}\nYour previous tool payload was malformed. Return only strict JSON matching the tool schema; do not use markdown or prose.`
+              : `${system}\nYour previous reply did not call ${tool.function.name}. Reply only by calling ${tool.function.name} exactly once, with arguments matching its schema.`,
         }, {
           role: "user",
           content: JSON.stringify(input),
         }],
         tools: [tool],
-        tool_choice: { type: "function", function: { name: tool.function.name } },
-      }, signal ? { signal } : undefined);
+        // Some providers ignore a named tool choice but honour "required",
+        // which asks for the same call when only one tool is offered.
+        tool_choice: redo === "missing"
+          ? "required"
+          : { type: "function", function: { name: tool.function.name } },
+      }, request);
       const usage = response.usage as (typeof response.usage & { cost?: number }) | undefined;
       this.options.budget?.record(usage?.cost ?? 0);
       const call = response.choices[0]?.message.tool_calls?.[0];
       if (!call || call.type !== "function" || call.function.name !== tool.function.name) {
-        throw new Error(`OpenRouter model ${this.options.model} did not call ${tool.function.name}`);
+        this.malformedAttempts += 1;
+        if (attempt === 1) {
+          throw new OpenRouterToolArgumentsError(
+            `OpenRouter model ${this.options.model} did not call ${tool.function.name}`,
+          );
+        }
+        redo = "missing";
+        continue;
       }
       try {
         return parseToolArguments(call.function.arguments);
@@ -267,6 +379,7 @@ abstract class OpenRouterModelBase {
         if (!(error instanceof OpenRouterToolArgumentsError)) throw error;
         this.malformedAttempts += 1;
         if (attempt === 1) throw error;
+        redo = "malformed";
       }
     }
     throw new OpenRouterToolArgumentsError();
@@ -378,12 +491,24 @@ export class OpenRouterCompetitorDecisionModel
   extends OpenRouterModelBase
   implements CompetitorDecisionModel
 {
-  prepareForCall(signal?: AbortSignal): Promise<RateLimitWait> {
-    return super.prepareForCall(signal);
-  }
-
   /** How the latest decision arrived, when not as one valid tool call. */
   private issue: DecisionIssue | null = null;
+  /** When the paced retry after a transient provider failure may go out. */
+  private retryAt: number | null = null;
+  /** Transient provider failures since the provider last answered, and the back-off they took. */
+  private failures = 0;
+  private backoffMs = 0;
+
+  /** Waits out a paced retry, when one is due, then for rate-limit capacity. */
+  async prepareForCall(signal?: AbortSignal): Promise<RateLimitWait> {
+    const dueMs = this.retryAt === null ? 0 : this.retryAt - Date.now();
+    this.retryAt = null;
+    const startedAt = Date.now();
+    if (dueMs > 0) await pause(dueMs, signal, "Provider retry wait aborted");
+    const backedOffMs = dueMs > 0 ? Date.now() - startedAt : 0;
+    const wait = await super.prepareForCall(signal);
+    return { ...wait, waitedMs: backedOffMs + wait.waitedMs };
+  }
 
   /** The latest decision's issue, if any. Cleared on read, so it never leaks into the next step. */
   takeDecisionIssue(): DecisionIssue | null {
@@ -402,17 +527,23 @@ export class OpenRouterCompetitorDecisionModel
     this.issue = null;
     let value: unknown;
     try {
-      // Only the model-facing input goes in the prompt; the signal goes to the request.
+      // Only the model-facing input goes in the prompt; the signal goes to the
+      // request. The SDK's own retries are off: they would wait unseen, while a
+      // paced retry is waited out in prepareForCall, where the runner shows it.
       value = await this.call(
         COMPETITOR_SYSTEM_PROMPT,
         competitorPromptInput(input),
         browserActionTool,
-        input.signal,
+        { signal: input.signal, maxRetries: 0 },
       );
     } catch (error) {
-      if (error instanceof OpenRouterToolArgumentsError) return this.fallback();
-      throw error;
+      if (!(error instanceof OpenRouterToolArgumentsError)) {
+        throw this.pacedRetry(error, input.signal) ?? error;
+      }
+      this.answered();
+      return this.fallback();
     }
+    this.answered();
     try {
       const decision = parseDecision(value);
       if (this.malformedAttempts > 0) {
@@ -431,6 +562,37 @@ export class OpenRouterCompetitorDecisionModel
   private fallback(): AgentDecision {
     this.issue = { malformedAttempts: this.malformedAttempts, fallback: true };
     return { type: "inspect" };
+  }
+
+  /** The provider answered, so the next transient failure starts a fresh back-off. */
+  private answered(): void {
+    this.retryAt = null;
+    this.failures = 0;
+    this.backoffMs = 0;
+  }
+
+  /**
+   * A transient provider failure as a paced retry. It waits at least the
+   * provider's Retry-After or reset hint, and otherwise backs off exponentially;
+   * the waits before the provider answers again fit in the policy's window.
+   * Null when the failure is not transient, the request was aborted, or the
+   * window cannot fit the wait. A spent race budget is thrown instead.
+   */
+  private pacedRetry(error: unknown, signal: AbortSignal | undefined): DecisionRetryError | null {
+    const reason = transientFailure(error);
+    if (reason === null || signal?.aborted) return null;
+    this.options.budget?.assertAvailable();
+    const policy = this.options.providerRetry ?? DEFAULT_PROVIDER_RETRY;
+    const remainingMs = policy.windowMs - this.backoffMs;
+    const delayMs = Math.max(
+      retryHintMs(error, Date.now()) ?? 0,
+      Math.min(policy.baseMs * 2 ** this.failures, remainingMs),
+    );
+    if (remainingMs <= 0 || delayMs > remainingMs) return null;
+    this.failures += 1;
+    this.backoffMs += delayMs;
+    this.retryAt = Date.now() + delayMs;
+    return new DecisionRetryError(reason, delayMs, { cause: error });
   }
 }
 

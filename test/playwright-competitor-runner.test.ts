@@ -15,6 +15,7 @@ import type {
   CapturedFrame,
   CompetitorContext,
 } from "../src/application/contracts.js";
+import { DecisionRetryError } from "../src/agents/competitor-decision.js";
 import type { DecisionIssue } from "../src/api/dto.js";
 
 test("bounds same-page recovery scripts and rejects privileged capabilities", () => {
@@ -1223,4 +1224,47 @@ test("reports the prompt time, the rate-limit pause and any decision issue with 
     assert.ok(observedAt !== undefined && promptedAt !== undefined && decidedAt !== undefined);
     assert.ok(observedAt <= promptedAt && promptedAt <= decidedAt);
   }
+});
+
+test("paced provider retries pause visibly and never count as decision failures", async () => {
+  let failures = 4; // more than the three failures in a row that end a racer
+  let dueMs = 0;
+  const model: CompetitorDecisionModel = {
+    async prepareForCall() {
+      const waitedMs = dueMs;
+      dueMs = 0;
+      return { waitedMs };
+    },
+    async decide() {
+      if (failures === 0) return { type: "finish" };
+      failures -= 1;
+      dueMs = 1_500;
+      throw new DecisionRetryError("rate limited (HTTP 429)", 1_500);
+    },
+  };
+  const { reports } = await runWith(new FakePage(), [], {}, { model });
+
+  const pause = [
+    ["note", "Model provider pause: rate limited (HTTP 429); retrying in 2s"],
+    ["note", "Rate limit pause complete; resumed after 2s"],
+  ];
+  assert.deepEqual(reports.map((report) => [report.kind, report.text]), [
+    ...pause, ...pause, ...pause, ...pause,
+    ["action", "Reported finish"],
+  ]);
+  // The step records every pause; its prompt went out after the last one.
+  const finish = reports.at(-1);
+  assert.equal(finish?.step, 1);
+  assert.equal(finish?.rateLimitWaitMs, 6_000);
+
+  // Without prepareForCall to wait it out, the same error is an ordinary decision failure.
+  const impatient: CompetitorDecisionModel = {
+    async decide() {
+      throw new DecisionRetryError("rate limited (HTTP 429)", 1_500);
+    },
+  };
+  await assert.rejects(
+    runWith(new FakePage(), [], {}, { model: impatient }),
+    /after 3 provider\/protocol retries/,
+  );
 });
