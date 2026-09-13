@@ -2,10 +2,10 @@ import {
   SHOP_SHIPPING_METHODS,
   SHOP_STORE_NAME,
   formatPrice,
-  hashString,
   type ShippingMethod,
   type ShopProduct,
 } from "./shop-catalogue.js";
+import { productImageCss } from "./product-images.js";
 
 // Server-rendered HTML for the arena-shop storefront. Plain links and forms,
 // no client script: every link and form carries the run identity, and every
@@ -69,9 +69,9 @@ function shippingMethod(value: string) {
   return SHOP_SHIPPING_METHODS.find((method) => method.value === value) ?? SHOP_SHIPPING_METHODS[0];
 }
 
+/** The product photo. A CSS background, so the text printed on the drive stays out of the page text. */
 function thumb(product: ShopProduct, size = ""): string {
-  const hue = hashString(product.id) % 360;
-  return `<div class="thumb ${size}" style="--hue:${hue}" aria-hidden="true">${escapeHtml(product.capacityLabel)}</div>`;
+  return `<div class="thumb ${size}" style="background-image:${productImageCss(product)}" aria-hidden="true"></div>`;
 }
 
 function conditionBadge(product: ShopProduct): string {
@@ -121,9 +121,9 @@ button { font: inherit; cursor: pointer; }
 .card h2 { font-size: 1rem; margin: 6px 0 0; }
 .card h2 a { color: var(--ink); text-decoration: none; }
 .card h2 a:hover { color: var(--brand); text-decoration: underline; }
-.thumb { aspect-ratio: 4 / 3; border-radius: 10px; display: grid; place-items: center; color: #fff; font-weight: 800; font-size: 1.4rem; background: linear-gradient(135deg, hsl(var(--hue) 55% 42%), hsl(calc(var(--hue) + 40) 60% 28%)); }
-.thumb.small { width: 72px; font-size: .8rem; }
-.thumb.large { font-size: 2.6rem; }
+.thumb { aspect-ratio: 4 / 3; border-radius: 10px; background-color: #eef0f3; background-position: center; background-size: cover; background-repeat: no-repeat; }
+.thumb.small { width: 72px; border-radius: 8px; }
+.thumb.large { border-radius: 16px; border: 1px solid var(--line); }
 .meta, .muted { color: var(--muted); font-size: .9rem; margin: 0; }
 .price { font-size: 1.1rem; margin: 0; }
 .price strong { font-size: 1.3rem; }
