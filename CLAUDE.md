@@ -129,9 +129,12 @@ most 30 s before the provider answers again. The runner notes each pause and add
 step's `rateLimitWaitMs`; paced retries never count against its decision-failure limits (3 in
 a row, 6 per run). Auth errors, a spent budget and aborts get no paced retry (the first two
 end the racer through those limits), and the SDK's own silent retries are off for
-competitor calls. All four racers share one
-`OpenRouterUsageBudget` (`RACE_LLM_BUDGET_USD`) that is a soft stop — in-flight calls can
-overshoot it, so keep a hard limit on the OpenRouter key too.
+competitor calls. The racers and the master
+draw on one `OpenRouterUsageBudget` (`RACE_LLM_BUDGET_USD`, default $1) cut into shares
+(`budget.share`, `raceBudgetShares`): 10% for the master and an equal part of the rest per
+racer, so a looping racer spends only its own share and stops alone. The race total
+(`llmUsage`) counts every share. Each share is a soft stop — in-flight calls can overshoot
+it, so keep a hard limit on the OpenRouter key too.
 `src/agents/anthropic-models.ts` is a retained direct-provider alternative to the OpenRouter
 adapters and is not wired into the production factory.
 

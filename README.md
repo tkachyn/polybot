@@ -103,7 +103,9 @@ racer-3: google/gemma-3-27b-it
 racer-4: anthropic/claude-haiku-4.5
 ```
 
-`RACE_LLM_BUDGET_USD` is a shared software stop for all model calls in one race; `GET /races/:raceId` reports it as `llmUsage` and the per-racer models as `competitors`. Keep a separate hard credit limit on the OpenRouter API key because a few concurrent in-flight calls can finish after the software limit is reached.
+`RACE_LLM_BUDGET_USD` (default `1`) is a software stop for one race's model calls, split so that one agent's spending can stop only itself: the master gets 10% and each racer an equal part of the rest ($0.225 at the default). A racer whose share runs out stops; the others race on. `GET /races/:raceId` reports the race's total spend as `llmUsage` and the per-racer models as `competitors`. Keep a separate hard credit limit on the OpenRouter API key because a few concurrent in-flight calls can finish after a software limit is reached.
+
+Expected spend, estimated from recorded prompts (about 1,700–2,200 input and 100 output tokens a step) at OpenRouter's prices: about $0.0026 a step for Claude Haiku 4.5, $0.008 for Claude Sonnet 4.6, $0.0005–0.001 for GPT-5.6 Luna, $0.0007–0.0017 for Qwen3.8 27B and $0.0002–0.0004 for Gemma 3 27B or DeepSeek V4.1 Flash. The master makes one call before the start; course races never reach its judge. A typical fight with the recent roster (Luna, Haiku, Gemma, DeepSeek) costs $0.05–0.15, mostly Haiku. The 40-step cap bounds a racer at about $0.10 on Haiku and $0.03 on Luna, while Sonnet reaches its $0.225 share around step 28, so a fight with every racer at its cap stays under about $0.35.
 
 Competitor calls retry transient provider failures: a rate limit (429), a 408 or
 5xx response, or a dropped or timed-out connection. Each retry waits at least the
@@ -200,7 +202,7 @@ The script sends `POST /races` with `courseId: "arena-shop"`, three checkpoints,
 | `COMPETITOR_LLM_MAX_OUTPUT_TOKENS` | `512` | Competitor tool-call output budget |
 | `COMPETITOR_MAX_ACTIONS` | `40` | Live mode: browser actions per racer before it is stopped |
 | `MASTER_LLM_MODEL` | none | Live mode: OpenRouter model for the sabotage director (needed when `obstaclesEnabled`) |
-| `RACE_LLM_BUDGET_USD` | `0.25` | Live mode: shared per-race LLM spend cap |
+| `RACE_LLM_BUDGET_USD` | `1` | Live mode: per-race LLM spend cap, shared out 10% to the master and equally to the racers |
 | `COURSE_BASE_URL` / `COURSE_VERIFIER_TOKEN` | none | Live mode: course verifier endpoint and token |
 | `RACE_EVENT_FILE` | `data/race-events.jsonl` | Live mode: append-only event log |
 | `EVALUATION_FILE` | `data/evaluations.jsonl` (live) | Final fight evaluations, appended as JSON lines (in memory in simulated mode unless set) |

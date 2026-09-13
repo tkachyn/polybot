@@ -78,6 +78,10 @@ export type OpenRouterUsageSnapshot = {
 export class OpenRouterUsageBudget {
   private spentUsd = 0;
   private requests = 0;
+  /** The budget a share was cut from; it counts the share's spending too. */
+  private parent: OpenRouterUsageBudget | null = null;
+  /** Who spends a share ("racer-2", "master"); null for a race's whole budget. */
+  private owner: string | null = null;
 
   constructor(readonly limitUsd: number) {
     if (!Number.isFinite(limitUsd) || limitUsd <= 0) {
@@ -85,16 +89,32 @@ export class OpenRouterUsageBudget {
     }
   }
 
+  /**
+   * A slice of this budget for one spender. Its calls stop once it has spent
+   * `limitUsd`, whatever the others spent, so one racer's spending can stop
+   * only itself. Every cost it records also counts here, where the race's
+   * total is reported.
+   */
+  share(owner: string, limitUsd: number): OpenRouterUsageBudget {
+    const share = new OpenRouterUsageBudget(limitUsd);
+    share.parent = this;
+    share.owner = owner;
+    return share;
+  }
+
   assertAvailable(): void {
-    if (this.spentUsd >= this.limitUsd) {
-      throw new Error(`OpenRouter race budget of $${this.limitUsd.toFixed(2)} was exhausted`);
-    }
+    if (this.spentUsd < this.limitUsd) return;
+    const limit = `$${this.limitUsd.toFixed(2)}`;
+    throw new Error(this.owner === null
+      ? `OpenRouter race budget of ${limit} was exhausted`
+      : `${this.owner}'s ${limit} share of the OpenRouter race budget was exhausted`);
   }
 
   record(costUsd: number): void {
     if (!Number.isFinite(costUsd) || costUsd < 0) return;
     this.spentUsd += costUsd;
     this.requests += 1;
+    this.parent?.record(costUsd);
   }
 
   snapshot(): OpenRouterUsageSnapshot {

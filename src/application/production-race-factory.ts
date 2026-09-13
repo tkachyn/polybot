@@ -154,6 +154,28 @@ export function openRouterAgents(
 }
 
 /**
+ * The race's LLM budget when RACE_LLM_BUDGET_USD is unset. Shared out, it
+ * leaves each racer $0.225: room for a Claude Haiku racer's 40 steps at
+ * about $0.0026 each, redos included.
+ */
+export const DEFAULT_RACE_LLM_BUDGET_USD = 1;
+/** The master's slice of the race budget; the racers split the rest equally. */
+export const MASTER_BUDGET_SHARE = 0.1;
+
+/**
+ * Each spender's slice of a race budget: MASTER_BUDGET_SHARE of it for the
+ * master and an equal part of the rest for each racer, so one racer's
+ * spending can stop only itself.
+ */
+export function raceBudgetShares(
+  totalUsd: number,
+  racerCount: number,
+): { master: number; racer: number } {
+  const master = totalUsd * MASTER_BUDGET_SHARE;
+  return { master, racer: (totalUsd - master) / racerCount };
+}
+
+/**
  * Browser actions per racer before it is stopped. Winning shop runs took
  * 13-30 steps; a racer stuck in sabotage recovery once took 77.
  */
@@ -200,9 +222,12 @@ export function createProductionRaceCoordinator(
   // context.fight.agents is always the normalised default roster; only an
   // explicit operator roster (input.agents) may override model-derived names.
   const agents = openRouterAgents(input.agents, roster);
+  // Each racer and the master spend their own share, so one looping racer
+  // can stop only itself; the race total still counts every call.
   const budget = new OpenRouterUsageBudget(
-    positiveNumberEnv("RACE_LLM_BUDGET_USD", 0.25),
+    positiveNumberEnv("RACE_LLM_BUDGET_USD", DEFAULT_RACE_LLM_BUDGET_USD),
   );
+  const budgetShares = raceBudgetShares(budget.limitUsd, roster.size);
   const masterModelId = process.env.MASTER_LLM_MODEL;
   // One sliding window per configured model, shared by every caller of that
   // model, racers and master alike. A provider-specific 429 cannot kill a
@@ -221,7 +246,7 @@ export function createProductionRaceCoordinator(
       racerId,
       new OpenRouterCompetitorDecisionModel({
         model,
-        budget,
+        budget: budget.share(racerId, budgetShares.racer),
         maxOutputTokens,
         rateLimiter,
       }),
@@ -295,7 +320,7 @@ export function createProductionRaceCoordinator(
   const masterModel = masterModelId
     ? new OpenRouterMasterPolicyModel({
         model: masterModelId,
-        budget,
+        budget: budget.share("master", budgetShares.master),
         rateLimiter,
         capacityShare: masterCapacityShare(roster, masterModelId),
       })

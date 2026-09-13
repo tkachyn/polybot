@@ -6,10 +6,13 @@ import {
   competitorMaxActions,
   competitorRoster,
   DEFAULT_COMPETITOR_MAX_ACTIONS,
+  DEFAULT_RACE_LLM_BUDGET_USD,
   displayNameForModel,
+  MASTER_BUDGET_SHARE,
   masterCapacityShare,
   modelRateLimits,
   openRouterAgents,
+  raceBudgetShares,
 } from "../src/application/production-race-factory.js";
 
 test("labels OpenRouter models with readable names", () => {
@@ -99,4 +102,15 @@ test("caps each live racer at COMPETITOR_MAX_ACTIONS steps, 40 by default", () =
     if (saved === undefined) delete process.env.COMPETITOR_MAX_ACTIONS;
     else process.env.COMPETITOR_MAX_ACTIONS = saved;
   }
+});
+
+test("shares the race budget out so one looping racer cannot stop the others", () => {
+  const shares = raceBudgetShares(DEFAULT_RACE_LLM_BUDGET_USD, 4);
+  assert.equal(shares.master, DEFAULT_RACE_LLM_BUDGET_USD * MASTER_BUDGET_SHARE);
+  // Room for a Claude Haiku racer's 40 steps (about $0.0026 each), redos included.
+  assert.equal(shares.racer, 0.225);
+  // The shares add up to the race's budget, and no more.
+  assert.equal(shares.master + 4 * shares.racer, DEFAULT_RACE_LLM_BUDGET_USD);
+  const small = raceBudgetShares(0.5, 4);
+  assert.ok(Math.abs(small.master + 4 * small.racer - 0.5) < 1e-12);
 });

@@ -22,6 +22,12 @@ const FAILURE_RULES: readonly FailureRule[] = [
     cause: "stopped after its model provider rate-limited it",
     problem: "the model provider rate-limited it",
   },
+  // One spender's slice of the fight's budget: the others race on.
+  {
+    pattern: /share of the .*budget\b.*\b(?:exhausted|exceeded|spent)\b/i,
+    cause: "stopped when its share of the model budget ran out",
+    problem: "its share of the model budget ran out",
+  },
   {
     pattern: /budget\b.*\b(?:exhausted|exceeded|spent)\b/i,
     cause: "stopped when the fight's model budget ran out",
