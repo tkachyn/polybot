@@ -89,8 +89,8 @@ export function MarketRail({ fight, priceHistory, slip, onSlipChange }: MarketRa
         priceHistory={priceHistory}
         sabotageAt={fight.sabotage?.firedAt ?? null}
         endAt={fight.status === "resolved" ? fight.finishedAt : null}
-        collapsed={panelOpen}
-        className={panelOpen ? undefined : styles.chartFloor}
+        volume={fight.volume}
+        className={cx(styles.chartFloor, panelOpen && styles.chartFloorCompact)}
       />
       <OutcomeTable fight={fight} slip={activeSlip} onSelect={select} className={cx(styles.table, panelOpen && styles.tableShrink)} />
       {panel}

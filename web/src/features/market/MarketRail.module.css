@@ -15,9 +15,14 @@
   overflow: hidden;
 }
 
-/* Expanded chart only; the collapsed legend strip takes its natural height. */
+/* The chart stays on screen while an order is open: a trader needs to see
+   what they are buying into. It gives up height for the panel, not presence. */
 .chartFloor {
   min-height: 180px;
+}
+
+.chartFloorCompact {
+  min-height: 104px;
 }
 
 .table {

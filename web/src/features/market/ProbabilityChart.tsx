@@ -143,22 +143,53 @@ type PlotProps = {
 };
 
 /** One amount floating over the plot, with the lane it rises in. */
-type MoneyFlash = { id: number; amount: number; lane: number };
+type MoneyFlash = {
+  id: number;
+  amount: number;
+  lane: number;
+  /** The racer whose price moved most on this trade; null if none did. */
+  racerId: string | null;
+};
 
 /** How long an amount stays on screen. Must match the CSS animation. */
 const MONEY_FLASH_MS = 2600;
 /** Vertical lanes, so amounts arriving together do not stack on one line. */
 const MONEY_LANES = 5;
+/** Where the lowest lane sits, clear of the x-axis labels. */
+const MONEY_BASE_PX = 26;
+/** Gap between lanes. */
+const MONEY_LANE_PX = 16;
+
+/**
+ * Lane offsets in px, squeezed to fit short plots. The rail's chart is half
+ * the height of the lobby's, and fixed offsets there would put the top lane
+ * in the middle of the plot instead of at its foot.
+ */
+function moneyLaneOffset(lane: number, plotHeight: number): number {
+  if (plotHeight <= 0) return MONEY_BASE_PX + lane * MONEY_LANE_PX;
+  const base = Math.min(MONEY_BASE_PX, plotHeight * 0.12);
+  const step = Math.min(MONEY_LANE_PX, Math.max(7, plotHeight * 0.055));
+  return base + lane * step;
+}
 
 /**
  * Turns a running volume total into one flash per increase. Only the delta is
  * shown: that is the money that just traded, not the total already in.
+ *
+ * The flash is attributed to whichever racer's price moved most across the
+ * same step, so the amount appears in the colour of the line it just moved.
  */
-function useMoneyFlow(volume: number | undefined): MoneyFlash[] {
+function useMoneyFlow(volume: number | undefined, prices: Record<string, number>): MoneyFlash[] {
   const [flashes, setFlashes] = useState<MoneyFlash[]>([]);
   const previous = useRef<number | undefined>(undefined);
   const nextId = useRef(0);
   const timers = useRef(new Set<ReturnType<typeof setTimeout>>());
+  // The latest prices, and the prices as of the last flash, so the mover is
+  // measured over the same step as the volume delta.
+  const latestPrices = useRef(prices);
+  const pricesAtLastFlash = useRef(prices);
+  const lastMover = useRef<string | null>(null);
+  latestPrices.current = prices;
 
   // Clear every pending removal on unmount; a flash outliving the chart would
   // set state on a gone component.
@@ -177,9 +208,32 @@ function useMoneyFlow(volume: number | undefined): MoneyFlash[] {
     // The first reading is the volume already traded, not a new trade.
     if (typeof before !== "number" || volume <= before) return;
 
+    const current = latestPrices.current;
+    const since = pricesAtLastFlash.current;
+    pricesAtLastFlash.current = current;
+    let racerId: string | null = null;
+    let biggest = 0;
+    let leader: string | null = null;
+    let best = -1;
+    for (const [id, price] of Object.entries(current)) {
+      const moved = Math.abs(price - (since[id] ?? price));
+      if (moved > biggest) {
+        biggest = moved;
+        racerId = id;
+      }
+      if (price > best) {
+        best = price;
+        leader = id;
+      }
+    }
+    // A trade too small to shift a rounded price still belongs to someone:
+    // keep the last line that moved, else the one the market favours.
+    if (!racerId) racerId = lastMover.current ?? leader;
+    else lastMover.current = racerId;
+
     const id = nextId.current;
     nextId.current += 1;
-    setFlashes((list) => [...list, { id, amount: volume - before, lane: id % MONEY_LANES }]);
+    setFlashes((list) => [...list, { id, amount: volume - before, lane: id % MONEY_LANES, racerId }]);
 
     const timer = setTimeout(() => {
       timers.current.delete(timer);
@@ -200,9 +254,9 @@ function Plot({ agents, visuals, priceHistory, range, endAt, sabotageAt, sabotag
   const { width, height } = useElementSize(box);
   const [hoverX, setHoverX] = useState<number | null>(null);
   const descId = useId();
-  const moneyFlow = useMoneyFlow(volume);
 
   const current = useMemo(() => Object.fromEntries(agents.map((a) => [a.racerId, a.yes])), [agents]);
+  const moneyFlow = useMoneyFlow(volume, current);
   const win = useMemo(() => buildChartWindow({ history: priceHistory, range, end, current }), [priceHistory, range, end, current]);
 
   const innerW = Math.max(0, width - MARGIN.left - MARGIN.right);
@@ -214,6 +268,12 @@ function Plot({ agents, visuals, priceHistory, range, endAt, sabotageAt, sabotag
   const x = linearScale(win.start, win.end, left, right);
   const y = linearScale(0, 1, bottom, top);
   const drawable = innerW > 0 && innerH > 0;
+
+  // racerId → identity colour, so a flash matches its line.
+  const moneyColors = useMemo(
+    () => Object.fromEntries(agents.map((a, i) => [a.racerId, (visuals[i] ?? agentVisual(a.agent)).color])),
+    [agents, visuals],
+  );
 
   const series = drawable
     ? agents.map((a, i) => ({ agent: a, color: (visuals[i] ?? agentVisual(a.agent)).color, path: seriesPath(win.points, a.racerId, x, y) }))
@@ -348,7 +408,16 @@ function Plot({ agents, visuals, priceHistory, range, endAt, sabotageAt, sabotag
       {moneyFlow.length > 0 && (
         <div className={styles.moneyFlow} aria-hidden="true">
           {moneyFlow.map((flash) => (
-            <span key={flash.id} className={styles.money} style={{ bottom: `${12 + flash.lane * 17}%` }}>
+            <span
+              key={flash.id}
+              className={styles.money}
+              style={{
+                // Stacked just above the x axis, so every amount rises from
+                // the foot of the plot rather than out of the middle of it.
+                bottom: `${moneyLaneOffset(flash.lane, height)}px`,
+                color: (flash.racerId && moneyColors[flash.racerId]) || undefined,
+              }}
+            >
               +{formatCompactMoney(flash.amount)}
             </span>
           ))}

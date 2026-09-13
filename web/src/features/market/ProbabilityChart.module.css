@@ -232,6 +232,7 @@
   font-size: var(--fs-body-sm);
   font-weight: var(--fw-medium);
   font-variant-numeric: tabular-nums;
+  /* Falls back to positive green; the flash sets its line's colour inline. */
   color: var(--color-positive);
   white-space: nowrap;
   animation: money-rise 2600ms var(--ease-standard) forwards;
@@ -251,7 +252,7 @@
   }
   100% {
     opacity: 0;
-    transform: translateY(-26px);
+    transform: translateY(-42px);
   }
 }
 
