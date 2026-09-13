@@ -224,11 +224,14 @@ export function SessionProvider({ children, userId: userIdOverride }: SessionPro
     await loadPortfolio();
   }, [loadPortfolio]);
 
-  const streamStatus = useEventStream<UserStreamEvents>(
+  const userStream = useEventStream<UserStreamEvents>(
     ensured ? userStreamUrl(userId) : null,
     { portfolio: applyPortfolio },
     { reconnectKey: streamEpoch },
   );
+  // The stream opens once the server has confirmed the user. Until then it
+  // is still coming up: "connecting", not "closed" (which reads as Offline).
+  const streamStatus: StreamStatus = ensured ? userStream : "connecting";
 
   // A failing stream may mean the server forgot the user: check and re-ensure.
   useEffect(() => {

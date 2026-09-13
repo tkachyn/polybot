@@ -39,7 +39,8 @@ export function PortfolioPage() {
             </span>
           ) : undefined
         }
-        actions={<ConnectionIndicator status={streamStatus} />}
+        // Until the portfolio loads, the stream is still coming up: "Connecting", never "Live" or "Offline".
+        actions={<ConnectionIndicator status={!loaded && streamStatus !== "reconnecting" ? "connecting" : streamStatus} />}
       />
 
       {!loaded && status === "error" && <ErrorBanner error={error} title="Couldn’t load your portfolio." onRetry={retry} retrying={retrying} className={styles.banner} />}

@@ -50,10 +50,16 @@ export function HistoryTable({ history }: HistoryTableProps) {
     return out;
   }, [history]);
 
+  // No counts until the history has loaded: a "0" would read as "none".
   const options = useMemo<SegmentedOption<Filter>[]>(
     () => [
-      { value: "all", label: "All", count: history?.length ?? 0 },
-      ...TYPE_ORDER.map((type) => ({ value: type, label: TYPE_LABEL[type], count: counts[type] ?? 0, disabled: !counts[type] && filter !== type })),
+      { value: "all", label: "All", count: history?.length },
+      ...TYPE_ORDER.map((type) => ({
+        value: type,
+        label: TYPE_LABEL[type],
+        count: history ? (counts[type] ?? 0) : undefined,
+        disabled: !counts[type] && filter !== type,
+      })),
     ],
     [counts, history, filter],
   );
