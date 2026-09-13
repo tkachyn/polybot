@@ -17,8 +17,16 @@ describe("placeholder fights", () => {
   const fights = buildPlaceholderFights(NOW, [412]);
 
   it("builds one card per template, in lobby order", () => {
-    expect(fights.map((f) => f.status)).toEqual(["live", "live", "upcoming", "upcoming", "resolved", "resolved"]);
+    const rank = { live: 0, upcoming: 1, resolved: 2 } as const;
+    const ranks = fights.map((f) => rank[f.status]);
+    expect(ranks).toEqual([...ranks].sort((a, b) => a - b));
     expect(fights).toHaveLength(PLACEHOLDER_TEMPLATES.length);
+  });
+
+  it("fills the upcoming section with many samples, soonest first", () => {
+    const starts = fights.filter((f) => f.status === "upcoming").map((f) => f.startsAt!);
+    expect(starts).toHaveLength(18);
+    expect(starts).toEqual([...starts].sort((a, b) => a - b));
   });
 
   it("respects the handoff's text bounds and four agents", () => {
@@ -42,9 +50,12 @@ describe("placeholder fights", () => {
   });
 
   it("places times relative to now", () => {
-    const [live, , upcoming, , resolved, voided] = fights;
+    const live = fights.find((f) => f.status === "live");
+    const [resolved, voided] = fights.filter((f) => f.status === "resolved");
     expect(live!.startedAt).toBeLessThan(NOW);
-    expect(upcoming!.startsAt).toBeGreaterThan(NOW);
+    for (const upcoming of fights.filter((f) => f.status === "upcoming")) {
+      expect(upcoming.startsAt).toBeGreaterThan(NOW);
+    }
     expect(resolved!.finishedAt).toBeLessThan(NOW);
     expect(resolved!.winnerRacerId).toBe("racer-2");
     expect(voided!.voided).toBe(true);
@@ -89,7 +100,7 @@ describe("placeholderNumbers", () => {
 
   it("numbers upcoming previews after the newest real fight", () => {
     const numbers = placeholderNumbers(range(428, 459));
-    expect(upcomingIndexes.map((i) => numbers[i])).toEqual([460, 461]);
+    expect(upcomingIndexes.map((i) => numbers[i])).toEqual(range(460, 459 + upcomingIndexes.length));
   });
 
   it("numbers the others below the oldest real fight when there is room", () => {
@@ -100,7 +111,9 @@ describe("placeholderNumbers", () => {
 
   it("sits around the default number when the backend has no fight", () => {
     const numbers = placeholderNumbers([]);
-    expect(upcomingIndexes.map((i) => numbers[i])).toEqual([DEFAULT_PREVIEW_NUMBER, DEFAULT_PREVIEW_NUMBER + 1]);
+    expect(upcomingIndexes.map((i) => numbers[i])).toEqual(
+      range(DEFAULT_PREVIEW_NUMBER, DEFAULT_PREVIEW_NUMBER + upcomingIndexes.length - 1),
+    );
   });
 
   it("ignores values that are not fight numbers", () => {
