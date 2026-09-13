@@ -67,8 +67,13 @@ function hazard(
   return { hazardType, targetRole: ROLE, durationMs, intensity };
 }
 
-function applyHazard(page: Page, command: DisruptionCommand, id: string): Promise<ApplyResult> {
-  return page.evaluate<ApplyResult>(buildDisruptionScript(command, id));
+function applyHazard(
+  page: Page,
+  command: DisruptionCommand,
+  id: string,
+  options: { externalSite?: boolean } = {},
+): Promise<ApplyResult> {
+  return page.evaluate<ApplyResult>(buildDisruptionScript(command, id, options));
 }
 
 function revertHazard(page: Page, id: string): Promise<void> {
@@ -248,6 +253,21 @@ browserTest("blocking_modal remains until manual DOM recovery at intensity 3", a
     await page.locator(SELECTOR).first().click({ timeout: 1_000 });
     assert.equal(await clicks(page), 1);
     await waitForRevert(page, originalBody);
+  } finally {
+    await page.close();
+  }
+});
+
+browserTest("an external-site blocking modal has a visible Close recovery", async () => {
+  const page = await openCourse();
+  try {
+    await applyHazard(page, hazard("blocking_modal", 3, 8_000), "d-external-modal", { externalSite: true });
+    const close = page.getByRole("button", { name: "Close" });
+    assert.equal(await close.count(), 1);
+    await close.click({ timeout: 1_000 });
+    assert.equal(await page.locator('[role="dialog"]').count(), 0);
+    await page.locator(SELECTOR).click({ timeout: 1_000 });
+    assert.equal(await clicks(page), 1);
   } finally {
     await page.close();
   }

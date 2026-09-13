@@ -68,11 +68,20 @@ test("every hazard script parses and carries the contract's roles and labels", (
     { hazardType: "blocking_modal", targetRole: "primary-action", durationMs: 5_000, intensity: 1 },
     "blocking-1",
   );
-  assert.doesNotMatch(blocking, /dismiss-overlay|Close/);
+  assert.match(blocking, /const externalSite = false/);
   assert.match(blocking, /We’re having trouble loading this page/);
   assert.match(blocking, /Please try again in a moment/);
   assert.doesNotMatch(blocking, /Use an in-page DOM recovery action|Inspect the DOM/i);
   assert.match(blocking, /__arenaRecoverDisruptions/);
+
+  const externalBlocking = buildDisruptionScript(
+    { hazardType: "blocking_modal", targetRole: "primary-action", durationMs: 5_000, intensity: 1 },
+    "blocking-external-1",
+    { externalSite: true },
+  );
+  assert.match(externalBlocking, /const externalSite = true/);
+  assert.match(externalBlocking, /data-arena-recovery/);
+  assert.match(externalBlocking, /close\.textContent = "Close"/);
 });
 
 test("rejects unsafe disruption bounds", () => {

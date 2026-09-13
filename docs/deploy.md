@@ -108,9 +108,10 @@ The Amazon run uses a random product category unless `AMAZON_QUERY` is set,
 stops before order submission, and may stop earlier if Amazon requires
 interactive sign-in or presents a CAPTCHA.
 
-Amazon fights always use the rehearsed two-step sabotage sequence. A blocking
-modal fires after product selection, followed by a decoy checkout control after
-the item reaches the cart. The master model does not select these two hazards.
+Amazon fights always use the rehearsed two-step sabotage sequence. The primary
+action moves after product selection, followed by a blocking modal with a Close
+button after the item reaches the cart. The master model does not select these
+two hazards.
 
 ---
 
