@@ -2,7 +2,7 @@
  * Pure formatters for the evaluation report and the robustness matrix. Like
  * lib/format, every function accepts null/undefined/NaN and returns "—".
  */
-import type { AgentEvaluation, EvaluatedSabotageStep, RobustnessCell, ServerMode } from "@contract";
+import type { AgentEvaluation, EvaluatedSabotageStep, EvaluationStatus, RobustnessCell, ServerMode } from "@contract";
 import { EMPTY, MINUS, formatClock, formatDuration, formatLogTime, formatNumber, formatPercent, isFiniteNumber, roundTo, type Numeric } from "../../lib/format";
 import { HAZARD_LABEL, REACTION_LABEL, ROBUSTNESS_NOT_SCORED, ROBUSTNESS_NOT_TESTED, SABOTAGE_TIER_LABEL } from "../../lib/labels";
 
@@ -86,6 +86,18 @@ export function evidenceNotes({ mode, replayAvailable, traceAvailable, archived 
     notes.push("No Steel trace was saved for this session.");
   }
   return notes;
+}
+
+/** The report's status as shown. "finalizing": the fight has resolved, its final evaluation isn't in yet. */
+export type EvaluationDisplayStatus = EvaluationStatus | "finalizing";
+
+/**
+ * A resolved fight's evaluation stays provisional for about a second, until
+ * the final one is written. "Provisional" says the fight is still running,
+ * so a resolved fight reads "finalizing" instead.
+ */
+export function evaluationDisplayStatus(status: EvaluationStatus, fightResolved: boolean): EvaluationDisplayStatus {
+  return status === "provisional" && fightResolved ? "finalizing" : status;
 }
 
 /** Survival rate as a whole percent: 0.8333 → "83%". */

@@ -124,6 +124,9 @@ export const EVALUATION_STATUS_LABEL: Readonly<Record<EvaluationStatus, string>>
   final: "Final",
 };
 
+/** A resolved fight whose final evaluation is still being written (shown instead of Provisional). */
+export const EVALUATION_FINALIZING_LABEL = "Finalizing";
+
 /** Why a browser action could not complete. */
 export const BLOCKED_BY_LABEL: Readonly<Record<BlockedBy, string>> = {
   modal: "Modal",

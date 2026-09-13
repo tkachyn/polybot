@@ -8,6 +8,7 @@ import {
   cellCountsText,
   checkpointParts,
   describeHitOffset,
+  evaluationDisplayStatus,
   evidenceNotes,
   formatCheckpoint,
   formatFightTime,
@@ -252,6 +253,15 @@ describe("time formatting", () => {
   it("gives times into the fight", () => {
     expect(formatFightTime(84_000, 1_000)).toBe("01:23");
     expect(formatFightTime(null, 1_000)).toBe(EMPTY);
+  });
+});
+
+describe("report status", () => {
+  it("never calls a resolved fight's report provisional: it is finalizing", () => {
+    expect(evaluationDisplayStatus("provisional", false)).toBe("provisional");
+    expect(evaluationDisplayStatus("provisional", true)).toBe("finalizing");
+    expect(evaluationDisplayStatus("final", true)).toBe("final");
+    expect(evaluationDisplayStatus("final", false)).toBe("final");
   });
 });
 

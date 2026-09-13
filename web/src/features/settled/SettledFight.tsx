@@ -66,7 +66,11 @@ export function SettledFight({ fight, priceHistory, evaluation }: SettledFightPr
         Resolved fights
       </ButtonLink>
       <SettledHeader fight={fight} />
-      <EvaluationReport raceId={fight.raceId} pointer={evaluation === undefined ? fight.evaluation : evaluation} />
+      <EvaluationReport
+        raceId={fight.raceId}
+        pointer={evaluation === undefined ? fight.evaluation : evaluation}
+        resolved={fight.status === "resolved"}
+      />
       <AgentSettlementTable fight={fight} />
       <SabotageRecap fight={fight} />
       <PayoutCard fight={fight} />

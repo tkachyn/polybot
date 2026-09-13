@@ -15,7 +15,7 @@ import { formatDateTime, formatFightNumber, formatNumber, isFiniteNumber } from 
 import { EVALUATION_MODE_LABEL, REACTION_LABEL, SIMULATED_AGENTS_COPY, SIMULATED_AGENTS_LABEL } from "../../lib/labels";
 import { AgentEvaluationSection } from "./AgentEvaluationSection";
 import { EvaluationStatusChip, OutcomeChip, ReactionChip } from "./Chip";
-import { robustnessView, sabotageStepMeta, sabotageStepTitle } from "./format";
+import { evaluationDisplayStatus, robustnessView, sabotageStepMeta, sabotageStepTitle } from "./format";
 import { REACTION_TONE } from "./tones";
 import { Disclosure } from "./TraceTables";
 import { useFightEvaluation } from "./useFightEvaluation";
@@ -28,17 +28,21 @@ export type EvaluationReportProps = {
   raceId: string;
   /** `FightDetail.evaluation`. A new `updatedAt` refetches; an equal pointer never does. */
   pointer: FightEvaluationPointer | null | undefined;
+  /** The fight has resolved: a provisional evaluation then reads "Finalizing", never "Provisional". */
+  resolved?: boolean;
   className?: string;
 };
 
-export function EvaluationReport({ raceId, pointer, className }: EvaluationReportProps) {
+export function EvaluationReport({ raceId, pointer, resolved = false, className }: EvaluationReportProps) {
   const { evaluation, status, error, updating, reload } = useFightEvaluation(raceId, pointer);
   const baseId = useId().replace(/:/g, "");
   const headingId = `${baseId}-title`;
 
   let body;
   if (status === "ready" && evaluation) {
-    body = <ReportBody evaluation={evaluation} baseId={baseId} headingId={headingId} updating={updating} error={error} onRetry={reload} />;
+    body = (
+      <ReportBody evaluation={evaluation} baseId={baseId} headingId={headingId} updating={updating} error={error} onRetry={reload} resolved={resolved} />
+    );
   } else if (status === "not_found") {
     body = (
       <ReportCard headingId={headingId}>
@@ -130,9 +134,10 @@ type ReportBodyProps = {
   updating: boolean;
   error: unknown;
   onRetry: () => void;
+  resolved: boolean;
 };
 
-function ReportBody({ evaluation, baseId, headingId, updating, error, onRetry }: ReportBodyProps) {
+function ReportBody({ evaluation, baseId, headingId, updating, error, onRetry, resolved }: ReportBodyProps) {
   const visuals = useMemo(() => rosterVisuals(evaluation.agents.map((a) => a.agent)), [evaluation.agents]);
   const sectionIds = evaluation.agents.map((_, i) => `${baseId}-agent-${i + 1}`);
   const simulated = evaluation.mode === "simulated";
@@ -145,7 +150,7 @@ function ReportBody({ evaluation, baseId, headingId, updating, error, onRetry }:
             <ReportTitle headingId={headingId} eyebrow={`Fight ${formatFightNumber(evaluation.number)} · Evaluation`} />
             <div className={styles.badges}>
               {updating && <span className={cx("label", styles.updating)}>Updating…</span>}
-              <EvaluationStatusChip status={evaluation.status} />
+              <EvaluationStatusChip status={evaluationDisplayStatus(evaluation.status, resolved)} />
               {simulated && (
                 <Tag tone="edge" title={SIMULATED_AGENTS_COPY} className={styles.simTag}>
                   {SIMULATED_AGENTS_LABEL}
