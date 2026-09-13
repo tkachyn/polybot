@@ -9,7 +9,7 @@
  * ones in between are skipped.
  */
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import type { BrowserView, CursorPosition, FightStatus, FrameInfo } from "@contract";
+import type { BrowserView, FightStatus, FrameInfo } from "@contract";
 import { fightFrameUrl } from "../../api/client";
 import { cx } from "../../lib/cx";
 import { useNow } from "../../state/clock";
@@ -28,10 +28,6 @@ export type LiveCaptureProps = {
   startsAt: number | null;
   /** Agent name, for the image alt text. */
   agentName: string;
-  /** Latest browser pointer position reported by a click or text input. */
-  cursor?: CursorPosition | null;
-  /** Action-log sequence for retriggering the indicator on repeated clicks. */
-  cursorSeq?: number | null;
   /** Pinned across the top of the capture (e.g. the live URL). */
   overlay?: ReactNode;
   className?: string;
@@ -44,7 +40,7 @@ export function LiveCapture(props: LiveCaptureProps) {
 
 type Shown = { src: string; seq: number; capturedAt: number };
 
-function CaptureSurface({ raceId, racerId, frame, browserView, fightStatus, startsAt, agentName, cursor, cursorSeq, overlay, className }: LiveCaptureProps) {
+function CaptureSurface({ raceId, racerId, frame, browserView, fightStatus, startsAt, agentName, overlay, className }: LiveCaptureProps) {
   const shown = useBufferedFrame(raceId, racerId, frame);
   const viewerUrl = browserView?.status === "live" ? browserView.viewerUrl ?? null : null;
   const [viewerFailed, setViewerFailed] = useState(false);
@@ -67,34 +63,9 @@ function CaptureSurface({ raceId, racerId, frame, browserView, fightStatus, star
       ) : (
         <Placeholder fightStatus={fightStatus} startsAt={startsAt} />
       )}
-      <CursorIndicator cursor={cursor} cursorSeq={cursorSeq} />
       {overlay && <div className={styles.overlay}>{overlay}</div>}
       {!showViewer && shown && fightStatus === "live" && <FrameAge capturedAt={shown.capturedAt} />}
     </div>
-  );
-}
-
-function CursorIndicator({ cursor, cursorSeq }: { cursor?: CursorPosition | null; cursorSeq?: number | null }) {
-  const [shown, setShown] = useState<CursorPosition | null>(null);
-  const cursorKey = cursor
-    ? `${cursorSeq ?? "cursor"}:${cursor.x}:${cursor.y}:${cursor.viewportWidth}:${cursor.viewportHeight}:${cursor.action}`
-    : null;
-
-  useEffect(() => {
-    if (!cursor) return undefined;
-    setShown(cursor);
-    const timer = window.setTimeout(() => setShown(null), 1_500);
-    return () => window.clearTimeout(timer);
-  }, [cursorKey]);
-
-  if (!shown) return null;
-  const left = `${Math.max(0, Math.min(1, shown.x / shown.viewportWidth)) * 100}%`;
-  const top = `${Math.max(0, Math.min(1, shown.y / shown.viewportHeight)) * 100}%`;
-  return (
-    <span className={styles.cursorIndicator} style={{ left, top }} aria-hidden="true">
-      <span key={cursorKey} className={styles.cursorPulse} />
-      <span className={styles.cursorDot} />
-    </span>
   );
 }
 

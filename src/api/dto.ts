@@ -599,7 +599,7 @@ export type SabotageReaction = {
   checkpoint: number;
   checkpointLabel: string;
   appliedAt: number;
-  /** When the hazard itself expired (engine recovery), if it did. */
+  /** When the hazard was cleared: by the agent (persistent sabotage), or by expiry in older fights. */
   expiredAt: number | null;
   /** First verified progress after the hit: the next checkpoint or the finish. */
   progressedAt: number | null;

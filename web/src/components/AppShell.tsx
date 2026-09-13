@@ -26,7 +26,7 @@ export { Page, PageHeader } from "./Page";
 type NavItem = {
   to: string;
   label: string;
-  /** Retained for consumers that render nav with icons; the navbar is text-only. */
+  /** Shown in the phone bottom bar, where six text tabs would not fit. */
   Icon: ComponentType<IconProps>;
   /** Extra path prefixes that mark this item active. */
   match?: (pathname: string) => boolean;
@@ -84,15 +84,19 @@ function Navbar() {
 
         <nav className={styles.nav} aria-label="Primary">
           <ul className={styles.navList}>
-            {items.map(({ to, label, match }) => (
+            {items.map(({ to, label, Icon, match }) => (
               <li key={to}>
                 <NavLink
                   to={to}
                   end={to === "/"}
+                  title={label}
                   className={({ isActive }) => cx(styles.navLink, (match ? match(pathname) : isActive) && styles.navActive)}
                   aria-current={match ? (match(pathname) ? "page" : undefined) : undefined}
                 >
-                  {label}
+                  {/* Wide screens read the label; phones get the icon, with the
+                      label kept for screen readers. */}
+                  <Icon size={20} className={styles.navIcon} />
+                  <span className={styles.navLabel}>{label}</span>
                 </NavLink>
               </li>
             ))}

@@ -90,6 +90,10 @@
   display: none;
 }
 
+.navIcon {
+  display: none;
+}
+
 .navLink {
   display: inline-block;
   padding-block: var(--space-1);
@@ -181,14 +185,42 @@
   }
 }
 
-/* --- Compact (< 760px): the wordmark drops, the mark stays ------------------ */
+/* --- Phones (< 760px): destinations move to a bottom bar ---------------------
+ *
+ * Six text tabs do not fit a phone's top row, so on small screens the nav
+ * becomes a fixed bottom bar of 44px icon targets — thumb-reachable, clear of
+ * the home indicator — and the top row keeps only the brand and the account.
+ */
 
 @media (max-width: 759px) {
   .navbarInner {
-    gap: var(--space-4);
+    gap: var(--space-3);
   }
 
-  .brandText {
+  .nav {
+    position: fixed;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    z-index: var(--z-topbar);
+    flex: none;
+    border-top: 1px solid var(--color-hairline);
+    background-color: var(--color-ground);
+    padding: var(--space-1) max(var(--space-1), var(--safe-right)) max(var(--space-1), var(--safe-bottom))
+      max(var(--space-1), var(--safe-left));
+  }
+
+  .navList {
+    justify-content: space-around;
+    gap: var(--space-1);
+  }
+
+  .navIcon {
+    display: block;
+  }
+
+  /* The label is the icon's accessible name on phones. */
+  .navLabel {
     position: absolute;
     width: 1px;
     height: 1px;
@@ -198,8 +230,26 @@
   }
 
   .navLink {
-    font-size: var(--fs-body-sm);
-    letter-spacing: 0.06em;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 44px;
+    height: 44px;
+    padding-block: 0;
+  }
+
+  /* The bar is fixed, so the column has to end above it. */
+  .content {
+    padding-bottom: calc(52px + var(--safe-bottom));
+  }
+
+  .brandText {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
   }
 
   .avatar {

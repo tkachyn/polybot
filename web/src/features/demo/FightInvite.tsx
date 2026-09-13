@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import QRCode from "qrcode";
 import { Button, ButtonLink } from "../../components";
 import { Dialog } from "../evaluation/Dialog";
+import { copyInviteText, fightInviteUrl } from "./invite";
 import styles from "./FightInvite.module.css";
 
 /** Kept in step with .qrWrap in FightInvite.module.css. */
@@ -12,9 +13,10 @@ export function FightInvite({ raceId }: { raceId: string }) {
   const [open, setOpen] = useState(false);
   const [qr, setQr] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [canShare] = useState(() => typeof navigator !== "undefined" && typeof navigator.share === "function");
   const url = useMemo(() => {
     if (typeof window === "undefined") return "";
-    return `${window.location.origin}/fights/${encodeURIComponent(raceId)}?join=1`;
+    return fightInviteUrl(window.location.origin, raceId);
   }, [raceId]);
 
   useEffect(() => {
@@ -29,9 +31,21 @@ export function FightInvite({ raceId }: { raceId: string }) {
   }, [open, url]);
 
   const copy = async () => {
-    await navigator.clipboard.writeText(url);
-    setCopied(true);
-    window.setTimeout(() => setCopied(false), 1500);
+    try {
+      await copyInviteText(url);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1500);
+    } catch {
+      setCopied(false);
+    }
+  };
+
+  const share = async () => {
+    try {
+      await navigator.share({ title: "Sabotage Markets", text: "Join this fight and bet with virtual credits.", url });
+    } catch (error) {
+      if (!(error instanceof DOMException && error.name === "AbortError")) await copy();
+    }
   };
 
   return (
@@ -45,6 +59,7 @@ export function FightInvite({ raceId }: { raceId: string }) {
             </div>
             <p className={styles.url}>{url}</p>
             <div className={styles.actions}>
+              {canShare && <Button variant="ghost" onClick={() => void share()}>Share</Button>}
               <Button variant="ghost" onClick={() => void copy()}>{copied ? "Copied" : "Copy link"}</Button>
               <ButtonLink variant="action" to={`/fights/${encodeURIComponent(raceId)}/standings`}>Judge standings</ButtonLink>
             </div>

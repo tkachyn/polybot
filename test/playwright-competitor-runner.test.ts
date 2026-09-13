@@ -351,7 +351,9 @@ test("moves the browser cursor to a target and reports its position", async () =
     { type: "finish" },
   ]);
 
-  assert.deepEqual(page.moves, [{ x: 70, y: 50, steps: 12 }]);
+  assert.ok(page.moves.length > 1, "the cursor should move through intermediate points");
+  assert.ok(page.moves.some((move) => move.x > 24 && move.x < 70));
+  assert.deepEqual(page.moves.at(-1), { x: 70, y: 50, steps: undefined });
   assert.deepEqual(reports[0].evidence?.cursor, {
     x: 70,
     y: 50,

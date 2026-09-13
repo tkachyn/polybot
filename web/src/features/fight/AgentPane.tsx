@@ -29,7 +29,6 @@ export function AgentPane({ fight, agent, visual, slip, markers, onOpen, buttonR
   const step = formatStep(agent.step, agent.maxSteps);
   const inSlip = slip?.racerId === agent.racerId;
   const name = agent.agent.name;
-  const cursorEntry = agent.log.slice().reverse().find((entry) => entry.cursor);
 
   return (
     <button
@@ -64,8 +63,6 @@ export function AgentPane({ fight, agent, visual, slip, markers, onOpen, buttonR
         fightStatus={fight.status}
         startsAt={fight.startsAt}
         agentName={name}
-        cursor={cursorEntry?.cursor ?? null}
-        cursorSeq={cursorEntry?.seq ?? null}
         className={styles.capture}
       />
 

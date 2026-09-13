@@ -122,6 +122,10 @@
   --card-right-width: 104px; /* handoff: fight card right column */
   --chip-basis: 78px; /* handoff: agent chip flex basis */
   --page-gutter: 24px;
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-right: env(safe-area-inset-right, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-left: env(safe-area-inset-left, 0px);
   /* Wide enough that the lobby's main column still clears the featured
      card's 860px two-column breakpoint with the resolved rail beside it. */
   --content-max-width: 1300px;
