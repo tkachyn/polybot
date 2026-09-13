@@ -49,6 +49,11 @@ export function formatEta(etaMs: number | null, phase: RacerPhase): string {
   return `~${formatCountdown(etaMs)}`;
 }
 
+/** The agent's browser is still being driven, so its capture is live. */
+export function isAgentActive(phase: RacerPhase): boolean {
+  return phase === "running" || phase === "recovering";
+}
+
 // ---------------------------------------------------------------------------
 // Leader
 // ---------------------------------------------------------------------------

@@ -9,7 +9,7 @@ import { cx } from "../../lib/cx";
 import { formatCents } from "../../lib/format";
 import { SIDE_LABEL } from "../../lib/labels";
 import type { Slip } from "../market/types";
-import { agentStatusView, formatStep } from "./fightView";
+import { agentStatusView, formatStep, isAgentActive, isRaceOver } from "./fightView";
 import { StatusBand } from "./AgentStatus";
 import { LiveCapture } from "./LiveCapture";
 import styles from "./AgentPane.module.css";
@@ -69,6 +69,7 @@ export function AgentPane({ fight, agent, visual, slip, markers, onOpen, buttonR
         fightStatus={fight.status}
         startsAt={fight.startsAt}
         agentName={name}
+        final={!isAgentActive(agent.phase) || isRaceOver(fight)}
         className={styles.capture}
       />
 

@@ -112,6 +112,14 @@
   background-color: var(--color-text-muted);
 }
 
+/* The agent stopped: its last capture, no longer live. */
+.badgeFinal {
+  font-weight: var(--fw-semibold);
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  color: var(--color-text-secondary);
+}
+
 .badgeStale .badgeLive {
   color: var(--color-text-muted);
 }

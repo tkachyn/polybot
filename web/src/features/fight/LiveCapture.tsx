@@ -12,6 +12,7 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { BrowserView, FightStatus, FrameInfo } from "@contract";
 import { fightFrameUrl } from "../../api/client";
 import { cx } from "../../lib/cx";
+import { formatLogTime } from "../../lib/format";
 import { useNow } from "../../state/clock";
 import { STALE_FRAME_MS, frameAgeLabel } from "./fightView";
 import { ClockCountdown } from "./ClockCountdown";
@@ -28,6 +29,11 @@ export type LiveCaptureProps = {
   startsAt: number | null;
   /** Agent name, for the image alt text. */
   agentName: string;
+  /**
+   * The agent has stopped (finished, failed, timed out, or the race is over):
+   * its last capture is badged "Final frame" instead of LIVE.
+   */
+  final?: boolean;
   /** Pinned across the top of the capture (e.g. the live URL). */
   overlay?: ReactNode;
   className?: string;
@@ -40,7 +46,7 @@ export function LiveCapture(props: LiveCaptureProps) {
 
 type Shown = { src: string; seq: number; capturedAt: number };
 
-function CaptureSurface({ raceId, racerId, frame, browserView, fightStatus, startsAt, agentName, overlay, className }: LiveCaptureProps) {
+function CaptureSurface({ raceId, racerId, frame, browserView, fightStatus, startsAt, agentName, final = false, overlay, className }: LiveCaptureProps) {
   const shown = useBufferedFrame(raceId, racerId, frame);
   const viewerUrl = browserView?.status === "live" ? browserView.viewerUrl ?? null : null;
   const [viewerFailed, setViewerFailed] = useState(false);
@@ -64,8 +70,17 @@ function CaptureSurface({ raceId, racerId, frame, browserView, fightStatus, star
         <Placeholder fightStatus={fightStatus} startsAt={startsAt} />
       )}
       {overlay && <div className={styles.overlay}>{overlay}</div>}
-      {!showViewer && shown && fightStatus === "live" && <FrameAge capturedAt={shown.capturedAt} />}
+      {!showViewer && shown && fightStatus === "live" && (final ? <FinalFrame capturedAt={shown.capturedAt} /> : <FrameAge capturedAt={shown.capturedAt} />)}
     </div>
+  );
+}
+
+/** The agent stopped; this is the last capture it produced. */
+function FinalFrame({ capturedAt }: { capturedAt: number }) {
+  return (
+    <span className={styles.badge} title={`Last capture before the agent stopped, ${formatLogTime(capturedAt)}`}>
+      <span className={styles.badgeFinal}>Final frame</span>
+    </span>
   );
 }
 

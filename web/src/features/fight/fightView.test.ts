@@ -10,6 +10,7 @@ import {
   formatStep,
   frameAgeLabel,
   gridRows,
+  isAgentActive,
   isRaceOver,
   leaderView,
   marketStateView,
@@ -38,6 +39,15 @@ describe("agentStatusView", () => {
 
   it("reads Upcoming before the start, matching the header", () => {
     expect(agentStatusView({ runStatus: "run", phase: "starting" })).toEqual({ tone: "idle", label: "Upcoming" });
+  });
+
+  it("knows which agents still drive a browser", () => {
+    expect(isAgentActive("running")).toBe(true);
+    expect(isAgentActive("recovering")).toBe(true);
+    expect(isAgentActive("failed")).toBe(false);
+    expect(isAgentActive("finished")).toBe(false);
+    expect(isAgentActive("timed_out")).toBe(false);
+    expect(isAgentActive("ready")).toBe(false);
   });
 });
 
