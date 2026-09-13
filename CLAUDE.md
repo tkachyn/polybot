@@ -113,10 +113,14 @@ turn becomes a safe `inspect` marked `decisionIssue.fallback`. From the third `i
 row of an unchanged page, that step's history entry (and its `modelError`) tells the model to
 act; the step stays an action.
 
-Every configured competitor model gets its own sliding window
-(`OPENROUTER_MODEL_MAX_CALLS_PER_MINUTE`, default 20 per 60 s); the limiter's own defaults
-cover `openai/gpt-5.6-luna` and `anthropic/claude-haiku-4.5`, keyed by the configured id in
-any case. A 429, 408, 5xx or dropped connection becomes a `DecisionRetryError`:
+Every configured model, the racers' and `MASTER_LLM_MODEL` alike, gets one shared sliding
+window (`OPENROUTER_MODEL_MAX_CALLS_PER_MINUTE`, default 20 per 60 s); the limiter's own
+defaults cover `openai/gpt-5.6-luna` and `anthropic/claude-haiku-4.5`, keyed by the
+configured id in any case. The master never queues for a slot (`tryAcquireShare`): it takes
+one only when it is free, holds at most a quarter of a window it shares with a racer
+(`MASTER_CAPACITY_SHARE`), and sends each request once (`maxRetries: 0`, so no hidden SDK
+retry skips the limiter). Without a slot its call fails with `ModelCapacityError` and the
+caller falls back. A 429, 408, 5xx or dropped connection becomes a `DecisionRetryError`:
 `prepareForCall` waits out the Retry-After or reset hint, else backs off from 1 s, for at
 most 30 s before the provider answers again. The runner notes each pause and adds it to the
 step's `rateLimitWaitMs`; paced retries never count against its decision-failure limits (3 in

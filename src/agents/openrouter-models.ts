@@ -128,6 +128,20 @@ export class OpenRouterToolArgumentsError extends Error {
 }
 
 /**
+ * The most of a model's rate-limit window the master's calls may hold while
+ * a racer runs on the same model: racers keep the rest.
+ */
+export const MASTER_CAPACITY_SHARE = 0.25;
+
+/** A master call found no free slot in its model's window; racers keep priority. */
+export class ModelCapacityError extends Error {
+  constructor(model: string) {
+    super(`No free rate-limit capacity for ${model}; its racers keep priority`);
+    this.name = "ModelCapacityError";
+  }
+}
+
+/**
  * Providers occasionally wrap otherwise-valid tool JSON in markdown or add a
  * short preamble. Accept only bounded JSON repairs; never evaluate provider
  * output as JavaScript.
@@ -178,6 +192,8 @@ export type RateLimitWait = {
  */
 export class OpenRouterModelRateLimiter {
   private readonly calls = new Map<string, number[]>();
+  /** Slots taken by tryAcquireShare, per model; each also counts in `calls`. */
+  private readonly sharedCalls = new Map<string, number[]>();
   private readonly limits = new Map<string, ModelRateLimit>();
 
   constructor(
@@ -216,6 +232,35 @@ export class OpenRouterModelRateLimiter {
       }
       await pause(Math.max(1, calls[0] + limit.windowMs - now), signal, "Rate-limit wait aborted");
     }
+  }
+
+  /**
+   * A slot for a caller that must never hold up a racer, such as the master:
+   * taken only when one is free right now and such calls hold less than
+   * `share` of the model's window (at least one slot), so racers on the same
+   * model always keep the rest. Never waits; false means no slot was taken.
+   * Models without an entry always have room.
+   */
+  tryAcquireShare(model: string, share: number): boolean {
+    if (!Number.isFinite(share) || share <= 0 || share > 1) {
+      throw new Error("A rate-limit share must be above 0 and at most 1");
+    }
+    const key = modelKey(model);
+    const limit = this.limits.get(key);
+    if (!limit) return true;
+    const now = Date.now();
+    const recent = (timestamp: number) => timestamp > now - limit.windowMs;
+    const calls = (this.calls.get(key) ?? []).filter(recent);
+    const shared = (this.sharedCalls.get(key) ?? []).filter(recent);
+    if (calls.length >= limit.maxCalls ||
+      shared.length >= Math.max(1, Math.floor(limit.maxCalls * share))) {
+      return false;
+    }
+    calls.push(now);
+    shared.push(now);
+    this.calls.set(key, calls);
+    this.sharedCalls.set(key, shared);
+    return true;
   }
 }
 
@@ -302,6 +347,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 abstract class OpenRouterModelBase {
   protected readonly client: OpenAI;
   protected readonly maxOutputTokens: number;
+  /** Request options for every call; a call's own options win. */
+  protected readonly requestDefaults: { maxRetries?: number } = {};
   private capacityReserved = false;
   /**
    * Malformed tool payloads, and replies without the tool call, in the latest
@@ -320,6 +367,14 @@ abstract class OpenRouterModelBase {
       { waitedMs: 0, maxCalls: 0, windowMs: 0 };
     this.capacityReserved = true;
     return wait;
+  }
+
+  /**
+   * Rate-limit capacity for a request prepareForCall did not reserve. Waits
+   * for a slot by default; the master overrides this so it never waits.
+   */
+  protected async acquireCapacity(signal?: AbortSignal): Promise<void> {
+    await this.options.rateLimiter?.acquire(this.options.model, signal);
   }
 
   /**
@@ -342,9 +397,7 @@ abstract class OpenRouterModelBase {
     let redo: "malformed" | "missing" | null = null;
     for (let attempt = 0; attempt < 2; attempt += 1) {
       this.options.budget?.assertAvailable();
-      if (!this.capacityReserved) {
-        await this.options.rateLimiter?.acquire(this.options.model, request.signal);
-      }
+      if (!this.capacityReserved) await this.acquireCapacity(request.signal);
       this.capacityReserved = false;
       const response = await this.client.chat.completions.create({
         model: this.options.model,
@@ -366,7 +419,7 @@ abstract class OpenRouterModelBase {
         tool_choice: redo === "missing"
           ? "required"
           : { type: "function", function: { name: tool.function.name } },
-      }, { timeout: OPENROUTER_REQUEST_TIMEOUT_MS, ...request });
+      }, { timeout: OPENROUTER_REQUEST_TIMEOUT_MS, ...this.requestDefaults, ...request });
       const usage = response.usage as (typeof response.usage & { cost?: number }) | undefined;
       this.options.budget?.record(usage?.cost ?? 0);
       const call = response.choices[0]?.message.tool_calls?.[0];
@@ -607,6 +660,37 @@ export class OpenRouterMasterPolicyModel
   extends OpenRouterModelBase
   implements MasterPolicyModel
 {
+  /** Each request goes out once: the SDK's own retries would skip the rate limiter. */
+  protected override readonly requestDefaults = { maxRetries: 0 };
+  private readonly capacityShare: number;
+
+  constructor(options: OpenRouterModelOptions & {
+    /**
+     * The most of its model's window the master may hold. Default
+     * MASTER_CAPACITY_SHARE; 1 when no racer runs on the master's model.
+     */
+    capacityShare?: number;
+  }) {
+    super(options);
+    this.capacityShare = options.capacityShare ?? MASTER_CAPACITY_SHARE;
+    if (!(this.capacityShare > 0 && this.capacityShare <= 1)) {
+      throw new Error("The master's capacity share must be above 0 and at most 1");
+    }
+  }
+
+  /**
+   * The master never waits for capacity and never holds more than its share
+   * of a model's window, so it cannot hold up or starve a racer on the same
+   * model. Without a free slot the call fails at once and its callers fall
+   * back: a seed-derived sabotage plan, a page review asked again next step.
+   */
+  protected override async acquireCapacity(): Promise<void> {
+    const limiter = this.options.rateLimiter;
+    if (limiter && !limiter.tryAcquireShare(this.options.model, this.capacityShare)) {
+      throw new ModelCapacityError(this.options.model);
+    }
+  }
+
   async judgeCheckpoint(input: {
     task: string;
     racerId: string;

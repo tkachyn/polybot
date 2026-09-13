@@ -1,9 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { MASTER_CAPACITY_SHARE } from "../src/agents/openrouter-models.js";
 import {
   agentKeyForModel,
   competitorRoster,
   displayNameForModel,
+  masterCapacityShare,
+  modelRateLimits,
   openRouterAgents,
 } from "../src/application/production-race-factory.js";
 
@@ -60,4 +63,21 @@ test("an operator roster keeps its names but runs the roster models", () => {
     ["k4", "Four", "d/m4"],
   ]);
   assert.throws(() => openRouterAgents(agents.slice(0, 3), roster), /exactly 4 agents/);
+});
+
+test("paces the master in the same window as the racers on its model", () => {
+  const limit = { maxCalls: 20, windowMs: 60_000 };
+  const roster = competitorRoster(
+    "openai/gpt-5.6-luna,anthropic/claude-haiku-4.5,google/gemma-3-27b-it,openai/gpt-5.6-luna",
+  );
+  // One window per configured model, the master's included, each only once.
+  assert.deepEqual(modelRateLimits([...roster.values(), "openai/gpt-5.6-luna", undefined], limit), {
+    "openai/gpt-5.6-luna": limit,
+    "anthropic/claude-haiku-4.5": limit,
+    "google/gemma-3-27b-it": limit,
+  });
+  assert.ok("x-ai/grok-4.1" in modelRateLimits([...roster.values(), "x-ai/grok-4.1"], limit));
+  // On a racer's model the master holds only its share; on a model of its own, the whole window.
+  assert.equal(masterCapacityShare(roster, " OpenAI/GPT-5.6-Luna "), MASTER_CAPACITY_SHARE);
+  assert.equal(masterCapacityShare(roster, "x-ai/grok-4.1"), 1);
 });

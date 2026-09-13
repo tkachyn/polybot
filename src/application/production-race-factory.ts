@@ -4,10 +4,12 @@ import {
   type RaceObservationSource,
 } from "../agents/master-obstacle-provider.js";
 import {
+  MASTER_CAPACITY_SHARE,
   OpenRouterCompetitorDecisionModel,
   OpenRouterMasterPolicyModel,
   OpenRouterModelRateLimiter,
   OpenRouterUsageBudget,
+  type ModelRateLimit,
 } from "../agents/openrouter-models.js";
 import { PlaywrightCompetitorRunner } from "../agents/playwright-competitor-runner.js";
 import type { AgentIdentity } from "../api/dto.js";
@@ -151,6 +153,33 @@ export function openRouterAgents(
   });
 }
 
+/**
+ * One sliding-window limit per configured model, the racers' and the
+ * master's alike, so every call to a model counts against the same capacity.
+ */
+export function modelRateLimits(
+  models: ReadonlyArray<string | undefined>,
+  limit: ModelRateLimit,
+): Record<string, ModelRateLimit> {
+  const configured = models.filter((model): model is string => Boolean(model?.trim()));
+  return Object.fromEntries([...new Set(configured)].map((model) => [model, { ...limit }]));
+}
+
+/**
+ * The most of its model's window the master may hold: MASTER_CAPACITY_SHARE
+ * while a racer runs on the same model, so the racers keep the rest, else
+ * the whole window.
+ */
+export function masterCapacityShare(
+  roster: ReadonlyMap<string, string>,
+  masterModel: string,
+): number {
+  const key = masterModel.trim().toLowerCase();
+  return [...roster.values()].some((model) => model.trim().toLowerCase() === key)
+    ? MASTER_CAPACITY_SHARE
+    : 1;
+}
+
 export function createProductionRaceCoordinator(
   input: ApiCreateRaceInput,
   context: ProductionRaceContext,
@@ -163,16 +192,18 @@ export function createProductionRaceCoordinator(
   const budget = new OpenRouterUsageBudget(
     positiveNumberEnv("RACE_LLM_BUDGET_USD", 0.25),
   );
-  // Keep one sliding-window capacity per configured model, shared by racers
-  // using that model. This prevents a provider-specific 429 from killing a
-  // racer before its first browser action.
-  const maxCalls = positiveIntegerEnv("OPENROUTER_MODEL_MAX_CALLS_PER_MINUTE", 20);
-  const windowMs = positiveIntegerEnv("OPENROUTER_MODEL_RATE_WINDOW_MS", 60_000);
-  const competitorRateLimiter = new OpenRouterModelRateLimiter(
-    Object.fromEntries(
-      [...new Set(roster.values())].map((model) => [model, { maxCalls, windowMs }]),
-    ),
-  );
+  const masterModelId = process.env.MASTER_LLM_MODEL;
+  // One sliding window per configured model, shared by every caller of that
+  // model, racers and master alike. A provider-specific 429 cannot kill a
+  // racer before its first browser action, and the master's calls count
+  // against the same capacity as the racers on its model.
+  const rateLimiter = new OpenRouterModelRateLimiter(modelRateLimits(
+    [...roster.values(), masterModelId],
+    {
+      maxCalls: positiveIntegerEnv("OPENROUTER_MODEL_MAX_CALLS_PER_MINUTE", 20),
+      windowMs: positiveIntegerEnv("OPENROUTER_MODEL_RATE_WINDOW_MS", 60_000),
+    },
+  ));
   const maxOutputTokens = positiveIntegerEnv("COMPETITOR_LLM_MAX_OUTPUT_TOKENS", 512);
   const competitorModels = new Map(
     [...roster].map(([racerId, model]) => [
@@ -181,7 +212,7 @@ export function createProductionRaceCoordinator(
         model,
         budget,
         maxOutputTokens,
-        rateLimiter: competitorRateLimiter,
+        rateLimiter,
       }),
     ]),
   );
@@ -244,10 +275,12 @@ export function createProductionRaceCoordinator(
     },
   };
   const cdpExecutor = new CdpObstacleProvider(sessionManager);
-  const masterModel = process.env.MASTER_LLM_MODEL
+  const masterModel = masterModelId
     ? new OpenRouterMasterPolicyModel({
-        model: process.env.MASTER_LLM_MODEL,
+        model: masterModelId,
         budget,
+        rateLimiter,
+        capacityShare: masterCapacityShare(roster, masterModelId),
       })
     : undefined;
   if (input.obstaclesEnabled && !masterModel) requiredEnv("MASTER_LLM_MODEL");

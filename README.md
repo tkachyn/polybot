@@ -115,7 +115,11 @@ tool call is asked for once more with `tool_choice: "required"`; if it still has
 none, the racer inspects the page that turn instead of stopping.
 `OPENROUTER_MODEL_MAX_CALLS_PER_MINUTE` (default `20`) and
 `OPENROUTER_MODEL_RATE_WINDOW_MS` (default `60000`) are applied independently to
-every configured model. `COMPETITOR_LLM_MAX_OUTPUT_TOKENS` (default `512`) gives
+every configured model, `MASTER_LLM_MODEL` included, so the master shares its
+model's window with any racer on the same model. The master never queues for a
+slot: it takes one only when it is free, holds at most a quarter of a window it
+shares with a racer, and sends each request once. Without a slot its call fails
+at once and the caller falls back (a seed-derived sabotage plan). `COMPETITOR_LLM_MAX_OUTPUT_TOKENS` (default `512`) gives
 reasoning models enough room to produce the required browser-action tool call. A
 provider retry or rate-limit pause does not consume a browser action; the live log
 reports it as a model-provider pause.
