@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  CourseStateRequestError,
   DeterministicCourseVerifier,
   type CourseStateGateway,
 } from "../src/course/deterministic-course-verifier.js";
@@ -87,4 +88,52 @@ test("verifies the first target-opening milestone against the run proof", async 
     seed: "wrong-seed",
     session,
   }), false);
+});
+
+test("retries transient course-state failures and normalizes duplicate progress", async () => {
+  let calls = 0;
+  const gateway: CourseStateGateway = {
+    async getState() {
+      calls += 1;
+      if (calls < 3) throw new CourseStateRequestError("temporarily unavailable", 503);
+      return {
+        raceId: "race-1",
+        racerId: "racer-1",
+        courseId: "course-1",
+        completedCheckpoints: [3, 1, 2, 2, 1],
+        finished: false,
+      };
+    },
+  };
+  const verifier = new DeterministicCourseVerifier(gateway, { retryDelayMs: 0 });
+
+  assert.deepEqual(await verifier.getProgress({
+    raceId: "race-1",
+    racerId: "racer-1",
+    courseId: "course-1",
+    session,
+  }), { completedCheckpoints: [1, 2, 3], finished: false });
+  assert.equal(calls, 3);
+});
+
+test("does not retry hard authorization failures", async () => {
+  let calls = 0;
+  const gateway: CourseStateGateway = {
+    async getState() {
+      calls += 1;
+      throw new CourseStateRequestError("forbidden", 403, false);
+    },
+  };
+  const verifier = new DeterministicCourseVerifier(gateway, { retryDelayMs: 0 });
+
+  await assert.rejects(
+    verifier.verifyFinish({
+      raceId: "race-1",
+      racerId: "racer-1",
+      courseId: "course-1",
+      session,
+    }),
+    /forbidden/,
+  );
+  assert.equal(calls, 1);
 });

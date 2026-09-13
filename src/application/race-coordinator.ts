@@ -44,6 +44,7 @@ import {
   STEEL_EVIDENCE_RETRY_MS,
   type SteelEvidence,
 } from "../infra/steel-evidence.js";
+import { isTransientCourseStateError } from "../course/deterministic-course-verifier.js";
 import { VirtualPredictionMarket } from "../prediction/virtual-market.js";
 import type { TradeReceipt } from "../prediction/virtual-market.js";
 import type { CreditLedger } from "../wallet/credit-ledger.js";
@@ -395,32 +396,55 @@ export class RaceCoordinator {
     racerId: string,
     checkpoint: number,
     now: number,
+    alreadyVerified = false,
   ): Promise<void> {
     const session = this.getSession(racerId);
-    const verified = await this.dependencies.courseVerifier.verifyCheckpoint({
-      raceId: this.engine.race.id,
-      racerId,
-      courseId: this.engine.race.courseId,
-      checkpoint,
-      seed: this.engine.race.seed,
-      session,
-    });
-    if (!verified) {
-      throw new Error(`Checkpoint ${checkpoint} was not verified for ${racerId}`);
+    const racer = this.engine.racers.get(racerId);
+    if (!racer) throw new Error(`Unknown racer: ${racerId}`);
+    // Browser actions and verifier sync can report the same checkpoint more
+    // than once. Treat an already-claimed checkpoint as an idempotent success.
+    if (checkpoint <= racer.checkpoint) return;
+    if (checkpoint !== racer.checkpoint + 1) {
+      throw new Error(`${racerId} must reach checkpoint ${racer.checkpoint + 1} next`);
+    }
+    if (!alreadyVerified) {
+      let verified: boolean;
+      try {
+        verified = await this.dependencies.courseVerifier.verifyCheckpoint({
+          raceId: this.engine.race.id,
+          racerId,
+          courseId: this.engine.race.courseId,
+          checkpoint,
+          seed: this.engine.race.seed,
+          session,
+        });
+      } catch (error) {
+        if (isTransientCourseStateError(error)) return;
+        throw error;
+      }
+      // A false result is normal while the page is still settling. The next
+      // browser action's progress sync will retry it without failing the run.
+      if (!verified) return;
     }
 
     const plan = this.engine.race.sabotagePlan;
     const sabotageStep = plan?.steps?.find((step) => step.checkpoint === checkpoint);
     if (plan && (sabotageStep || checkpoint === plan.trigger.checkpoint)) {
-      const openingVerified = await this.dependencies.courseVerifier.verifyTargetOpening({
-        raceId: this.engine.race.id,
-        racerId,
-        courseId: this.engine.race.courseId,
-        seed: this.engine.race.seed,
-        session,
-      });
+      let openingVerified: boolean;
+      try {
+        openingVerified = await this.dependencies.courseVerifier.verifyTargetOpening({
+          raceId: this.engine.race.id,
+          racerId,
+          courseId: this.engine.race.courseId,
+          seed: this.engine.race.seed,
+          session,
+        });
+      } catch (error) {
+        if (isTransientCourseStateError(error)) return;
+        throw error;
+      }
       if (!openingVerified) {
-        throw new Error(`Target opening was not verified for ${racerId}`);
+        return;
       }
     }
 
@@ -473,7 +497,7 @@ export class RaceCoordinator {
         session,
       });
       if (!verified) return false;
-      await this.recordFinishInternal(racerId, now);
+      await this.recordFinishInternal(racerId, now, true);
       return this.engine.racers.get(racerId)?.status === "finished";
     } catch (error) {
       if (verified) {
@@ -544,17 +568,27 @@ export class RaceCoordinator {
     return racer.status === "running";
   }
 
-  private async recordFinishInternal(racerId: string, now: number): Promise<void> {
+  private async recordFinishInternal(
+    racerId: string,
+    now: number,
+    alreadyVerified = false,
+  ): Promise<void> {
     const session = this.getSession(racerId);
-    const verified = await this.dependencies.courseVerifier.verifyFinish({
-      raceId: this.engine.race.id,
-      racerId,
-      courseId: this.engine.race.courseId,
-      seed: this.engine.race.seed,
-      session,
-    });
-    if (!verified) {
-      throw new Error(`Final task state was not verified for ${racerId}`);
+    if (!alreadyVerified) {
+      let verified: boolean;
+      try {
+        verified = await this.dependencies.courseVerifier.verifyFinish({
+          raceId: this.engine.race.id,
+          racerId,
+          courseId: this.engine.race.courseId,
+          seed: this.engine.race.seed,
+          session,
+        });
+      } catch (error) {
+        if (isTransientCourseStateError(error)) return;
+        throw error;
+      }
+      if (!verified) return;
     }
 
     const won = this.engine.finishRacer(racerId, now);

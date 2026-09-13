@@ -24,6 +24,32 @@ export interface CourseStateGateway {
   }): Promise<CourseState>;
 }
 
+export class CourseStateRequestError extends Error {
+  readonly retryable: boolean;
+
+  constructor(
+    message: string,
+    readonly status?: number,
+    retryable = status === undefined || status === 408 || status === 425 ||
+      status === 429 || status >= 500,
+    options?: { cause?: unknown },
+  ) {
+    super(message, options);
+    this.name = "CourseStateRequestError";
+    this.retryable = retryable;
+  }
+}
+
+export function isTransientCourseStateError(error: unknown): boolean {
+  if (error instanceof CourseStateRequestError) return error.retryable;
+  if (!(error instanceof Error)) return true;
+  if (error.name === "AbortError" || error.name === "TimeoutError") return true;
+  if (/\b(?:401|403|404|422)\b|unauthori[sz]ed|forbidden|invalid.+(?:token|proof|run)/i.test(error.message)) {
+    return false;
+  }
+  return true;
+}
+
 export class HttpCourseStateGateway implements CourseStateGateway {
   constructor(
     private readonly baseUrl: string,
@@ -48,20 +74,65 @@ export class HttpCourseStateGateway implements CourseStateGateway {
       url.searchParams.set("steelSessionId", input.steelSessionId);
     }
 
-    const response = await fetch(url, {
-      headers: this.token ? { authorization: `Bearer ${this.token}` } : {},
-      signal: AbortSignal.timeout(3_000),
-    });
-    if (!response.ok) {
-      throw new Error(`Course state request failed with ${response.status}`);
+    let response: Response;
+    try {
+      response = await fetch(url, {
+        headers: this.token ? { authorization: `Bearer ${this.token}` } : {},
+        signal: AbortSignal.timeout(3_000),
+      });
+    } catch (error) {
+      throw new CourseStateRequestError(
+        `Course state request failed: ${error instanceof Error ? error.message : String(error)}`,
+        undefined,
+        true,
+        { cause: error },
+      );
     }
-    const state = (await response.json()) as CourseState;
+    if (!response.ok) {
+      throw new CourseStateRequestError(
+        `Course state request failed with ${response.status}`,
+        response.status,
+      );
+    }
+    let state: CourseState;
+    try {
+      state = (await response.json()) as CourseState;
+    } catch (error) {
+      throw new CourseStateRequestError(
+        "Course state response was not valid JSON",
+        response.status,
+        false,
+        { cause: error },
+      );
+    }
     return state;
   }
 }
 
+export type DeterministicCourseVerifierOptions = {
+  /** Total gateway attempts, including the first request. */
+  maxAttempts?: number;
+  /** Delay between retry attempts. Defaults to 75 ms. */
+  retryDelayMs?: number;
+};
+
 export class DeterministicCourseVerifier implements CourseVerifier {
-  constructor(private readonly gateway: CourseStateGateway) {}
+  private readonly maxAttempts: number;
+  private readonly retryDelayMs: number;
+
+  constructor(
+    private readonly gateway: CourseStateGateway,
+    options: DeterministicCourseVerifierOptions = {},
+  ) {
+    this.maxAttempts = options.maxAttempts ?? 3;
+    this.retryDelayMs = options.retryDelayMs ?? 75;
+    if (!Number.isInteger(this.maxAttempts) || this.maxAttempts < 1) {
+      throw new Error("maxAttempts must be a positive integer");
+    }
+    if (!Number.isFinite(this.retryDelayMs) || this.retryDelayMs < 0) {
+      throw new Error("retryDelayMs must be a non-negative number");
+    }
+  }
 
   async getProgress(input: {
     raceId: string;
@@ -70,7 +141,7 @@ export class DeterministicCourseVerifier implements CourseVerifier {
     seed?: string;
     session: RacerSessionHandle;
   }): Promise<{ completedCheckpoints: number[]; finished: boolean } | null> {
-    const state = await this.gateway.getState({
+    const state = await this.readState({
       raceId: input.raceId,
       racerId: input.racerId,
       courseId: input.courseId,
@@ -79,7 +150,7 @@ export class DeterministicCourseVerifier implements CourseVerifier {
     });
     if (!this.matchesRun(state, input)) return null;
     return {
-      completedCheckpoints: [...state.completedCheckpoints],
+      completedCheckpoints: normalizeCheckpoints(state.completedCheckpoints),
       finished: state.finished,
     };
   }
@@ -91,7 +162,7 @@ export class DeterministicCourseVerifier implements CourseVerifier {
     seed?: string;
     session: RacerSessionHandle;
   }): Promise<boolean> {
-    const state = await this.gateway.getState({
+    const state = await this.readState({
       raceId: input.raceId,
       racerId: input.racerId,
       courseId: input.courseId,
@@ -110,7 +181,7 @@ export class DeterministicCourseVerifier implements CourseVerifier {
     seed?: string;
     session: RacerSessionHandle;
   }): Promise<boolean> {
-    const state = await this.gateway.getState({
+    const state = await this.readState({
       raceId: input.raceId,
       racerId: input.racerId,
       courseId: input.courseId,
@@ -128,7 +199,7 @@ export class DeterministicCourseVerifier implements CourseVerifier {
     seed?: string;
     session: RacerSessionHandle;
   }): Promise<boolean> {
-    const state = await this.gateway.getState({
+    const state = await this.readState({
       raceId: input.raceId,
       racerId: input.racerId,
       courseId: input.courseId,
@@ -155,4 +226,26 @@ export class DeterministicCourseVerifier implements CourseVerifier {
       (!state.steelSessionId ||
         state.steelSessionId === input.session?.steelSessionId);
   }
+
+  private async readState(input: Parameters<CourseStateGateway["getState"]>[0]): Promise<CourseState> {
+    let lastError: unknown;
+    for (let attempt = 1; attempt <= this.maxAttempts; attempt += 1) {
+      try {
+        return await this.gateway.getState(input);
+      } catch (error) {
+        lastError = error;
+        if (attempt >= this.maxAttempts || !isTransientCourseStateError(error)) throw error;
+        if (this.retryDelayMs > 0) {
+          await new Promise((resolve) => setTimeout(resolve, this.retryDelayMs));
+        }
+      }
+    }
+    throw lastError instanceof Error ? lastError : new Error(String(lastError));
+  }
+}
+
+function normalizeCheckpoints(checkpoints: number[]): number[] {
+  return [...new Set(checkpoints.filter((checkpoint) =>
+    Number.isInteger(checkpoint) && checkpoint > 0,
+  ))].sort((left, right) => left - right);
 }
