@@ -1,10 +1,10 @@
 /**
  * One agent's sabotage timeline: a row per hit, in sequence order, with the
- * reaction and its cost, the evidence (keyframes and the Steel replay) and
- * the Steel trace around the hit.
+ * reaction and its cost, the evidence (keyframes and the Steel replay), the
+ * Steel trace around the hit, and a short note where either doesn't exist.
  */
 import { useMemo, useState, type ReactNode } from "react";
-import type { AgentEvaluation, SabotageReaction } from "@contract";
+import type { AgentEvaluation, SabotageReaction, ServerMode } from "@contract";
 import { evidenceFrameUrl, replayUrl } from "../../api/client";
 import { Button, Tag } from "../../components";
 import { cx } from "../../lib/cx";
@@ -13,6 +13,7 @@ import { ReactionChip } from "./Chip";
 import { EvidenceDialog, type EvidenceItem, type EvidenceSide } from "./EvidenceDialog";
 import {
   describeHitOffset,
+  evidenceNotes,
   formatFightTime,
   formatOffset,
   formatReplayOffset,
@@ -31,9 +32,13 @@ export type SabotageTimelineProps = {
   agent: AgentEvaluation;
   /** Fight start, for "hit at 01:12". */
   startedAt: number | null;
+  /** The fight's mode: replays and Steel traces exist for live fights only. */
+  mode: ServerMode;
+  /** The fight has left the lobby, so its keyframes and replay are no longer served. */
+  archived?: boolean;
 };
 
-export function SabotageTimeline({ raceId, agent, startedAt }: SabotageTimelineProps) {
+export function SabotageTimeline({ raceId, agent, startedAt, mode, archived = false }: SabotageTimelineProps) {
   const reactions = useMemo(() => [...agent.sabotage].sort((a, b) => a.stepIndex - b.stepIndex || a.appliedAt - b.appliedAt), [agent.sabotage]);
   if (reactions.length === 0) {
     return <p className={styles.none}>Not hit by any sabotage step, so robustness was not tested.</p>;
@@ -41,7 +46,7 @@ export function SabotageTimeline({ raceId, agent, startedAt }: SabotageTimelineP
   return (
     <ol className={styles.timeline}>
       {reactions.map((reaction) => (
-        <ReactionRow key={reaction.stepId} raceId={raceId} agent={agent} reaction={reaction} startedAt={startedAt} />
+        <ReactionRow key={reaction.stepId} raceId={raceId} agent={agent} reaction={reaction} startedAt={startedAt} mode={mode} archived={archived} />
       ))}
     </ol>
   );
@@ -52,9 +57,11 @@ type ReactionRowProps = {
   agent: AgentEvaluation;
   reaction: SabotageReaction;
   startedAt: number | null;
+  mode: ServerMode;
+  archived: boolean;
 };
 
-function ReactionRow({ raceId, agent, reaction, startedAt }: ReactionRowProps) {
+function ReactionRow({ raceId, agent, reaction, startedAt, mode, archived }: ReactionRowProps) {
   const [evidenceOpen, setEvidenceOpen] = useState<EvidenceSide | null>(null);
   const [replayOpen, setReplayOpen] = useState(false);
   const name = agent.agent.name;
@@ -63,11 +70,13 @@ function ReactionRow({ raceId, agent, reaction, startedAt }: ReactionRowProps) {
   const { before, after, replayOffsetSec } = reaction.evidence;
   const delay = reaction.progressedAt !== null ? reaction.progressedAt - reaction.appliedAt : null;
   const active = reaction.expiredAt !== null ? reaction.expiredAt - reaction.appliedAt : null;
-  const replayOffset = agent.steel.replayAvailable ? replayOffsetSec : null;
+  // A fight that has left the lobby no longer serves its keyframes or replay: don't offer them.
+  const replayOffset = agent.steel.replayAvailable && !archived ? replayOffsetSec : null;
   const frames: Record<EvidenceSide, EvidenceItem | null> = {
-    before: before ? { frame: before, src: evidenceFrameUrl(raceId, agent.racerId, before.key) } : null,
-    after: after ? { frame: after, src: evidenceFrameUrl(raceId, agent.racerId, after.key) } : null,
+    before: before && !archived ? { frame: before, src: evidenceFrameUrl(raceId, agent.racerId, before.key) } : null,
+    after: after && !archived ? { frame: after, src: evidenceFrameUrl(raceId, agent.racerId, after.key) } : null,
   };
+  const notes = evidenceNotes({ mode, replayAvailable: agent.steel.replayAvailable, traceAvailable: agent.steel.traceAvailable, archived });
 
   return (
     <li className={styles.row}>
@@ -145,11 +154,12 @@ function ReactionRow({ raceId, agent, reaction, startedAt }: ReactionRowProps) {
               </Button>
             )}
           </div>
-        ) : (
+        ) : archived ? null : (
           <p className={styles.muted}>No keyframes were captured for this hit.</p>
         )}
 
         {agent.steel.traceAvailable && <SteelExcerpt trace={agent.steel.trace} at={reaction.appliedAt} />}
+        {notes.length > 0 && <p className={styles.evidenceNote}>{notes.join(" ")}</p>}
       </div>
 
       {evidenceOpen && (

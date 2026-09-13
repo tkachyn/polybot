@@ -8,6 +8,7 @@ import {
   cellCountsText,
   checkpointParts,
   describeHitOffset,
+  evidenceNotes,
   formatCheckpoint,
   formatFightTime,
   formatOffset,
@@ -251,6 +252,30 @@ describe("time formatting", () => {
   it("gives times into the fight", () => {
     expect(formatFightTime(84_000, 1_000)).toBe("01:23");
     expect(formatFightTime(null, 1_000)).toBe(EMPTY);
+  });
+});
+
+describe("evidence notes", () => {
+  it("says why a hit has no replay or Steel trace", () => {
+    expect(evidenceNotes({ mode: "simulated", replayAvailable: false, traceAvailable: false })).toEqual([
+      "Replays and Steel traces exist for live fights only.",
+    ]);
+    expect(evidenceNotes({ mode: "live", replayAvailable: true, traceAvailable: true })).toEqual([]);
+    expect(evidenceNotes({ mode: "live", replayAvailable: false, traceAvailable: true })).toEqual(["No Steel recording was saved for this session."]);
+    expect(evidenceNotes({ mode: "live", replayAvailable: true, traceAvailable: false })).toEqual(["No Steel trace was saved for this session."]);
+    expect(evidenceNotes({ mode: "live", replayAvailable: false, traceAvailable: false })).toEqual([
+      "No Steel recording or trace was saved for this session.",
+    ]);
+  });
+
+  it("says what a fight that has left the lobby no longer serves", () => {
+    expect(evidenceNotes({ mode: "live", replayAvailable: true, traceAvailable: true, archived: true })).toEqual([
+      "Keyframes and the replay aren’t kept once a fight leaves the lobby.",
+    ]);
+    expect(evidenceNotes({ mode: "simulated", replayAvailable: false, traceAvailable: false, archived: true })).toEqual([
+      "Keyframes aren’t kept once a fight leaves the lobby.",
+      "Replays and Steel traces exist for live fights only.",
+    ]);
   });
 });
 

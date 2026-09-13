@@ -4,7 +4,7 @@
  * first hit, the sabotage timeline and the full action trace.
  */
 import type { ReactNode } from "react";
-import type { AgentCrowdSignal, AgentEvaluation } from "@contract";
+import type { AgentCrowdSignal, AgentEvaluation, ServerMode } from "@contract";
 import { AgentMonogram, ChangeCents, PriceCents, ProgressBar } from "../../components";
 import { agentModelLabel, agentStyle, type AgentVisual } from "../../lib/agents";
 import { cx } from "../../lib/cx";
@@ -22,11 +22,15 @@ export type AgentEvaluationSectionProps = {
   visual: AgentVisual;
   /** Fight start, for times into the fight. */
   startedAt: number | null;
+  /** The fight's mode: replays and Steel traces exist for live fights only. */
+  mode: ServerMode;
+  /** The fight has left the lobby, so its keyframes and replay are no longer served. */
+  archived?: boolean;
   /** Element id, the target of the report overview's links. */
   id: string;
 };
 
-export function AgentEvaluationSection({ raceId, agent, visual, startedAt, id }: AgentEvaluationSectionProps) {
+export function AgentEvaluationSection({ raceId, agent, visual, startedAt, mode, archived = false, id }: AgentEvaluationSectionProps) {
   const headingId = `${id}-name`;
   const model = agentModelLabel(agent.agent);
   return (
@@ -75,7 +79,7 @@ export function AgentEvaluationSection({ raceId, agent, visual, startedAt, id }:
 
       <div className={styles.block}>
         <h4 className="label">Sabotage timeline</h4>
-        <SabotageTimeline raceId={raceId} agent={agent} startedAt={startedAt} />
+        <SabotageTimeline raceId={raceId} agent={agent} startedAt={startedAt} mode={mode} archived={archived} />
       </div>
 
       <div className={styles.footer}>

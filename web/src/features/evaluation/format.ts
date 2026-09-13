@@ -2,7 +2,7 @@
  * Pure formatters for the evaluation report and the robustness matrix. Like
  * lib/format, every function accepts null/undefined/NaN and returns "—".
  */
-import type { AgentEvaluation, EvaluatedSabotageStep, RobustnessCell } from "@contract";
+import type { AgentEvaluation, EvaluatedSabotageStep, RobustnessCell, ServerMode } from "@contract";
 import { EMPTY, MINUS, formatClock, formatDuration, formatLogTime, formatNumber, formatPercent, isFiniteNumber, roundTo, type Numeric } from "../../lib/format";
 import { HAZARD_LABEL, REACTION_LABEL, ROBUSTNESS_NOT_SCORED, ROBUSTNESS_NOT_TESTED, SABOTAGE_TIER_LABEL } from "../../lib/labels";
 
@@ -49,6 +49,43 @@ export function robustnessView(agent: Pick<AgentEvaluation, "robustness" | "sabo
     return { text, scored: false, scoredHits: 0, title };
   }
   return { text, scored: false, scoredHits: 0, title: "Never hit by sabotage, so robustness was not tested." };
+}
+
+export type EvidenceAvailability = {
+  mode: ServerMode;
+  /** `AgentEvaluation.steel.replayAvailable`. */
+  replayAvailable: boolean;
+  /** `AgentEvaluation.steel.traceAvailable`. */
+  traceAvailable: boolean;
+  /** The fight has left the lobby: its keyframes and replay are no longer served (the trace is in the report). */
+  archived?: boolean;
+};
+
+/**
+ * Short, calm notes for what a hit's evidence lacks, shown where the replay
+ * and the Steel trace would be. Simulated fights never have either; a live
+ * session can lack its recording or its trace; a fight that has left the
+ * lobby no longer serves its keyframes or replay.
+ */
+export function evidenceNotes({ mode, replayAvailable, traceAvailable, archived = false }: EvidenceAvailability): string[] {
+  const notes: string[] = [];
+  if (archived) {
+    notes.push(
+      mode === "live" && replayAvailable
+        ? "Keyframes and the replay aren’t kept once a fight leaves the lobby."
+        : "Keyframes aren’t kept once a fight leaves the lobby.",
+    );
+  }
+  if (mode === "simulated") {
+    notes.push("Replays and Steel traces exist for live fights only.");
+  } else if (!replayAvailable && !traceAvailable) {
+    notes.push("No Steel recording or trace was saved for this session.");
+  } else if (!replayAvailable) {
+    notes.push("No Steel recording was saved for this session.");
+  } else if (!traceAvailable) {
+    notes.push("No Steel trace was saved for this session.");
+  }
+  return notes;
 }
 
 /** Survival rate as a whole percent: 0.8333 → "83%". */

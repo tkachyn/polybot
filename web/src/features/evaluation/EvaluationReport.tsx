@@ -186,6 +186,7 @@ function ReportBody({ evaluation, baseId, headingId, updating, error, onRetry }:
               agent={agent}
               visual={visuals[i] ?? rosterVisuals([agent.agent])[0]!}
               startedAt={evaluation.startedAt}
+              mode={evaluation.mode}
               id={sectionIds[i] ?? `${baseId}-agent-${i + 1}`}
             />
           ))}

@@ -241,6 +241,13 @@
   margin-bottom: var(--space-5);
 }
 
+/* Where the replay and the Steel trace would be: why they aren't. */
+.evidenceNote {
+  color: var(--color-text-muted);
+  font-size: var(--fs-body-sm);
+  line-height: var(--lh-body);
+}
+
 @media (max-width: 759px) {
   .thumbImage {
     width: 104px;
