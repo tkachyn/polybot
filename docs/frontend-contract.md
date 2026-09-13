@@ -6,12 +6,12 @@ This document binds the Sabotage Markets UI (`docs/sabotage-markets-handoff.md`)
 
 | Topic | Handoff | Backend spec | Resolution |
 | --- | --- | --- | --- |
-| Outcomes | YES and NO per agent | Buy/sell one share per racer | Added `side: "yes" \| "no"`. NO on X costs `1 - p(X)` and pays 1 if X does not win. It is priced as a basket: one share of each of the other three racers. |
+| Outcomes | YES and NO per agent | Buy/sell one share per racer | Added `side: "yes" \| "no"`. NO on X is priced at `1 - p(X)` and pays 1 if X does not win. It is a basket: one share of each of the other three racers. Orders pay along their own price impact (see "Pricing"). |
 | Money | $ balance, deposit/withdraw, methods | Virtual credits only, no cash | The UI keeps $ formatting but every amount is a virtual credit. Deposit and withdraw move virtual credits. The only enabled method is `virtual`; other methods are shown as unavailable. |
 | Wallet scope | One balance across fights | Balance per market | Added a shared `CreditLedger` injected into every market. Settlements pay directly into the wallet. |
 | Sabotage | One sabotage per fight at a named checkpoint, revealed to bettors upfront, armed → fired | One immutable plan, fired independently per racer after the racer's verified trigger checkpoint | The engine's `SabotagePlan` is the source of truth. The default plan is a single step at checkpoint 1, and each racer triggers it independently when that racer reaches the checkpoint. Explicit multi-step plans remain supported for future course-specific strategies. |
 | Duration | 30-minute cap | 180 s target, 300 s cap | Durations are per race and supplied by the backend (`freezesAt`, `closesAt`). The UI never hard-codes them. |
-| Void | Rules undefined | Cap reached → unresolved, credits returned | A voided fight refunds each open position at its average price. The history shows a `refund` entry. |
+| Void | Rules undefined | Cap reached → unresolved, credits returned | A voided fight refunds each open position what it cost. The history shows a `refund` entry. |
 | Capture | Undecided | Steel viewer URL | Live mode exposes a read-only Steel debug viewer in `agent.browserView` (`interactive=false`, `showControls=false`); the runner injects a pointer-transparent black cursor with a light outline into the course page so its paced movement is captured in live video, periodic screenshots and HLS replay. Click and type telemetry retains the browser pointer position for diagnostics. Simulated mode and viewer failures use periodic frames. The UI must keep the frame path as a fallback and must not reset the viewer iframe while polling. |
 | Agents | GPT Luna 5.6, Qwen3.8 27B, Gemma 3 27B IT, Claude Sonnet 4.6 | One model per live racer | Each fight has a per-race roster (`AgentIdentity` × 4). In live mode each racer is driven by its own OpenRouter model from `COMPETITOR_LLM_MODELS`, and its identity reports `provider: "openrouter"` with that model id. Without an operator `agents` roster, each agent's `name` and `key` are derived from the model it runs, so bettors never see one model under another's name. An operator roster keeps its keys and names. |
 | Selling | Not designed | Supported | Sell is available from the Portfolio open-positions table. |
@@ -134,7 +134,12 @@ Clients treat `snapshot` as a full replace. They append `price` points whose `t`
   - A misfire (`applied: false`) logs a `sabotage` entry but leaves the agent unhit.
 - **Tier:** `SabotageSummary.tier` is the armed plan's tier (`basic`, `intermediate` or `difficult`); `null` until the plan is armed or while not revealed.
 - **Reveal:** when `SHOW_SABOTAGE_UPFRONT=false`, `summary`, `detail`, `hazardType` and `tier` are `null` and `revealed=false` until the fight is `live`.
-- **Confidence signals:** deterministic demand adjustments, applied only while the market is `open`. `L` is base liquidity.
+- **Pricing:** an LMSR market maker (`src/prediction/lmsr.ts`, which the web slip imports as `@pricing`). Each racer's weight is its prior times `e^(q/b)`, where `q` is the net YES shares sold on it and `b` is the depth (`FightDetail.pricing.depth`, 1,000 shares). Prices are the normalised weights, rounded to 6 decimals and summing to exactly 1.
+  - An order of `n` shares at YES price `p` costs `b·ln(1 − p + p·e^(n/b))` for YES, or `n + b·ln(1 − p + p·e^(−n/b))` for NO. That is the integral of the price along the order's own impact, so selling shares straight back returns what they cost and no cycle of trades profits. Totals round to micro-credits in the house's favour.
+  - `FightDetail.pricing.logOdds` holds the exact inputs fills use, so a client quote computed with the same functions matches the fill.
+  - `limitPrice` guards the average fill price. A `price_moved` rejection carries `details`: the price now, the average the order would fill at, and the log-odds to re-quote with.
+  - Open positions (`Position.value`, `Account.positionsValue`, judge standings) are valued at what selling them now would return, so a fresh buy shows no paper profit.
+- **Confidence signals:** deterministic adjustments to a racer's prior weight, applied only while the market is `open`. `L` is base liquidity.
 
   | Event | Effect on the racer's weight |
   | --- | --- |
@@ -144,7 +149,7 @@ Clients treat `snapshot` as a full replace. They append `price` points whose `t`
   | Verified completion | `+0.50·L` |
   | Failure | Collapses to the floor |
 
-  Weights are floored at `0.02·L`. Prices are normalised to sum to exactly 1.
+  Priors are floored at `0.02·L`. A failure drops the racer to 2% of the other racers' average weight. With no trades, prices are exactly the normalised priors.
 - **Price history:**
   - A point is appended on every price change.
   - While live, a heartbeat point is also appended on tick when the last point is ≥ 5 s old.
