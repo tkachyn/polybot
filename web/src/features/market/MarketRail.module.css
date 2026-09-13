@@ -43,13 +43,18 @@
   align-items: center;
   gap: var(--space-1-5);
   min-width: 0;
+  white-space: nowrap;
 }
 
-.statusText {
+/* Only the words may give way; the countdown never truncates. */
+.statusLabel {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
-  white-space: nowrap;
+}
+
+.statusCountdown {
+  flex: none;
 }
 
 .dot {

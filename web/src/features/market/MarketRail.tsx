@@ -7,10 +7,11 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { FightDetail, OrderResponse } from "@contract";
-import { Countdown } from "../../components";
 import { agentVisual, rosterVisuals } from "../../lib/agents";
 import { cx } from "../../lib/cx";
 import { formatCompactMoney, formatNumber } from "../../lib/format";
+import { ClockPhrase } from "../fight/ClockCountdown";
+import { marketStateView } from "../fight/fightView";
 import { marketStatusText } from "./market";
 import { OrderForm } from "./OrderForm";
 import { OutcomeTable } from "./OutcomeTable";
@@ -161,20 +162,25 @@ function sabotageMarkersFor(fight: FightDetail): ChartSabotageMarker[] {
 
 function MarketFooter({ fight }: { fight: FightDetail }) {
   const status = marketStatusText(fight);
-  const showFreeze = status.open && fight.status === "live" && fight.freezesAt !== null;
+  // The header's m:ss clock rather than a second format: the freeze while
+  // trading is open, the end of the fight once it is frozen.
+  const countdown = fight.status === "live" ? marketStateView(fight).countdown : null;
   return (
     <footer className={styles.footer}>
       <span className={styles.status}>
         <span className={cx(styles.dot, status.open && styles.dotOpen)} aria-hidden="true" />
-        <span className={styles.statusText}>
-          {status.label}
-          {showFreeze && (
-            <>
-              {" · freezes in "}
-              <Countdown to={fight.freezesAt} className="num" />
-            </>
-          )}
-        </span>
+        {countdown === null ? (
+          <span className={styles.statusLabel}>{status.label}</span>
+        ) : (
+          <ClockPhrase
+            to={countdown.to}
+            lead={countdown.shortLead}
+            approximate={countdown.approximate}
+            due={countdown.shortDue}
+            leadClassName={styles.statusLabel}
+            clockClassName={cx(styles.statusCountdown, styles.statValue)}
+          />
+        )}
       </span>
       <span className={styles.stat}>
         <span className="label label-sm">Vol</span>
