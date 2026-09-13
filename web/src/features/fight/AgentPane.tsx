@@ -9,7 +9,7 @@ import { cx } from "../../lib/cx";
 import { formatCents } from "../../lib/format";
 import { SIDE_LABEL } from "../../lib/labels";
 import type { Slip } from "../market/types";
-import { agentStatusView, formatStep, isAgentActive, isRaceOver } from "./fightView";
+import { agentStatusView, formatStep, isAgentActive, isAgentUnderSabotage, isRaceOver } from "./fightView";
 import { StatusBand } from "./AgentStatus";
 import { LiveCapture } from "./LiveCapture";
 import styles from "./AgentPane.module.css";
@@ -29,6 +29,7 @@ export function AgentPane({ fight, agent, visual, slip, markers, onOpen, buttonR
   const step = formatStep(agent.step, agent.maxSteps);
   const inSlip = slip?.racerId === agent.racerId;
   const winner = fight.winnerRacerId === agent.racerId;
+  const sabotageActive = isAgentUnderSabotage(agent.phase);
   const name = agent.agent.name;
 
   return (
@@ -38,7 +39,7 @@ export function AgentPane({ fight, agent, visual, slip, markers, onOpen, buttonR
       className={cx(styles.pane, inSlip && styles.inSlip, winner && styles.winner)}
       style={agentStyle(visual)}
       onClick={() => onOpen(agent.racerId)}
-      aria-label={`${name}${winner ? ", winner" : ""}: ${status.label}, step ${step}, ${agent.checkpoint} of ${fight.checkpointCount} checkpoints, YES ${formatCents(agent.yes)}. Expand browser view`}
+      aria-label={`${name}${winner ? ", winner" : ""}${sabotageActive ? ", sabotage active" : ""}: ${status.label}, step ${step}, ${agent.checkpoint} of ${fight.checkpointCount} checkpoints, YES ${formatCents(agent.yes)}. Expand browser view`}
     >
       <StatusBand view={status} step={step} />
 
@@ -69,6 +70,7 @@ export function AgentPane({ fight, agent, visual, slip, markers, onOpen, buttonR
         fightStatus={fight.status}
         startsAt={fight.startsAt}
         agentName={name}
+        sabotageActive={sabotageActive}
         final={!isAgentActive(agent.phase) || isRaceOver(fight)}
         className={styles.capture}
       />

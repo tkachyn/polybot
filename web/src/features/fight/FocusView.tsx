@@ -12,7 +12,7 @@ import { cx } from "../../lib/cx";
 import { EMPTY, formatLogTime } from "../../lib/format";
 import { ACTION_LOG_KIND_LABEL, SIDE_LABEL } from "../../lib/labels";
 import type { Slip } from "../market/types";
-import { agentStatusView, formatEta, formatStep, isAgentActive, isRaceOver } from "./fightView";
+import { agentStatusView, formatEta, formatStep, isAgentActive, isAgentUnderSabotage, isRaceOver } from "./fightView";
 import { StatusTag } from "./AgentStatus";
 import { LiveCapture } from "./LiveCapture";
 import styles from "./FocusView.module.css";
@@ -29,6 +29,7 @@ export type FocusViewProps = {
 export function FocusView({ fight, agent, visual, slip, markers, onClose }: FocusViewProps) {
   const status = agentStatusView(agent);
   const inSlip = slip?.racerId === agent.racerId;
+  const sabotageActive = isAgentUnderSabotage(agent.phase);
   const name = agent.agent.name;
   const closeRef = useRef<HTMLButtonElement>(null);
 
@@ -38,7 +39,11 @@ export function FocusView({ fight, agent, visual, slip, markers, onClose }: Focu
   }, []);
 
   return (
-    <section className={cx(styles.focus, inSlip && styles.inSlip)} style={agentStyle(visual)} aria-label={`${name}, expanded view`}>
+    <section
+      className={cx(styles.focus, inSlip && styles.inSlip)}
+      style={agentStyle(visual)}
+      aria-label={`${name}, expanded view${sabotageActive ? ", sabotage active" : ""}`}
+    >
       <header className={styles.header}>
         <AgentMonogram agent={visual} size="md" />
         <div className={styles.identity}>
@@ -67,6 +72,7 @@ export function FocusView({ fight, agent, visual, slip, markers, onClose }: Focu
           fightStatus={fight.status}
           startsAt={fight.startsAt}
           agentName={name}
+          sabotageActive={sabotageActive}
           final={!isAgentActive(agent.phase) || isRaceOver(fight)}
           className={styles.capture}
           overlay={

@@ -36,6 +36,8 @@ export type LiveCaptureProps = {
   final?: boolean;
   /** Pinned across the top of the capture (e.g. the live URL). */
   overlay?: ReactNode;
+  /** Show the spectator-owned warning while this agent handles sabotage. */
+  sabotageActive?: boolean;
   className?: string;
 };
 
@@ -54,14 +56,26 @@ type PersistentViewer = {
 /** One Steel iframe per racer, moved between compact and focused views. */
 const persistentViewers = new Map<string, PersistentViewer>();
 
-function CaptureSurface({ raceId, racerId, frame, browserView, fightStatus, startsAt, agentName, final = false, overlay, className }: LiveCaptureProps) {
+function CaptureSurface({
+  raceId,
+  racerId,
+  frame,
+  browserView,
+  fightStatus,
+  startsAt,
+  agentName,
+  final = false,
+  overlay,
+  sabotageActive = false,
+  className,
+}: LiveCaptureProps) {
   const shown = useBufferedFrame(raceId, racerId, frame);
   const viewerUrl = browserView?.status === "live" ? browserView.viewerUrl ?? null : null;
   const [viewerFailed, setViewerFailed] = useState(false);
   useEffect(() => setViewerFailed(false), [viewerUrl]);
   const showViewer = viewerUrl !== null && !viewerFailed;
   return (
-    <div className={cx(styles.capture, className)}>
+    <div className={cx(styles.capture, sabotageActive && styles.sabotageActive, className)}>
       {showViewer ? (
         <PersistentViewer
           viewerKey={`${raceId}:${racerId}`}
@@ -75,6 +89,11 @@ function CaptureSurface({ raceId, racerId, frame, browserView, fightStatus, star
         <Placeholder fightStatus={fightStatus} startsAt={startsAt} />
       )}
       {overlay && <div className={styles.overlay}>{overlay}</div>}
+      {sabotageActive && (
+        <span className={styles.sabotageAlert} role="status" aria-live="polite">
+          <span aria-hidden="true">⚠</span> Sabotage in progress
+        </span>
+      )}
       {!showViewer && shown && fightStatus === "live" && (final ? <FinalFrame capturedAt={shown.capturedAt} /> : <FrameAge capturedAt={shown.capturedAt} />)}
     </div>
   );
