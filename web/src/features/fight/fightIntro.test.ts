@@ -2,10 +2,10 @@ import { describe, expect, it } from "vitest";
 import { introOpensIn, introStartOffset } from "./fightIntroState";
 
 describe("fight intro", () => {
-  it("starts its length plus the margin before an upcoming fight starts", () => {
+  it("starts its length before an upcoming fight starts, so it ends as the market opens", () => {
     const upcoming = { status: "upcoming" as const, startsAt: 20_000 };
-    // 9.4 s of video ending 0.5 s before the start.
-    expect(introOpensIn(upcoming, 5_000)).toBe(5_100);
+    // 9.4 s of video ending exactly at the start.
+    expect(introOpensIn(upcoming, 5_000)).toBe(5_600);
     // Already inside the lead: start now.
     expect(introOpensIn(upcoming, 12_000)).toBe(0);
     // Nothing to lead into: started, live, or no start time yet.

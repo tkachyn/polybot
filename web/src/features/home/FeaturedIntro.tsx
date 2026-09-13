@@ -2,8 +2,8 @@
  * The fight intro, over the whole featured card as its fight is about to
  * start; the API holds the agents until it has played (../fight/introVideo).
  * The video loads, hidden, up to FIGHT_INTRO_PRIME_MS ahead, plays so it
- * ends FIGHT_INTRO_MARGIN_MS before the start (joining part-way in when the
- * card opens late), then fades away to the card's market, now live.
+ * ends as the fight starts (joining part-way in when the card opens late),
+ * then fades away to the card's market, which opens at that moment.
  */
 import { useEffect, useRef, useState } from "react";
 import type { FightStatus } from "@contract";

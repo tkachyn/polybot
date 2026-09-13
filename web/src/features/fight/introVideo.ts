@@ -7,7 +7,8 @@
  * It plays over the lobby's featured card as that fight is about to start
  * (features/home/FeaturedIntro). The API holds a new live fight's start for
  * FIGHT_INTRO_HOLD_MS (10 s) after its browsers are ready, room for the
- * whole intro, so no agent runs while it plays.
+ * whole intro, and keeps its market closed ("pending") until then: the
+ * agents and the market start together, the moment the intro ends.
  */
 export const FIGHT_INTRO_URL = "/fight-intro.mp4";
 
@@ -15,10 +16,11 @@ export const FIGHT_INTRO_URL = "/fight-intro.mp4";
 export const FIGHT_INTRO_MS = 9_400;
 
 /**
- * The intro ends this long before its fight starts: the API's once-a-second
- * ticker starts the agents at or just after the start, never while it plays.
+ * How long before its fight starts the intro ends. None: the API starts a
+ * held fight on a timer at its exact start, so the market opens right as the
+ * intro finishes, never while it plays.
  */
-export const FIGHT_INTRO_MARGIN_MS = 500;
+export const FIGHT_INTRO_MARGIN_MS = 0;
 
 /** How long before its fight starts the intro begins: its length plus the margin. */
 export const FIGHT_INTRO_LEAD_MS = FIGHT_INTRO_MS + FIGHT_INTRO_MARGIN_MS;

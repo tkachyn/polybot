@@ -435,7 +435,19 @@ export class RaceCoordinator {
     this.flush(changes);
   }
 
-  /** Prepares the racers unless prepare() already did, then starts every agent at `now`. */
+  /**
+   * Keeps trading closed until the start (RaceRegistry's intro hold): the
+   * market then opens with the agents, as the intro ends. Before any trade only.
+   */
+  holdMarket(): void {
+    if (this.engine.race.status !== "starting") return;
+    this.market.hold();
+    const changes = createChanges();
+    changes.fight = true;
+    this.flush(changes);
+  }
+
+  /** Prepares the racers unless prepare() already did, then starts every agent (and a held market) at `now`. */
   async prepareAndStart(now = Date.now()): Promise<RaceSnapshot> {
     const sessions = await this.prepared(now);
     try {
@@ -443,6 +455,7 @@ export class RaceCoordinator {
         this.engine.markReady(session.racerId, now);
       }
       this.engine.start(now);
+      this.market.open();
       await this.afterEngineMutation(now);
 
       for (const session of sessions) {

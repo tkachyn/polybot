@@ -80,6 +80,11 @@ export type RaceRegistryOptions = {
    * before any agent runs. Default 0: prepare and start at once.
    */
   startHoldMs?: number;
+  /**
+   * Runs a held fight's start at its exact time rather than on the next
+   * tickAll. Returns a cancel function. Defaults to an unref'd setTimeout.
+   */
+  startTimer?: (start: () => Promise<void>, delayMs: number) => () => void;
   /** The time once a held fight is prepared. Default: Date.now. */
   clock?: () => number;
 };
@@ -93,7 +98,11 @@ export type ArchivedFight = {
 };
 
 const ARCHIVE_LIMIT = 5_000;
-/** Finished fights remain browseable, including their replays, for ten minutes. */
+/**
+ * Default window for `pruneResolved`. Not called automatically in live mode
+ * (finished fights stay browseable, with their replays, indefinitely); kept
+ * for callers that want to reclaim resolved fights explicitly.
+ */
 export const RESOLVED_RETENTION_MS = 10 * 60_000;
 
 function invalid(message: string): never {
@@ -195,6 +204,9 @@ export class RaceRegistry {
   private pruneInFlight?: Promise<void>;
   private readonly startHoldMs: number;
   private readonly clock: () => number;
+  private readonly startTimer: NonNullable<RaceRegistryOptions["startTimer"]>;
+  /** Cancels for held fights' exact-time starts, by raceId. */
+  private readonly startTimers = new Map<string, () => void>();
 
   constructor(
     private readonly factory: CoordinatorFactory,
@@ -205,6 +217,7 @@ export class RaceRegistry {
     this.nextFightNumber = start;
     this.startHoldMs = Math.max(0, options.startHoldMs ?? 0);
     this.clock = options.clock ?? (() => Date.now());
+    this.startTimer = options.startTimer ?? defaultStartTimer;
     this.ledger = new InMemoryCreditLedger();
     this.users = new UserDirectory(this.ledger, {
       startingBalance: options.startingBalance ?? 1_000,
@@ -217,8 +230,10 @@ export class RaceRegistry {
   /**
    * Creates a fight. A future `startsAt` registers and arms it without
    * starting (upcoming). Otherwise it is prepared and started: at once, or
-   * with `startHoldMs`, prepared now and started (by tickAll) that long after
-   * its racers are ready. A failed start removes the fight and rethrows.
+   * with `startHoldMs`, prepared now and started exactly that long after its
+   * racers are ready (tickAll is the fallback). A held fight's market stays
+   * closed until that start, so it opens as the intro ends. A failed start
+   * removes the fight and rethrows.
    */
   async create(input: ApiCreateRaceInput, now = Date.now()): Promise<RaceSnapshot> {
     const raceId = input?.raceId;
@@ -242,11 +257,14 @@ export class RaceRegistry {
       throw new DomainError("conflict", `Race ${raceId} already exists`);
     }
     this.nextFightNumber = Math.max(this.nextFightNumber, number + 1);
+    const startsAt = input.startsAt;
+    const startsLater = typeof startsAt === "number" && startsAt > now;
+    // Closed before it is listed, so no one sees its market open ahead of the intro.
+    if (!startsLater && this.startHoldMs > 0) coordinator.holdMarket();
     this.register(coordinator);
 
-    const startsAt = input.startsAt;
     try {
-      if (typeof startsAt === "number" && startsAt > now) {
+      if (startsLater) {
         this.scheduled.set(raceId, startsAt);
         await coordinator.arm(now);
         return coordinator.snapshot();
@@ -257,6 +275,7 @@ export class RaceRegistry {
         const heldUntil = this.clock() + this.startHoldMs;
         this.scheduled.set(raceId, heldUntil);
         coordinator.scheduleStart(heldUntil);
+        this.armStartTimer(raceId, heldUntil);
         return coordinator.snapshot();
       }
       return await coordinator.prepareAndStart(now);
@@ -312,17 +331,7 @@ export class RaceRegistry {
    * positions and aborts the race.
    */
   async tickAll(now = Date.now()): Promise<void> {
-    const due = [...this.scheduled.entries()].filter(([, startsAt]) => startsAt <= now);
-    for (const [raceId] of due) this.scheduled.delete(raceId);
-    await Promise.all(due.map(async ([raceId]) => {
-      const race = this.races.get(raceId);
-      if (!race) return;
-      try {
-        await race.prepareAndStart(now);
-      } catch {
-        // The coordinator voided the market and aborted the race.
-      }
-    }));
+    await this.startDue(now);
 
     const results = await Promise.allSettled(this.list().map((race) => race.tick(now)));
     const failure = results.find((result): result is PromiseRejectedResult =>
@@ -413,6 +422,8 @@ export class RaceRegistry {
 
   async shutdown(): Promise<void> {
     this.scheduled.clear();
+    for (const cancel of this.startTimers.values()) cancel();
+    this.startTimers.clear();
     await Promise.allSettled(this.list().map((race) => race.shutdown()));
   }
 
@@ -428,8 +439,43 @@ export class RaceRegistry {
     this.unsubscribers.get(raceId)?.();
     this.unsubscribers.delete(raceId);
     this.scheduled.delete(raceId);
+    this.startTimers.get(raceId)?.();
+    this.startTimers.delete(raceId);
     this.races.delete(raceId);
     this.emit(raceId, { kind: "removed" });
+  }
+
+  /** Starts every scheduled fight due at `now`, each exactly once. */
+  private async startDue(now: number): Promise<void> {
+    const due = [...this.scheduled.entries()].filter(([, startsAt]) => startsAt <= now);
+    for (const [raceId] of due) {
+      this.scheduled.delete(raceId);
+      this.startTimers.get(raceId)?.();
+      this.startTimers.delete(raceId);
+    }
+    await Promise.all(due.map(async ([raceId]) => {
+      const race = this.races.get(raceId);
+      if (!race) return;
+      try {
+        await race.prepareAndStart(now);
+      } catch {
+        // The coordinator voided the market and aborted the race.
+      }
+    }));
+  }
+
+  /**
+   * Starts a held fight at `startsAt` itself, so its agents and market begin
+   * as the intro ends rather than up to a ticker interval later.
+   */
+  private armStartTimer(raceId: string, startsAt: number): void {
+    this.startTimers.get(raceId)?.();
+    const cancel = this.startTimer(async () => {
+      this.startTimers.delete(raceId);
+      // A timer can fire a millisecond early: the fight is due at its start either way.
+      await this.startDue(Math.max(this.clock(), startsAt));
+    }, Math.max(0, startsAt - this.clock()));
+    this.startTimers.set(raceId, cancel);
   }
 
   private emit(raceId: string, change: CoordinatorChange): void {
@@ -441,6 +487,15 @@ export class RaceRegistry {
       }
     }
   }
+}
+
+/** A real timer that never keeps the process alive; the start reports its own failures. */
+function defaultStartTimer(start: () => Promise<void>, delayMs: number): () => void {
+  const timer = setTimeout(() => {
+    void start().catch(() => undefined);
+  }, delayMs);
+  timer.unref?.();
+  return () => clearTimeout(timer);
 }
 
 function resolvedAt(race: RaceCoordinator): number {

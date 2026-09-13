@@ -52,9 +52,10 @@ as a parameter so tests inject their own.
 sabotage plan, passes the readiness barrier, then calls `RaceEngine.start` so all racers
 begin at the same timestamp. `prepare` runs everything before the start on its own (once):
 with `startHoldMs` (`FIGHT_INTRO_HOLD_MS`, 10 s in live mode, 0 simulated) the registry
-prepares a fight created to start now, publishes `startsAt` as ready + hold, and `tickAll`
-starts it then, so the intro video (played over the lobby's featured card) ends before any
-agent runs. Agent loops then
+prepares a fight created to start now, publishes `startsAt` as ready + hold, and starts it
+then on a timer (`startTimer`; `tickAll` is the fallback). Its market stays `pending` (no
+trading) until that start, so the intro video (played over the lobby's featured card) ends
+exactly as the agents and the market start; scheduled fights keep pre-fight trading. Agent loops then
 run detached; a rejected loop marks that racer `failed` rather than failing the race. An
 API-level ticker calls `tick` every second.
 

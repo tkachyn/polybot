@@ -7,6 +7,8 @@ import type { FightDetail, MarketStatusDTO } from "@contract";
 /** Why price buttons and the confirm CTA are disabled; null when trading is open. */
 export function tradingBlockedReason(status: MarketStatusDTO): string | null {
   switch (status) {
+    case "pending":
+      return "Opens when the fight starts";
     case "open":
       return null;
     case "frozen":
@@ -23,9 +25,11 @@ export function slipPriceLabel(status: MarketStatusDTO): "Live" | "Frozen" | "Cl
   return status === "frozen" ? "Frozen" : "Closed";
 }
 
-/** Footer status line. Upcoming fights trade pre-fight. */
+/** Footer status line. Scheduled fights trade pre-fight; one that starts now opens at its start. */
 export function marketStatusText(fight: Pick<FightDetail, "marketStatus" | "status">): { label: string; open: boolean } {
   switch (fight.marketStatus) {
+    case "pending":
+      return { label: "Opens at the start", open: false };
     case "open":
       return { label: fight.status === "upcoming" ? "Pre-fight trading" : "Trading open", open: true };
     case "frozen":

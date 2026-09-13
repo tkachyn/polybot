@@ -170,6 +170,8 @@ type MarketStateInput = Pick<FightDetail, "status" | "marketStatus" | "freezesAt
 
 export function marketStateView(fight: MarketStateInput): MarketStateView {
   switch (fight.marketStatus) {
+    case "pending":
+      return { tone: "closed", label: "Opens at start", detail: "Trading opens as the fight starts", countdown: null };
     case "open":
       if (fight.status === "upcoming") {
         return { tone: "pre", label: "Pre-fight trading", detail: "Open before the start", countdown: null };

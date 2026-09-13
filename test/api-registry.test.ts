@@ -107,7 +107,11 @@ test("tickAll starts a scheduled fight exactly once", async () => {
 
 test("a held start prepares the racers first and starts them when the hold ends", async () => {
   const { factory, prepareCalls } = createFactory();
-  const registry = new RaceRegistry(factory, { startHoldMs: 9_500, clock: () => 3_000 });
+  const registry = new RaceRegistry(factory, {
+    startHoldMs: 9_500,
+    clock: () => 3_000,
+    startTimer: () => () => undefined,
+  });
   const snapshot = await registry.create(raceInput("race-h"), 1_000);
   const race = registry.get("race-h");
   // Browsers and agents are ready, nothing runs, and the start is published.
@@ -115,15 +119,80 @@ test("a held start prepares the racers first and starts them when the hold ends"
   assert.equal(prepareCalls.length, 4);
   assert.equal(race.fight.startsAt, 12_500);
   assert.equal(registry.scheduledStart("race-h"), 12_500);
+  // Its market stays closed until the start, so it opens as the intro ends.
+  assert.equal(race.market.status, "pending");
+  registry.users.ensure({ userId: "early-01" }, 3_000);
+  assert.throws(
+    () => race.placeOrder({ userId: "early-01", racerId: "racer-1", side: "yes", action: "buy", quantity: 1 }, 3_000),
+    isCode("market_closed"),
+  );
 
   await registry.tickAll(12_000);
   assert.equal(race.engine.race.status, "starting");
+  assert.equal(race.market.status, "pending");
 
   await registry.tickAll(12_500);
   assert.equal(race.engine.race.status, "running");
   assert.equal(race.engine.race.startedAt, 12_500);
+  assert.equal(race.market.status, "open");
   assert.equal(prepareCalls.length, 4);
   assert.equal(registry.scheduledStart("race-h"), null);
+});
+
+function manualStartTimers() {
+  const timers: Array<{ start: () => Promise<void>; delayMs: number; cancelled: boolean }> = [];
+  const startTimer = (start: () => Promise<void>, delayMs: number) => {
+    const timer = { start, delayMs, cancelled: false };
+    timers.push(timer);
+    return () => {
+      timer.cancelled = true;
+    };
+  };
+  return { timers, startTimer };
+}
+
+test("a held start runs at its exact start time, not on the next tick", async () => {
+  const { factory } = createFactory();
+  const { timers, startTimer } = manualStartTimers();
+  let now = 3_000;
+  const registry = new RaceRegistry(factory, { startHoldMs: 9_400, clock: () => now, startTimer });
+  await registry.create(raceInput("race-t"), 1_000);
+  const race = registry.get("race-t");
+  assert.equal(timers.length, 1);
+  assert.equal(timers[0]!.delayMs, 9_400);
+  assert.equal(race.market.status, "pending");
+
+  // Even a millisecond early, the agents and the market start at the published start.
+  now = 12_399;
+  await timers[0]!.start();
+  assert.equal(race.engine.race.status, "running");
+  assert.equal(race.engine.race.startedAt, 12_400);
+  assert.equal(race.market.status, "open");
+  assert.equal(registry.scheduledStart("race-t"), null);
+});
+
+test("the ticker still starts a held fight and cancels its timer", async () => {
+  const { factory } = createFactory();
+  const { timers, startTimer } = manualStartTimers();
+  const registry = new RaceRegistry(factory, { startHoldMs: 9_400, clock: () => 3_000, startTimer });
+  await registry.create(raceInput("race-k"), 1_000);
+  const race = registry.get("race-k");
+
+  await registry.tickAll(12_400);
+  assert.equal(race.engine.race.status, "running");
+  assert.equal(race.market.status, "open");
+  assert.equal(timers[0]!.cancelled, true);
+
+  await registry.create(raceInput("race-z"), 20_000);
+  await registry.shutdown();
+  assert.equal(timers[1]!.cancelled, true);
+});
+
+test("a scheduled fight keeps pre-fight trading", async () => {
+  const { factory } = createFactory();
+  const registry = new RaceRegistry(factory, { startHoldMs: 9_400, clock: () => 3_000, startTimer: () => () => undefined });
+  await registry.create(raceInput("race-p", { startsAt: 60_000 }), 1_000);
+  assert.equal(registry.get("race-p").market.status, "open");
 });
 
 test("a failed scheduled start leaves the fight voided and refunded", async () => {

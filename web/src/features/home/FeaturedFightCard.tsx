@@ -166,6 +166,7 @@ function SettlementCells({ settlement }: { settlement: Settlement }) {
 }
 
 function closedReasonFor(fight: FightSummary): string {
+  if (fight.marketStatus === "pending") return "Trading opens as the fight starts, when its intro ends";
   if (fight.marketStatus === "frozen") return "Trading is frozen for the rest of this fight";
   if (fight.marketStatus === "resolved") return "This market has settled";
   if (fight.marketStatus === "unresolved") return "This fight was voided and positions refunded";
