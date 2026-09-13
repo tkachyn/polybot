@@ -66,10 +66,6 @@
   background-color: var(--color-inset);
 }
 
-.band.warn {
-  box-shadow: inset 2px 0 0 var(--color-text-secondary);
-}
-
 .tag.warn {
   border-color: var(--color-divider);
   border-style: dashed;
@@ -89,7 +85,6 @@
 .recovering {
   color: var(--color-sabotage);
   background-color: var(--tint-sabotage);
-  box-shadow: inset 2px 0 0 var(--color-sabotage);
 }
 
 .tag.recovering {

@@ -198,7 +198,7 @@ function FullTraceTable({ agent, startedAt }: FullTraceProps) {
             ) : (
               <tr
                 key={`step-${row.entry.step}-${index}`}
-                className={cx(tableStyles.row, row.entry.kind === "error" && styles.errorRow, row.entry.clearedSabotage && styles.clearedRow)}
+                className={tableStyles.row}
               >
                 {/* A note is not a step, so it takes no step number (see isTraceStep). */}
                 <td className={tableStyles.num}>{isTraceStep(row.entry) ? formatNumber(row.entry.step) : <span className={styles.none}>{EMPTY}</span>}</td>

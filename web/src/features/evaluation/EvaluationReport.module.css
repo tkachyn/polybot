@@ -255,13 +255,12 @@
   white-space: nowrap;
 }
 
-/* Indented to the monogram, and tied to the row by the agent's colour. */
+/* Indented to the monogram. */
 .detail {
   display: flex;
   flex-direction: column;
   gap: var(--space-3);
   padding: var(--space-3) var(--space-4) var(--space-4) calc(var(--space-4) + 20px);
-  box-shadow: inset 2px 0 0 var(--agent-color);
 }
 
 /* --- Sabotage legend ------------------------------------------------------------ */
