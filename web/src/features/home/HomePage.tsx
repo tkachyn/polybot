@@ -1,10 +1,10 @@
 /**
  * Fights (home). Route "/".
  *
- * Demo layout: the first fight from the backend is the featured card, large
- * and fully live (Kalshi-style outcomes, Yes / No and a probability chart).
- * The cards beneath it are hardcoded previews (./placeholders) that look like
- * real fights but are not interactive.
+ * The featured card is one fight, large and fully live (Kalshi-style
+ * outcomes, Yes / No and a probability chart), picked and kept by ./featured
+ * so it never changes mid-race. Preview cards (./placeholders) stand in,
+ * marked as such, while the backend has no upcoming fights.
  *
  * The featured card is the live fight and the grid beneath it is what is
  * coming up, in full. The rail on the right is the compact read: standings,
@@ -18,6 +18,7 @@ import { useSearchQuery } from "../../state/search";
 import { useFights } from "../../state/fights";
 import { FeaturedFightCard, FeaturedFightEmpty, FeaturedFightSkeleton } from "./FeaturedFightCard";
 import { FightCardList, FightCardListSkeleton } from "./FightCard";
+import { useFeaturedFight } from "./featured";
 import { filterFights } from "./filter";
 import { buildPlaceholderFights, previewsAllowed } from "./placeholders";
 import { LobbyRail } from "./LobbyRail";
@@ -37,8 +38,8 @@ export function HomePage() {
     }
   }, [refresh]);
 
-  // The backend lists live fights first, so the demo's real fight leads.
-  const featured = fights[0] ?? null;
+  // One fight, kept while it runs: never swapped for a newer one mid-race.
+  const featured = useFeaturedFight(fights);
   const [anchor] = useState(() => serverNow());
   // Previews stand in only on a loaded, healthy lobby (never behind a skeleton
   // or beside an error), numbered clear of every real fight.
