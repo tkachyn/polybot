@@ -18,6 +18,11 @@
   min-width: 0;
 }
 
+/* Scrolled back to with the page's top padding still above it. */
+.top {
+  scroll-margin-top: var(--space-6);
+}
+
 .section {
   display: flex;
   flex-direction: column;
