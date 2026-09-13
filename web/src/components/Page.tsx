@@ -43,16 +43,23 @@ function useScrollRestoration(ref: RefObject<HTMLDivElement>, enabled: boolean):
   const { key } = useLocation();
   const kind = useNavigationType();
   const restoring = useRef(false);
+  // The entry on screen, updated as soon as a navigation commits: a page that
+  // stays mounted across one (a filter link) files its scroll under the new
+  // entry, never over the one Back returns to.
+  const currentKey = useRef(key);
+  useLayoutEffect(() => {
+    currentKey.current = key;
+  }, [key]);
 
   useEffect(() => {
     const node = ref.current;
     if (!enabled || !node) return;
     const save = () => {
-      if (!restoring.current) scrollMemory.save(key, node.scrollTop);
+      if (!restoring.current) scrollMemory.save(currentKey.current, node.scrollTop);
     };
     node.addEventListener("scroll", save, { passive: true });
     return () => node.removeEventListener("scroll", save);
-  }, [ref, key, enabled]);
+  }, [ref, enabled]);
 
   useLayoutEffect(() => {
     const node = ref.current;
