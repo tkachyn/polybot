@@ -3,7 +3,7 @@ import type { ReactionLabel, RobustnessCell, SabotageReaction, SteelTraceEntry, 
 import { datasetExportUrl, datasetFileUrl, evidenceFrameUrl, replayUrl } from "../../api/client";
 import { EMPTY, MINUS } from "../../lib/format";
 import { AGENT_OUTCOME_LABEL, BLOCKED_BY_LABEL, EVALUATION_MODE_LABEL, EVALUATION_STATUS_LABEL, REACTION_DESCRIPTION, REACTION_LABEL } from "../../lib/labels";
-import { DATASET_FILES, simulatedDatasetWarning } from "./dataset";
+import { DATASET_FILES, datasetScope, simulatedDatasetWarning } from "./dataset";
 import {
   cellCountsText,
   describeHitOffset,
@@ -280,6 +280,14 @@ describe("dataset downloads", () => {
       expect(description.trim().length).toBeGreaterThan(0);
       expect(description).not.toMatch(/\n/);
     }
+  });
+
+  it("disables the downloads only when the window is known to hold no fight", () => {
+    expect(datasetScope(0)).toEqual({ empty: true, summary: "No fights in this window" });
+    expect(datasetScope(1)).toEqual({ empty: false, summary: "1 fight · 4 episodes" });
+    expect(datasetScope(1_250)).toEqual({ empty: false, summary: "1,250 fights · 5,000 episodes" });
+    // Unknown (loading, or the matrix failed): keep the downloads, say nothing.
+    expect(datasetScope(null)).toEqual({ empty: false, summary: null });
   });
 
   it("warns against training on simulated rows whenever the download includes them", () => {

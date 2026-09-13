@@ -5,6 +5,7 @@
  */
 import type { DatasetFile } from "@contract";
 import type { EvaluationMode } from "../../api/client";
+import { formatNumber } from "../../lib/format";
 
 /** A file that downloads on its own as well as inside the zip. */
 export type DatasetDownload = DatasetFile | "manifest";
@@ -46,6 +47,31 @@ export const DATASET_FILES: readonly DatasetFileInfo[] = (Object.keys(CATALOGUE)
 
 /** Fallback name for the zip; the server's dated attachment name wins. */
 export const DATASET_ZIP_NAME = "sabotage-markets-dataset.zip";
+
+/** Every fight carries exactly four agents, so each fight adds four episodes. */
+export const AGENTS_PER_FIGHT = 4;
+
+/** Shown beside the disabled downloads when the window has no fight. */
+export const EMPTY_DATASET_COPY = "No fights in this window";
+
+export type DatasetScope = {
+  /** No fight in the window and mode: every download would be empty, so they are disabled. */
+  empty: boolean;
+  /** "12 fights · 48 episodes", {@link EMPTY_DATASET_COPY}, or null while the count is unknown. */
+  summary: string | null;
+};
+
+/**
+ * What the window's download holds, from its fight count (the matrix's final
+ * evaluations). An unknown count (loading, or the matrix failed) keeps the
+ * downloads enabled: the server can still answer.
+ */
+export function datasetScope(fights: number | null): DatasetScope {
+  if (fights === null) return { empty: false, summary: null };
+  if (fights <= 0) return { empty: true, summary: EMPTY_DATASET_COPY };
+  const episodes = fights * AGENTS_PER_FIGHT;
+  return { empty: false, summary: `${formatNumber(fights)} ${fights === 1 ? "fight" : "fights"} · ${formatNumber(episodes)} episodes` };
+}
 
 const SIMULATED_ROWS = "Simulated rows are scripted agents, not real models, and shouldn’t be used for training.";
 

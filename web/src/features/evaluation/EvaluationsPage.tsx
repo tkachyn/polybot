@@ -6,7 +6,7 @@
  * URL: `?mode=live|simulated|all&days=7|30|90` (see ./params). Without a
  * mode the page follows the server's mode.
  */
-import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useId, useState, type ReactNode } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import type { EvaluationReportSummary } from "@contract";
 import { datasetExportUrl, datasetFileUrl, type DatasetQuery, type EvaluationMode } from "../../api/client";
@@ -30,7 +30,7 @@ import { cx } from "../../lib/cx";
 import { formatDate, formatFightNumber, formatNumber } from "../../lib/format";
 import { EVALUATION_MODE_LABEL, SIMULATED_AGENTS_COPY } from "../../lib/labels";
 import { useSession } from "../../state/session";
-import { DATASET_FILES, DATASET_ZIP_NAME, simulatedDatasetWarning } from "./dataset";
+import { DATASET_FILES, DATASET_ZIP_NAME, EMPTY_DATASET_COPY, datasetScope, simulatedDatasetWarning } from "./dataset";
 import { IconDownload, IconEvaluations } from "./icons";
 import {
   DAYS_PARAM,
@@ -45,9 +45,6 @@ import {
 import { RobustnessMatrix } from "./RobustnessMatrix";
 import { useRobustnessMatrix } from "./useRobustnessMatrix";
 import styles from "./EvaluationsPage.module.css";
-
-/** Every fight carries exactly four agents, so each fight adds four episodes. */
-const AGENTS_PER_FIGHT = 4;
 
 const MODE_TITLE: Readonly<Record<EvaluationMode, string>> = {
   live: "Real models on live Steel browsers",
@@ -231,6 +228,9 @@ function DatasetPanel({ days, mode, shownMode, evaluations }: DatasetPanelProps)
   const query: DatasetQuery = { days, mode: mode ?? undefined };
   const scope = `${shownMode ? `${EVALUATION_MODE_LABEL[shownMode]} · ` : ""}last ${formatNumber(days)} days`;
   const warning = simulatedDatasetWarning(shownMode);
+  // No fight in the window: every file would be empty, so nothing downloads.
+  const { empty, summary } = datasetScope(evaluations);
+  const summaryId = useId();
   return (
     <section className={styles.panel} aria-labelledby="evaluations-dataset">
       <div className={styles.panelHeader}>
@@ -251,14 +251,18 @@ function DatasetPanel({ days, mode, shownMode, evaluations }: DatasetPanelProps)
           </p>
         )}
         <div className={styles.exportRow}>
-          <ButtonLink to={datasetExportUrl(query)} reloadDocument download={DATASET_ZIP_NAME} variant="action" icon={<IconDownload size={14} />}>
-            Download dataset (.zip)
-          </ButtonLink>
-          {evaluations !== null && (
-            <span className={cx("num", styles.panelMeta)}>
-              {evaluations === 0
-                ? "No resolved fights in this window yet"
-                : `${formatNumber(evaluations)} ${evaluations === 1 ? "fight" : "fights"} · ${formatNumber(evaluations * AGENTS_PER_FIGHT)} episodes`}
+          {empty ? (
+            <Button variant="action" icon={<IconDownload size={14} />} disabled aria-describedby={summaryId}>
+              Download dataset (.zip)
+            </Button>
+          ) : (
+            <ButtonLink to={datasetExportUrl(query)} reloadDocument download={DATASET_ZIP_NAME} variant="action" icon={<IconDownload size={14} />}>
+              Download dataset (.zip)
+            </ButtonLink>
+          )}
+          {summary !== null && (
+            <span id={summaryId} className={cx("num", styles.panelMeta)}>
+              {summary}
             </span>
           )}
         </div>
@@ -268,11 +272,18 @@ function DatasetPanel({ days, mode, shownMode, evaluations }: DatasetPanelProps)
             {DATASET_FILES.map(({ file, name, description }) => (
               <div key={file} className={styles.file}>
                 <dt>
-                  <a href={datasetFileUrl(file, query)} download={name} className={styles.fileLink} title={`Download ${name} on its own`}>
-                    <IconDownload size={12} className={styles.fileIcon} />
-                    <span className="sr-only">Download </span>
-                    {name}
-                  </a>
+                  {empty ? (
+                    <span className={cx(styles.fileLink, styles.fileLinkDisabled)} title={EMPTY_DATASET_COPY}>
+                      <IconDownload size={12} className={styles.fileIcon} />
+                      {name}
+                    </span>
+                  ) : (
+                    <a href={datasetFileUrl(file, query)} download={name} className={styles.fileLink} title={`Download ${name} on its own`}>
+                      <IconDownload size={12} className={styles.fileIcon} />
+                      <span className="sr-only">Download </span>
+                      {name}
+                    </a>
+                  )}
                 </dt>
                 <dd className={styles.fileText}>{description}</dd>
               </div>

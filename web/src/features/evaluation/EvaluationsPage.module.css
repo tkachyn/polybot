@@ -280,6 +280,14 @@
   text-underline-offset: 2px;
 }
 
+/* An empty window: the file is listed, but there is nothing to download. */
+.fileLinkDisabled,
+.fileLinkDisabled:hover {
+  color: var(--color-text-muted);
+  text-decoration: none;
+  cursor: not-allowed;
+}
+
 .fileIcon {
   display: inline-block;
   margin-right: var(--space-1);
