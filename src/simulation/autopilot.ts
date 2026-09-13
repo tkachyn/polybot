@@ -501,7 +501,7 @@ export class SimulationAutopilot {
     }
   }
 
-  /** One small bot order, biased toward leaders. Expected rejections are swallowed. */
+  /** One small bot order toward the bot's read of the race. Expected rejections are swallowed. */
   botTrade(coordinator: RaceCoordinator, now: number): void {
     if (this.bots.length === 0 || coordinator.market.status !== "open") return;
     const market = coordinator.market;
@@ -521,21 +521,21 @@ export class SimulationAutopilot {
         return;
       }
       const prices = market.pricesSnapshot();
-      const strength = (racerId: string): number => {
-        const racer = coordinator.engine.racers.get(racerId);
+      // The bot's read of the race: progress, less any trouble, plus its own
+      // noise. Never the price itself: bots that chased prices would pay
+      // whoever pumped one and then dumped on them.
+      const reads = market.racerIds.map((id) => {
+        const racer = coordinator.engine.racers.get(id);
         if (!racer || racer.status === "failed" || racer.status === "timed_out") return 0.001;
         const hurt = racer.status === "recovering" ? 0.5 : 1;
-        return (prices[racerId] ** 1.5 + 0.12 * racer.checkpoint + 0.03) * hurt;
-      };
-      let racerId: string;
-      let side: "yes" | "no";
-      if (this.rng.chance(0.68)) {
-        racerId = this.rng.weighted(market.racerIds, strength);
-        side = prices[racerId] > 0.85 ? "no" : "yes";
-      } else {
-        racerId = this.rng.weighted(market.racerIds, (id) => 1 / strength(id));
-        side = "no";
-      }
+        return (0.12 * racer.checkpoint + 0.1) * hurt * this.rng.range(0.6, 1.4);
+      });
+      const total = reads.reduce((sum, read) => sum + read, 0);
+      const edge = (index: number) => reads[index] / total - prices[market.racerIds[index]];
+      // Trade where the read and the price disagree most, toward the read.
+      const index = this.rng.weighted(market.racerIds.map((_, i) => i), (i) => Math.abs(edge(i)) + 0.02);
+      const racerId = market.racerIds[index];
+      const side: "yes" | "no" = edge(index) >= 0 ? "yes" : "no";
       coordinator.placeOrder({
         userId,
         racerId,

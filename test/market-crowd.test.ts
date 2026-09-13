@@ -81,6 +81,26 @@ describe("market crowd", () => {
     await registry.shutdown();
   });
 
+  it("trades against a pumped price instead of chasing it", async () => {
+    const now = 1_700_000_000_000;
+    const { registry, raceId } = await registryWithRace(now);
+    const race = registry.get(raceId) as RaceCoordinator;
+    registry.users.ensure({ userId: "pumper-01" }, now);
+    registry.ledger.credit("pumper-01", 10_000, { type: "deposit", at: now });
+    const crowd = new MarketCrowd(registry, { seed: "pump", size: 12 });
+    crowd.prepare(now);
+
+    const pump = { userId: "pumper-01", racerId: "racer-4", side: "yes" as const, quantity: 3_000 };
+    const bought = race.placeOrder({ ...pump, action: "buy" }, now);
+    const pumped = race.market.pricesSnapshot()["racer-4"];
+    run(crowd, now + 1_000, 20);
+
+    assert.ok(race.market.pricesSnapshot()["racer-4"] < pumped - 0.05, "the crowd sold the pump down");
+    const sold = race.placeOrder({ ...pump, action: "sell" }, now + 30_000);
+    assert.ok(sold.total < bought.total, `dumping on the crowd should lose: paid ${bought.total}, got ${sold.total}`);
+    await registry.shutdown();
+  });
+
   it("every trader is flagged automated, so judge standings ignore them", async () => {
     const now = 1_700_000_000_000;
     const { registry } = await registryWithRace(now);

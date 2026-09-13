@@ -263,12 +263,21 @@ export class MarketCrowd {
       return Math.max(0.02, read * brandPrior(key) * lean);
     };
 
-    const racerId = this.rng.weighted(market.racerIds, value);
+    // The trader's own odds for each racer, from their read of the race and
+    // never from the price: a crowd that chased prices would pay whoever
+    // pumped one and then dumped on it.
+    const reads = market.racerIds.map((id) => value(id));
+    const total = reads.reduce((sum, read) => sum + read, 0);
+    const edge = (index: number) => reads[index] / total - (prices[market.racerIds[index]] ?? 0.25);
+    // Trade where their odds and the price disagree most, toward their odds.
+    const index = this.rng.weighted(market.racerIds.map((_, i) => i), (i) => Math.abs(edge(i)) + 0.02);
+    const racerId = market.racerIds[index];
     const price = prices[racerId] ?? 0.25;
 
-    // Contrarians fade their own read; everyone else backs it, unless the
-    // price already leaves nothing to win.
-    let side: "yes" | "no" = this.rng.chance(trader.contrarian) ? "no" : "yes";
+    // Contrarians sometimes fade their own read, unless the price already
+    // leaves nothing to win.
+    let side: "yes" | "no" = edge(index) >= 0 ? "yes" : "no";
+    if (this.rng.chance(trader.contrarian)) side = side === "yes" ? "no" : "yes";
     if (price > 0.9) side = "no";
     else if (price < 0.04) side = "yes";
 
