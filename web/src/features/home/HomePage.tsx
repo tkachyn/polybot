@@ -6,17 +6,15 @@
  * The cards beneath it are hardcoded previews (./placeholders) that look like
  * real fights but are not interactive.
  *
- * Each status has one home: the featured card is the live fight, the grid
- * holds what is coming up, and the rail on the right carries the standings
- * and everything already settled.
+ * Each status has one home: the featured card is the live fight, and the rail
+ * on the right carries the standings, what is coming up, and everything
+ * already settled.
  */
 import { useCallback, useMemo, useState } from "react";
-import { EmptyState, ErrorBanner, Page } from "../../components";
-import { cx } from "../../lib/cx";
+import { ErrorBanner, Page } from "../../components";
 import { useSearchQuery } from "../../state/search";
 import { useFights } from "../../state/fights";
 import { FeaturedFightCard, FeaturedFightEmpty, FeaturedFightSkeleton } from "./FeaturedFightCard";
-import { FightCardList, FightCardListSkeleton } from "./FightCard";
 import { filterFights } from "./filter";
 import { buildPlaceholderFights } from "./placeholders";
 import { LobbyRail } from "./LobbyRail";
@@ -46,10 +44,13 @@ export function HomePage() {
   const previews = useMemo(() => buildPlaceholderFights(anchor, featuredNumber), [anchor, featuredNumber]);
 
   const matching = useMemo(() => filterFights(previews, "all", query), [previews, query]);
-  const upcoming = useMemo(() => matching.filter((f) => f.status === "upcoming"), [matching]);
 
-  // Real settled fights fill the rail once the backend has any; the demo's
-  // previews stand in only while it has none.
+  // Real fights fill the rail once the backend has any of that status; the
+  // demo's previews stand in only while it has none.
+  const scheduled = useMemo(() => fights.filter((f) => f.status === "upcoming"), [fights]);
+  const previewUpcoming = useMemo(() => matching.filter((f) => f.status === "upcoming"), [matching]);
+  const upcoming = scheduled.length > 0 ? scheduled : previewUpcoming;
+
   const settled = useMemo(() => fights.filter((f) => f.status === "resolved"), [fights]);
   const previewResolved = useMemo(() => matching.filter((f) => f.status === "resolved"), [matching]);
   const resolved = settled.length > 0 ? settled : previewResolved;
@@ -68,25 +69,14 @@ export function HomePage() {
           )}
 
           {!loaded ? <FeaturedFightSkeleton /> : featured ? <FeaturedFightCard fight={featured} /> : <FeaturedFightEmpty />}
-
-          <section className={styles.section} aria-labelledby="upcoming-heading">
-            <h2 id="upcoming-heading" className={cx("label", styles.sectionHead)}>
-              Upcoming
-            </h2>
-            {!loaded ? (
-              <FightCardListSkeleton count={2} />
-            ) : upcoming.length === 0 ? (
-              <EmptyState
-                title="Nothing scheduled"
-                description="Fights are listed here before they open, with the sabotage they will face."
-              />
-            ) : (
-              <FightCardList fights={upcoming} label="Upcoming fights" preview />
-            )}
-          </section>
         </div>
 
-        <LobbyRail resolved={resolved} preview={settled.length === 0} />
+        <LobbyRail
+          upcoming={upcoming}
+          resolved={resolved}
+          preview={settled.length === 0}
+          upcomingPreview={scheduled.length === 0}
+        />
       </div>
     </Page>
   );

@@ -1,7 +1,9 @@
 /**
- * The lobby's right rail: standings first, then what has already settled.
+ * The lobby's right rail, read top to bottom: who is winning, what is next,
+ * what already happened.
  *
  *   Leaderboard  agent ranking over the leaderboard window, by win rate
+ *   Upcoming     fights that have not opened yet, soonest first
  *   Past fights  one row per settled fight, with its winner
  *
  * Past fights is a compact read of the Resolved screen, so its header links
@@ -13,7 +15,7 @@ import { AgentMonogram, IconChevronRight, Skeleton } from "../../components";
 import { useLeaderboard } from "../leaderboard/useLeaderboard";
 import { agentStyle, rosterVisuals } from "../../lib/agents";
 import { cx } from "../../lib/cx";
-import { formatChance, formatCompactMoney, formatNumber, formatPercent } from "../../lib/format";
+import { formatChance, formatCompactMoney, formatNumber, formatPercent, formatTimeOfDay } from "../../lib/format";
 import { buildPlaceholderLeaderboard } from "./placeholders";
 import styles from "./LobbyRail.module.css";
 
@@ -142,6 +144,65 @@ function ResolvedRow({ fight, preview }: { fight: FightSummary; preview: boolean
 
 /** Settled fights shown in the rail; the rest live on /resolved. */
 const PAST_FIGHT_ROWS = 3;
+/** Scheduled fights shown in the rail. */
+const UPCOMING_ROWS = 3;
+
+function UpcomingRow({ fight, preview }: { fight: FightSummary; preview: boolean }) {
+  const body = (
+    <>
+      <span className={styles.rowText}>
+        <span className={cx("clamp-2", styles.rowTitle)} title={fight.title}>
+          {fight.title}
+        </span>
+        <span className={styles.rowSubLine}>
+          {fight.sabotage?.revealed && fight.sabotage.summary ? fight.sabotage.summary : "Sabotage armed"}
+        </span>
+      </span>
+      <span className={styles.rowFigures}>
+        <span className={cx("num", styles.rowFigure, styles.rowFigureSmall)}>
+          {fight.startsAt === null ? "Soon" : formatTimeOfDay(fight.startsAt)}
+        </span>
+        <span className={styles.rowFigureSub}>opens</span>
+      </span>
+    </>
+  );
+
+  if (preview) {
+    return (
+      <li className={cx(styles.row, styles.rowTop)} title="Preview only: this demo runs the featured fight">
+        {body}
+      </li>
+    );
+  }
+  return (
+    <li>
+      <Link to={`/fights/${encodeURIComponent(fight.raceId)}`} className={cx(styles.row, styles.rowTop, styles.rowLink)}>
+        {body}
+      </Link>
+    </li>
+  );
+}
+
+function UpcomingCard({ fights, preview }: { fights: readonly FightSummary[]; preview: boolean }) {
+  // Soonest first; a fight with no time yet sorts last.
+  const shown = [...fights]
+    .sort((a, b) => (a.startsAt ?? Infinity) - (b.startsAt ?? Infinity))
+    .slice(0, UPCOMING_ROWS);
+  return (
+    <section className={styles.card}>
+      <CardHead title="Upcoming" />
+      {shown.length === 0 ? (
+        <p className={styles.empty}>Scheduled fights appear here before they open.</p>
+      ) : (
+        <ul className={styles.rows}>
+          {shown.map((fight) => (
+            <UpcomingRow key={fight.raceId} fight={fight} preview={preview} />
+          ))}
+        </ul>
+      )}
+    </section>
+  );
+}
 
 function ResolvedCard({ fights, preview }: { fights: readonly FightSummary[]; preview: boolean }) {
   const shown = fights.slice(0, PAST_FIGHT_ROWS);
@@ -162,16 +223,21 @@ function ResolvedCard({ fights, preview }: { fights: readonly FightSummary[]; pr
 }
 
 export type LobbyRailProps = {
+  /** Scheduled fights. Only the soonest few are shown. */
+  upcoming: readonly FightSummary[];
   /** Settled fights, newest first. Only the first few are shown. */
   resolved: readonly FightSummary[];
-  /** Hardcoded demo fights: resolved rows render, but do not link. */
+  /** Hardcoded demo fights: rows render, but do not link. */
   preview?: boolean;
+  /** Demo upcoming fights, when the scheduled ones are placeholders. */
+  upcomingPreview?: boolean;
 };
 
-export function LobbyRail({ resolved, preview = false }: LobbyRailProps) {
+export function LobbyRail({ upcoming, resolved, preview = false, upcomingPreview = preview }: LobbyRailProps) {
   return (
-    <aside className={styles.rail} aria-label="Standings and resolved fights">
+    <aside className={styles.rail} aria-label="Standings, upcoming and past fights">
       <LeaderboardCard />
+      <UpcomingCard fights={upcoming} preview={upcomingPreview} />
       <ResolvedCard fights={resolved} preview={preview} />
     </aside>
   );

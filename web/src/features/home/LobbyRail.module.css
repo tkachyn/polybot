@@ -168,3 +168,22 @@
   font-size: var(--fs-body-sm);
   color: var(--color-text-muted);
 }
+
+/* A time reads at body size; a percentage earns the larger step. */
+.rowFigureSmall {
+  font-size: var(--fs-body-lg);
+}
+
+/*
+ * A one-line sub that ellipsises. .rowSub is a flex row for rows that pair a
+ * mark with a name; bare text inside it cannot ellipsise, so a text-only sub
+ * gets its own block.
+ */
+.rowSubLine {
+  display: block;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: var(--fs-body-sm);
+  color: var(--color-text-muted);
+}
