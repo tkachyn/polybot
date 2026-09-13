@@ -439,19 +439,19 @@ function sabotageTool(
   };
 }
 
-function sabotageSequenceTool() {
+function sabotageSequenceTool(count: number) {
   return {
     type: "function" as const,
     function: {
       name: "choose_sabotage_sequence",
-      description: "Choose exactly three ordered preset sabotage ids for checkpoints 2, 3, and 4.",
+      description: `Choose exactly ${count} ordered preset sabotage ids.`,
       parameters: {
         type: "object",
         properties: {
           presetIds: {
             type: "array",
-            minItems: 3,
-            maxItems: 3,
+            minItems: count,
+            maxItems: count,
             items: { type: "string", enum: SABOTAGE_PRESET_IDS },
           },
         },
@@ -666,21 +666,22 @@ export class OpenRouterMasterPolicyModel
 
   async selectSabotageSequence(
     input: Parameters<NonNullable<MasterPolicyModel["selectSabotageSequence"]>>[0],
-  ): Promise<{ presetIds: [SabotagePresetId, SabotagePresetId, SabotagePresetId] }> {
+  ): Promise<{ presetIds: SabotagePresetId[] }> {
+    const count = input.checkpoints.length;
     const value = await this.call(
-      "You are the race director for a browser-agent arena. Choose exactly three different bounded sabotage presets. They will be applied in the fixed order at checkpoints 2, 3, and 4, independently for each racer, and the next step waits for recovery. Choose fair, varied hazards. Never emit JavaScript.",
+      `You are the race director for a browser-agent arena. Choose exactly ${count} different bounded sabotage presets. They will be applied in the fixed order at checkpoints ${input.checkpoints.join(", ")}, independently for each racer, and the next step waits for recovery. Choose fair, varied hazards. Never emit JavaScript.`,
       input,
-      sabotageSequenceTool(),
+      sabotageSequenceTool(count),
     ) as { presetIds: string[] };
     if (
-      value.presetIds.length !== 3 ||
-      new Set(value.presetIds).size !== 3 ||
+      value.presetIds.length !== count ||
+      new Set(value.presetIds).size !== count ||
       value.presetIds.some((id) => !SABOTAGE_PRESET_IDS.includes(id as SabotagePresetId))
     ) {
       throw new Error("OpenRouter returned an invalid sabotage sequence");
     }
     return {
-      presetIds: value.presetIds as [SabotagePresetId, SabotagePresetId, SabotagePresetId],
+      presetIds: value.presetIds as SabotagePresetId[],
     };
   }
 }
