@@ -73,6 +73,7 @@ export interface MasterPolicyModel {
 
 export class MasterObstacleProvider implements ObstacleProvider {
   private readonly timeoutMs: number;
+  private readonly fixedPresetIds: readonly SabotagePresetId[] | null;
   private readonly plans = new Map<string, Promise<SabotagePlan | null>>();
   private readonly fallbackPolicies: Record<SabotageTier, DisruptionCommand>;
   private readonly legacyFallback: boolean;
@@ -82,9 +83,16 @@ export class MasterObstacleProvider implements ObstacleProvider {
     private readonly observations: RaceObservationSource,
     private readonly executor: Pick<ObstacleProvider, "apply">,
     fallbackPolicies: Record<number, DisruptionCommand> | Partial<Record<SabotageTier, DisruptionCommand>> = {},
-    options: { timeoutMs?: number } = {},
+    options: { timeoutMs?: number; fixedPresetIds?: readonly SabotagePresetId[] } = {},
   ) {
     this.timeoutMs = options.timeoutMs ?? 2_500;
+    this.fixedPresetIds = options.fixedPresetIds ? [...options.fixedPresetIds] : null;
+    if (this.fixedPresetIds && (
+      new Set(this.fixedPresetIds).size !== this.fixedPresetIds.length ||
+      this.fixedPresetIds.some((presetId) => !SABOTAGE_PRESET_IDS.includes(presetId))
+    )) {
+      throw new Error("Fixed sabotage presets must be known and unique");
+    }
     const legacy = fallbackPolicies as Record<number, DisruptionCommand>;
     const byTier = fallbackPolicies as Partial<Record<SabotageTier, DisruptionCommand>>;
     this.legacyFallback = Object.keys(fallbackPolicies).some((key) => /^\d+$/.test(key));
@@ -186,6 +194,32 @@ export class MasterObstacleProvider implements ObstacleProvider {
       input.sabotageSchedule,
     );
     if (checkpoints.length === 0) return null;
+    if (this.fixedPresetIds) {
+      if (this.fixedPresetIds.length !== checkpoints.length) {
+        throw new Error(`Expected ${checkpoints.length} fixed sabotage presets, received ${this.fixedPresetIds.length}`);
+      }
+      const selectedAt = Date.now();
+      const steps = this.fixedPresetIds.map((presetId, index) => {
+        const preset = sabotagePreset(presetId)!;
+        return {
+          stepId: preset.id,
+          checkpoint: checkpoints[index]!,
+          tier: preset.tier,
+          policy: { ...preset.policy },
+          selectedAt,
+        };
+      });
+      const first = steps[0]!;
+      return freezePlan({
+        raceId: input.raceId,
+        tier: highestTier(steps.map((step) => step.tier)),
+        trigger: input.trigger,
+        policy: first.policy,
+        selectedAt,
+        source: "operator",
+        steps,
+      });
+    }
     try {
       const observation = await this.observations.observe(input.raceId, input.trigger.checkpoint);
       if (this.model.selectSabotageSequence && checkpoints.length >= 1) {

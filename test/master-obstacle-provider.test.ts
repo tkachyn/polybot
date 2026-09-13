@@ -174,3 +174,42 @@ test("uses a course schedule to select at most the configured sabotage steps", a
   assert.equal(plan?.steps?.length, 1);
   assert.equal(plan?.steps?.[0]?.checkpoint, 1);
 });
+
+test("uses an operator-fixed preset sequence without asking the master model", async () => {
+  let selections = 0;
+  let observationsRead = 0;
+  const provider = new MasterObstacleProvider(
+    {
+      async selectSabotageSequence() {
+        selections += 1;
+        return { presetIds: ["disable-primary-action", "rename-primary-action"] };
+      },
+    },
+    {
+      async observe(raceId, checkpoint) {
+        observationsRead += 1;
+        return { raceId, checkpoint, racers: [] };
+      },
+    },
+    executor,
+    {},
+    { fixedPresetIds: ["cover-with-modal", "plant-decoy-control"] },
+  );
+
+  const plan = await provider.armRace?.({
+    raceId: "fixed-race",
+    courseId: "amazon-checkout",
+    seed: "changing-this-does-not-change-the-plan",
+    checkpointCount: 3,
+    sabotageSchedule: { maxSteps: 2, includeFinalCheckpoint: false },
+    trigger: { kind: "target_opened", checkpoint: 1, milestone: "first_verified_checkpoint" },
+  });
+
+  assert.equal(plan?.source, "operator");
+  assert.deepEqual(plan?.steps?.map((step) => [step.checkpoint, step.stepId]), [
+    [1, "cover-with-modal"],
+    [2, "plant-decoy-control"],
+  ]);
+  assert.equal(selections, 0);
+  assert.equal(observationsRead, 0);
+});
