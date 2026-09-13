@@ -257,7 +257,9 @@ export class SimulationAutopilot {
     const fight = coordinator.fight;
     const course = fitTemplate(template, fight.checkpointLabels);
     const racerIds = [...coordinator.market.racerIds];
-    const difficulty: FightDifficulty = voided ? "brutal" : this.rng.chance(0.25) ? "hard" : "normal";
+    // A void fight runs at a normal pace up to its sabotage, which fires and is
+    // judged as usual; the pages after it bog down (see scriptHistoryRuns).
+    const difficulty: FightDifficulty = voided ? "normal" : this.rng.chance(0.25) ? "hard" : "normal";
     const plan = planFight(
       `${this.options.seed}/${input.seed}`,
       racerIds.map((racerId, index) => ({ racerId, key: fight.agents[index]?.key ?? racerId })),

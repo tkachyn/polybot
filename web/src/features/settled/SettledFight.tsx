@@ -306,7 +306,9 @@ function SabotageRecap({ fight }: { fight: FightDetail }) {
     const at = sabotage.firedAt !== null ? `Fired ${formatLogTime(sabotage.firedAt)}` : "Fired";
     outcome = `${at} · hit ${hit.length} of ${fight.agents.length}` + (hit.length > 0 ? ` · ${survived.length} survived` : "");
   } else if (sabotage.state === "expired") {
-    outcome = "Never fired — no agent reached the checkpoint in time";
+    // Sabotage closes when trading freezes (or the fight ends); agents may pass
+    // the checkpoint after that without being hit.
+    outcome = "Never fired — sabotage closed before any agent reached the checkpoint";
   } else {
     outcome = "Armed, never fired";
   }

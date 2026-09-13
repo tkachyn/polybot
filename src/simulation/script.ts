@@ -1092,18 +1092,23 @@ function fastestFinish(runs: readonly OfflineRun[]): number | null {
   return finishes.length > 0 ? Math.min(...finishes) : null;
 }
 
+/** Each round, a void fight's pages after the sabotage take this much longer. */
+const VOID_BOG_FACTOR = 1.8;
+
 /**
  * Offline runs for a seeded history fight, racer order. A normal fight is
  * sped up until its fastest agent finishes well before the cap (and, when
- * nobody finishes, the first agent's crash is dropped); a void fight is
- * slowed until nobody finishes before the cap. Step pace changes by
+ * nobody finishes, the first agent's crash is dropped). A void fight keeps
+ * its plan's pace up to the sabotage, which fires and is judged as usual,
+ * then the pages from the sabotaged one on bog every agent down until nobody
+ * finishes before the cap. (Slowing the whole fight instead would let agents
+ * reach the sabotage checkpoint after hazards froze, unhit.) Pace changes by
  * re-running the script: hazard durations are never rescaled, so scripted
  * hazard windows always match the engine's recovery.
  */
 export function scriptHistoryRuns(options: HistoryScriptOptions): OfflineRun[] {
   const horizonMs = options.capMs + 60_000;
-  let plans = [...options.plans];
-  const runAll = (): OfflineRun[] => plans.map((plan, index) => runScriptOffline({
+  const runAll = (plans: readonly RacerPlan[]): OfflineRun[] => plans.map((plan, index) => runScriptOffline({
     plan,
     template: options.template,
     seed: options.seeds[index] ?? `racer-${index + 1}`,
@@ -1112,22 +1117,41 @@ export function scriptHistoryRuns(options: HistoryScriptOptions): OfflineRun[] {
     horizonMs,
     maxSteps: options.maxSteps,
   }));
-  let runs = runAll();
-  if (!options.voided && runs.every((run) => run.finishAt === null)) {
+
+  if (options.voided) {
+    // The sabotage hits on the page after its checkpoint (stage index = checkpoint).
+    const bogFrom = options.sabotage[0]?.checkpoint ?? 0;
+    let runs = runAll(options.plans);
+    let factor = 1;
+    for (let attempt = 0; attempt < 8; attempt += 1) {
+      const fastest = fastestFinish(runs);
+      if (fastest === null || fastest >= options.capMs + 20_000) break;
+      factor *= VOID_BOG_FACTOR;
+      runs = runAll(options.plans.map((plan) => bogDown(plan, bogFrom, factor)));
+    }
+    return runs;
+  }
+
+  let plans = [...options.plans];
+  let runs = runAll(plans);
+  if (runs.every((run) => run.finishAt === null)) {
     plans = plans.map((plan, index) => (index === 0 ? { ...plan, failAtStep: null } : plan));
-    runs = runAll();
+    runs = runAll(plans);
   }
   for (let attempt = 0; attempt < 4; attempt += 1) {
     const fastest = fastestFinish(runs);
-    let factor = 1;
-    if (!options.voided && fastest !== null && fastest > options.capMs - 20_000) {
-      factor = (options.capMs - 50_000) / fastest;
-    } else if (options.voided && fastest !== null && fastest < options.capMs + 20_000) {
-      factor = (options.capMs + 30_000) / fastest;
-    }
-    if (factor === 1) break;
+    if (fastest === null || fastest <= options.capMs - 20_000) break;
+    const factor = (options.capMs - 50_000) / fastest;
     plans = plans.map((plan) => ({ ...plan, speed: plan.speed * factor }));
-    runs = runAll();
+    runs = runAll(plans);
   }
   return runs;
+}
+
+/** The plan with every page from `stage` on (the finish page included) `factor` times longer. */
+function bogDown(plan: RacerPlan, stage: number, factor: number): RacerPlan {
+  return {
+    ...plan,
+    stepsPerStage: plan.stepsPerStage.map((steps, index) => (index >= stage ? Math.ceil(steps * factor) : steps)),
+  };
 }

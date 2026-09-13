@@ -728,20 +728,88 @@ test("offline runs follow the engine: progress waits for active recovery, frozen
   assert.equal(exhausted.finishAt, null);
 });
 
-test("history runs finish well before the cap, and void runs never finish before it", () => {
-  const template = templateById("ssd-checkout");
-  const sabotage = [{ checkpoint: 2, hazardType: "insert_decoy" as const, durationMs: 9_000, intensity: 2 }];
-  const options = { template, sabotage, freezeAtMs: 180_000, capMs: 300_000, maxSteps: 90 };
-  for (const [index, seed] of ["history-1", "history-2", "history-3"].entries()) {
-    const seeds = RACERS.map(({ racerId }) => `${seed}/${racerId}`);
-    const fair = planFight(seed, RACERS, template.stages.length, { difficulty: index === 2 ? "hard" : "normal" });
-    const runs = scriptHistoryRuns({ ...options, seeds, voided: false, plans: RACERS.map(({ racerId }) => fair.racers[racerId]) });
-    const finishes = runs.map((run) => run.finishAt).filter((at): at is number => at !== null);
-    assert.ok(finishes.length > 0 && Math.min(...finishes) <= 280_000, `${seed}: ${finishes.join(",")}`);
+test("history runs finish well before the cap; void runs are hit, then never finish before it", () => {
+  const options = { freezeAtMs: 180_000, capMs: 300_000, maxSteps: 90 };
+  for (const template of SIM_TEMPLATES) {
+    const checkpoint = template.sabotage.checkpoint;
+    const sabotage = [{ checkpoint, hazardType: template.sabotage.policy.hazardType, durationMs: 9_000, intensity: 2 }];
+    for (const [index, seed] of ["history-1", "history-2", "history-3"].entries()) {
+      const seeds = RACERS.map(({ racerId }) => `${seed}/${racerId}`);
+      const planOf = (difficulty: "normal" | "hard") => {
+        const plan = planFight(seed, RACERS, template.stages.length, { difficulty });
+        return RACERS.map(({ racerId }) => plan.racers[racerId]);
+      };
+      const runs = scriptHistoryRuns({
+        ...options, template, sabotage, seeds, voided: false, plans: planOf(index === 2 ? "hard" : "normal"),
+      });
+      const finishes = runs.map((run) => run.finishAt).filter((at): at is number => at !== null);
+      assert.ok(finishes.length > 0 && Math.min(...finishes) <= 280_000, `${template.id} ${seed}: ${finishes.join(",")}`);
 
-    const brutal = planFight(seed, RACERS, template.stages.length, { difficulty: "brutal" });
-    const voided = scriptHistoryRuns({ ...options, seeds, voided: true, plans: RACERS.map(({ racerId }) => brutal.racers[racerId]) });
-    assert.ok(voided.every((run) => run.finishAt === null || run.finishAt >= 320_000), seed);
+      // A void fight plays out at its plan's pace up to the sabotage, which hits
+      // every agent that gets there (before hazards freeze); then nobody finishes.
+      const voided = scriptHistoryRuns({ ...options, template, sabotage, seeds, voided: true, plans: planOf("normal") });
+      const id = `${template.id} ${seed} void`;
+      assert.ok(voided.every((run) => run.finishAt === null || run.finishAt >= 320_000), id);
+      assert.ok(voided.some((run) => run.hitAt.length > 0), `${id}: the sabotage fired`);
+      for (const run of voided) {
+        const reached = run.checkpointAt[checkpoint - 1];
+        if (reached === undefined || reached >= options.capMs) continue;
+        assert.ok(reached < options.freezeAtMs, `${id}: reached checkpoint ${checkpoint} before hazards froze`);
+        assert.deepEqual(run.hitAt, [reached], `${id}: hit when it reached checkpoint ${checkpoint}`);
+      }
+    }
+  }
+});
+
+test("seeded history keeps each fight's sabotage consistent with where its agents got", { timeout: 90_000 }, async () => {
+  // "sabotage-markets" is the server's default SIM_SEED: what a fresh boot seeds.
+  for (const seed of ["sabotage-markets", "history-consistency"]) {
+    const options = { seed, timeScale: 3 };
+    const registry = new RaceRegistry(createSimulatedCoordinatorFactory(options));
+    const stop = await startSimulationAutopilot(registry, {
+      ...options,
+      historyFights: 8,
+      liveFights: 0,
+      upcomingFights: 0,
+    });
+    try {
+      const fights = registry.list();
+      assert.equal(fights.length, 8, seed);
+      let voided = 0;
+      for (const coordinator of fights) {
+        const sabotage = coordinator.sabotage;
+        assert.ok(sabotage, coordinator.raceId);
+        const checkpoint = sabotage.plan.checkpoint;
+        const racers = [...coordinator.engine.racers.values()];
+        const id = `${seed} ${coordinator.raceId} (sabotage at ${checkpoint}, ${sabotage.state})`;
+        if (sabotage.state !== "fired") {
+          assert.ok(racers.every((racer) => racer.checkpoint < checkpoint), `${id}: never fired, yet an agent passed it`);
+        }
+        const failures = coordinator.engine.events
+          .filter((event) => event.type === "racer_failed")
+          .map((event) => String(event.metadata?.reason));
+        assert.ok(failures.every((reason) => !/while recovering/.test(reason)), `${id}: ${failures.join("; ")}`);
+        if (coordinator.market.status !== "unresolved") continue;
+
+        // The void fight: its sabotage fired and hit every agent that got there.
+        voided += 1;
+        assert.equal(sabotage.state, "fired", id);
+        const hit = new Set(sabotage.hitRacerIds);
+        for (const racer of racers) {
+          if (racer.checkpoint >= checkpoint) assert.ok(hit.has(racer.racerId), `${id}: ${racer.racerId} passed it unhit`);
+        }
+        const evaluation = await coordinator.whenEvaluationFinal();
+        assert.equal(evaluation.voided, true, id);
+        assert.deepEqual(
+          evaluation.agents.filter((agent) => agent.sabotage.length > 0).map((agent) => agent.racerId).sort(),
+          [...hit].sort(),
+          `${id}: every hit agent is judged`,
+        );
+      }
+      assert.equal(voided, 1, `${seed}: one void fight`);
+    } finally {
+      stop();
+    }
   }
 });
 
