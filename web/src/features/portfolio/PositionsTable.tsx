@@ -98,7 +98,7 @@ function PositionRow({ position, onSold }: { position: Position; onSold: (messag
       <td className={tableStyles.num}>
         <PriceCents value={position.currentPrice} size="sm" flash />
       </td>
-      <td className={tableStyles.num}>
+      <td className={tableStyles.num} title={`What selling all ${formatShares(position.quantity)} shares now would return`}>
         <Money value={position.value} size="sm" />
       </td>
       <td className={tableStyles.num}>

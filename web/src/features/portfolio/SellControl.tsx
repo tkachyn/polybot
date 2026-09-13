@@ -1,19 +1,20 @@
 /**
  * Per-position Sell with an inline two-step confirm: "Sell 120 for $38.40?".
  *
- * Sells the whole position at the current price, guarded by
- * `limitPrice = currentPrice` (the server rejects with price_moved if the
- * price fell below it). A price_moved rejection refreshes the portfolio and
- * asks again at the new price.
+ * Sells the whole position for its liquidation value (`position.value`: what
+ * the market maker pays for all of it now), guarded by a limit SLIPPAGE below
+ * that average. A price_moved rejection refreshes the portfolio and asks
+ * again at the new amount.
  */
 import { useEffect, useState } from "react";
 import type { MarketStatusDTO, Position } from "@contract";
+import { slippageLimit } from "@pricing";
 import { describeError, isApiFailure, placeOrder } from "../../api/client";
 import { Button } from "../../components";
 import { cx } from "../../lib/cx";
 import { formatCents, formatMoney, formatShares } from "../../lib/format";
 import { newClientOrderId } from "../../lib/id";
-import { round6 } from "../../lib/order";
+import { priceMovedMessage } from "../../lib/order";
 import { useSession } from "../../state/session";
 import styles from "./Portfolio.module.css";
 
@@ -40,7 +41,9 @@ export function SellControl({ position, onSold }: SellControlProps) {
 
   const quantity = Math.floor(position.quantity + 1e-9);
   const open = position.marketStatus === "open";
-  const proceeds = round6(quantity * position.currentPrice);
+  // Selling moves the price, so the whole position returns its liquidation
+  // value, not quantity × the current price.
+  const proceeds = position.value;
   const disabledReason = position.marketStatus !== "open" ? CLOSED_REASON[position.marketStatus] : quantity < 1 ? "Less than one whole share." : null;
 
   // The market can close while the confirm is showing: drop back to idle.
@@ -70,7 +73,7 @@ export function SellControl({ position, onSold }: SellControlProps) {
         side: position.side,
         action: "sell",
         quantity,
-        limitPrice: position.currentPrice,
+        limitPrice: slippageLimit("sell", quantity > 0 ? proceeds / quantity : 0),
         clientOrderId,
       });
       applyAccount(res.account, res.serverTime);
@@ -83,7 +86,8 @@ export function SellControl({ position, onSold }: SellControlProps) {
     } catch (err) {
       if (isApiFailure(err, "price_moved")) {
         await refresh();
-        setPhase({ kind: "confirm", clientOrderId: newClientOrderId(), note: "The price moved. Check the new amount and confirm again." });
+        const moved = err.details ? `${priceMovedMessage(err.details, "sell")} ` : "The price moved. ";
+        setPhase({ kind: "confirm", clientOrderId: newClientOrderId(), note: `${moved}Check the new amount and confirm again.` });
         return;
       }
       setError(describeError(err));
