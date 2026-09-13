@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { DEFAULT_AGENT_ROSTER } from "../src/application/fight-metadata.js";
 import { presentFightSummary } from "../src/api/presenters.js";
-import { RaceRegistry, type CoordinatorChange } from "../src/api/race-registry.js";
+import { RaceRegistry, RESOLVED_RETENTION_MS, type CoordinatorChange } from "../src/api/race-registry.js";
 import { DomainError } from "../src/domain/errors.js";
 import { createFactory, raceInput, winRace } from "./api-fixtures.js";
 
@@ -141,4 +141,24 @@ test("prune keeps the newest resolved fights and archives the rest", async () =>
   assert.equal(registry.fightInfo("race-1")?.number, 1);
   assert.equal(registry.fightInfo("race-1")?.agents[0].key, "gpt");
   assert.equal(registry.archivedLeaderboard().length, 2);
+});
+
+test("finished fights and replays remain available through the retention window", async () => {
+  const { factory } = createFactory();
+  const registry = new RaceRegistry(factory);
+  await registry.create(raceInput("race-retained"), 1_000);
+  await winRace(registry.get("race-retained"), "racer-1", 50_000);
+  await registry.replays.put("race-retained", "racer-1", {
+    playlist: "#EXTM3U\n#EXT-X-ENDLIST\n",
+    files: [],
+  });
+
+  await registry.pruneResolved(50_000 + RESOLVED_RETENTION_MS - 1);
+  assert.ok(registry.find("race-retained"));
+  assert.equal(await registry.replays.playlist("race-retained", "racer-1"), "#EXTM3U\n#EXT-X-ENDLIST\n");
+
+  await registry.pruneResolved(50_000 + RESOLVED_RETENTION_MS);
+  assert.equal(registry.find("race-retained"), undefined);
+  assert.equal(await registry.replays.playlist("race-retained", "racer-1"), null);
+  await registry.shutdown();
 });

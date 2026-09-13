@@ -28,6 +28,8 @@ test("file replay store writes media before advertising its playlist", async () 
       await store.file("race-1", "racer-1", "segment-00000.ts"),
       artifact.files[0],
     );
+    await store.removeRace("race-1");
+    assert.equal(await store.playlist("race-1", "racer-1"), null);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

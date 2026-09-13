@@ -408,7 +408,10 @@ export function buildApi(options: ApiServerOptions): FastifyInstance {
     }
     if (options.enableTicker === false) return;
     ticker = setInterval(() => {
-      void registry.tickAll(now()).catch((error) => app.log.error(error));
+      const at = now();
+      void registry.tickAll(at)
+        .then(() => mode === "live" ? registry.pruneResolved(at) : undefined)
+        .catch((error) => app.log.error(error));
     }, options.tickIntervalMs ?? 1_000);
     ticker.unref();
   });

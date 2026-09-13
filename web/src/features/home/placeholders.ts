@@ -237,6 +237,7 @@ function sabotageFor(template: PlaceholderTemplate, firedAt: number | null): Sab
     state: template.fired ? "fired" : template.status === "resolved" ? "expired" : "armed",
     firedAt: template.fired ? firedAt : null,
     tier: null,
+    stepCount: 1,
     steps: [{
       index: 1,
       stepId: "preview-step-1",

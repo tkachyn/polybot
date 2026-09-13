@@ -52,8 +52,10 @@ racers load from it, so there is one URL for both and no tunnel anywhere.
 The checked-in `fly.toml` points `EVALUATION_FILE`, `DATASET_DIR` and
 `REPLAY_DIR` at `/data`. Finished Steel HLS playlists and media segments are
 copied into `/data/replays` before the fight is published as final, so releasing
-the Steel session no longer removes the replay. Increase the volume size if
-you expect many long fights.
+the Steel session no longer removes the replay. Finished fights and all four
+replays remain available for ten minutes after the round ends, then the live
+fight and replay files are cleared. Increase the volume size if you expect many
+long fights.
 
 ```bash
 fly deploy --config fly.toml

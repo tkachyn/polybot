@@ -1,9 +1,9 @@
 /**
  * The fight screen's 344px market rail (handoff 2.2 "Market rail", 2.3):
  * win-probability chart, outcome table, then the order form or receipt in
- * place, and a small market footer. Fills its column and never scrolls the
- * page: while an order panel is open the chart yields its whole space, so all
- * four outcome rows and the confirm button stay on screen.
+ * place, and a small market footer. The chart stays mounted while an order
+ * panel is open so the user can keep seeing the price movement they are
+ * trading.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { FightDetail, OrderResponse } from "@contract";
@@ -38,6 +38,14 @@ export function MarketRail({ fight, priceHistory, slip, onSlipChange }: MarketRa
   const agentIndex = slip ? fight.agents.findIndex((a) => a.racerId === slip.racerId) : -1;
   const slipAgent = agentIndex >= 0 ? fight.agents[agentIndex] : undefined;
   const activeSlip = slipAgent ? slip : null;
+  const position = activeSlip
+    ? portfolio?.positions.find(
+        (candidate) =>
+          candidate.raceId === fight.raceId &&
+          candidate.racerId === activeSlip.racerId &&
+          candidate.side === activeSlip.side,
+      ) ?? null
+    : null;
   const currentKey = slipKey(fight.raceId, activeSlip);
   const persistedTradeMarkers = useMemo(
     () => (portfolio?.history ?? [])
@@ -107,8 +115,6 @@ export function MarketRail({ fight, priceHistory, slip, onSlipChange }: MarketRa
     [slipAgent, currentKey, visuals, agentIndex],
   );
 
-  const panelOpen = filled !== null || activeSlip !== null;
-
   let panel = null;
   if (filled) {
     panel = <Receipt filled={filled} onNewOrder={close} />;
@@ -123,26 +129,23 @@ export function MarketRail({ fight, priceHistory, slip, onSlipChange }: MarketRa
         onAmountChange={setAmount}
         onClose={close}
         onFilled={onFilled}
+        position={position}
       />
     );
   }
 
   return (
     <div className={styles.rail}>
-      {/* An open order panel takes the chart's whole space rather than
-          squeezing it into a stub or pushing outcome rows out of view. */}
-      {!panelOpen && (
-        <ProbabilityChart
-          agents={fight.agents}
-          priceHistory={priceHistory}
-          sabotageAt={fight.sabotage?.firedAt ?? null}
-          sabotageMarkers={sabotageMarkersFor(fight)}
-          tradeMarkers={chartTradeMarkers}
-          endAt={fight.finishedAt}
-          volume={fight.volume}
-          className={styles.chartFloor}
-        />
-      )}
+      <ProbabilityChart
+        agents={fight.agents}
+        priceHistory={priceHistory}
+        sabotageAt={fight.sabotage?.firedAt ?? null}
+        sabotageMarkers={sabotageMarkersFor(fight)}
+        tradeMarkers={chartTradeMarkers}
+        endAt={fight.finishedAt}
+        volume={fight.volume}
+        className={styles.chartFloor}
+      />
       <OutcomeTable fight={fight} slip={activeSlip} onSelect={select} className={styles.table} />
       {panel}
       <MarketFooter fight={fight} />

@@ -20,6 +20,7 @@ import {
   describeHazard,
   describeHazardDetail,
   hazardLabel,
+  sabotageCheckpoints,
   sabotagePlaceholder,
   tierForPolicy,
 } from "../domain/sabotage.js";
@@ -206,6 +207,8 @@ export type SabotageStatus = {
   armedAt: number | null;
   /** First time the sabotage was applied to any agent. */
   firedAt: number | null;
+  /** Number of ordered steps in the plan, including before arming settles. */
+  stepCount: number;
   hitRacerIds: string[];
   steps: SabotageStepStatus[];
   state: SabotageState;
@@ -1049,6 +1052,15 @@ export class RaceCoordinator {
           } satisfies SabotageStepStatus;
         })
       : [];
+    const stepCount = armedPlan
+      ? steps.length
+      : this.sabotageDefaulted
+        ? sabotageCheckpoints(
+            this.engine.race.checkpointCount,
+            plan.checkpoint,
+            this.engine.race.sabotageSchedule,
+          ).length
+        : 1;
     return {
       plan: structuredClone(plan),
       checkpointLabel: this.checkpointLabel(plan.checkpoint),
@@ -1057,6 +1069,7 @@ export class RaceCoordinator {
       tier: armedPlan?.tier ?? null,
       armedAt: this.sabotageArmedAt,
       firedAt: this.sabotageFiredAt,
+      stepCount,
       hitRacerIds: [...this.sabotageHits],
       steps,
       state,

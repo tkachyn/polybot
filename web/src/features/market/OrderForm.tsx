@@ -7,7 +7,7 @@
  */
 import { useEffect, useId, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { Link } from "react-router-dom";
-import type { FightAgentDetail, FightDetail, OrderRequest, OrderResponse, Side } from "@contract";
+import type { FightAgentDetail, FightDetail, OrderRequest, OrderResponse, Position, Side } from "@contract";
 import { ApiFailure, describeError, isAbortError, placeOrder, toApiFailure } from "../../api/client";
 import { AgentMonogram, Button, IconAlert, IconClose, PriceCents, SignedMoney, Tag } from "../../components";
 import type { AgentVisual } from "../../lib/agents";
@@ -30,6 +30,7 @@ import {
 import { useSession } from "../../state/session";
 import { slipPriceLabel, tradingBlockedReason, useEscape } from "./market";
 import { rememberSlipOpener, returnFocusToSlipOpener } from "./slipFocus";
+import { SellControl } from "../portfolio/SellControl";
 import styles from "./OrderPanel.module.css";
 
 export const DEPOSIT_PATH = "/wallet?tab=deposit";
@@ -44,6 +45,7 @@ export type OrderFormProps = {
   onAmountChange: (value: string) => void;
   onClose: () => void;
   onFilled: (response: OrderResponse) => void;
+  position: Position | null;
 };
 
 /** Fresher pricing from a price_moved reply, used until the stream catches up. */
@@ -71,7 +73,7 @@ function clearsWithFreshData(failure: ApiFailure): boolean {
   return !failure.unconfirmed && (failure.code === "network" || failure.code === "timeout" || failure.code === "server");
 }
 
-export function OrderForm({ fight, agent, visual, side, amount, onAmountChange, onClose, onFilled }: OrderFormProps) {
+export function OrderForm({ fight, agent, visual, side, amount, onAmountChange, onClose, onFilled, position }: OrderFormProps) {
   const { userId, account, applyAccount } = useSession();
   const [pending, setPending] = useState(false);
   const [failure, setFailure] = useState<ApiFailure | null>(null);
@@ -311,6 +313,21 @@ export function OrderForm({ fight, agent, visual, side, amount, onAmountChange, 
       >
         {ctaLabel}
       </Button>
+      {position && (
+        <div className={styles.sellPosition}>
+          <div>
+            <span className="label label-sm">Open position</span>
+            <span className={cx("num", styles.sellPositionValue)}>
+              {formatShares(position.quantity)} {SIDE_LABEL[position.side].toUpperCase()}
+            </span>
+          </div>
+          <SellControl
+            position={position}
+            onSold={() => undefined}
+            onExecuted={onFilled}
+          />
+        </div>
+      )}
     </form>
   );
 }

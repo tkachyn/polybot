@@ -75,6 +75,8 @@ export interface ReplayStore {
   put(raceId: string, racerId: string, artifact: ReplayArtifact): Promise<void>;
   playlist(raceId: string, racerId: string): Promise<string | null>;
   file(raceId: string, racerId: string, path: string): Promise<ReplayFile | null>;
+  /** Deletes all replay files belonging to a fight after its retention window. */
+  removeRace?(raceId: string): Promise<void>;
 }
 
 /** One step of a competitor's loop, reported for spectator telemetry. */

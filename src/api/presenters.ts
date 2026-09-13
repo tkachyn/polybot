@@ -178,6 +178,7 @@ function sabotageSummary(view: FightView): SabotageSummary | null {
     state: sabotage.state,
     firedAt: sabotage.firedAt,
     tier: revealed ? sabotage.tier : null,
+    stepCount: sabotage.stepCount,
     steps: revealed ? sabotage.steps.map(stepSummary) : [],
   };
 }

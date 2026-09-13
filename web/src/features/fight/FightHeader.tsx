@@ -172,13 +172,7 @@ export function SabotageStrip({ fight, roster }: { fight: FightDetail; roster: R
           {HAZARD_LABEL[sabotage.hazardType]}
         </Tag>
       )}
-      <span className={styles.sabFires} title={`Fires at checkpoint ${sabotage.checkpoint}: ${sabotage.checkpointLabel}`}>
-        <span>Fires at</span>
-        <span className={styles.sabCheckpoint}>{sabotage.checkpointLabel}</span>
-        <span className={cx("num", styles.sabCp)}>
-          {sabotage.checkpoint}/{fight.checkpointCount}
-        </span>
-      </span>
+      <SabotageProgress sabotage={sabotage} />
       <SabotageStateView sabotage={sabotage} fight={fight} roster={roster} />
       {sabotage.revealed && sabotage.steps.length > 1 && (
         <div className={styles.sabSteps} aria-label="Ordered sabotage sequence">
@@ -196,6 +190,18 @@ export function SabotageStrip({ fight, roster }: { fight: FightDetail; roster: R
         </div>
       )}
     </section>
+  );
+}
+
+function SabotageProgress({ sabotage }: { sabotage: NonNullable<FightDetail["sabotage"]> }) {
+  const fired = sabotage.steps.filter((step) => step.firedAt !== null).length;
+  return (
+    <span className={styles.sabFires} title={`${fired} of ${sabotage.stepCount} sabotage steps fired`}>
+      <span>Sabotages</span>
+      <span className={cx("num", styles.sabCp)}>
+        {fired} of {sabotage.stepCount}
+      </span>
+    </span>
   );
 }
 

@@ -97,6 +97,10 @@ export class FileReplayStore implements ReplayStore {
       return null;
     }
   }
+
+  async removeRace(raceId: string): Promise<void> {
+    await rm(join(this.root, safePart(raceId, "race id")), { recursive: true, force: true });
+  }
 }
 
 /** Small in-memory implementation for application and route tests. */
@@ -117,5 +121,11 @@ export class InMemoryReplayStore implements ReplayStore {
   async file(raceId: string, racerId: string, path: string): Promise<ReplayFile | null> {
     const file = this.replays.get(`${raceId}/${racerId}`)?.files.find((entry) => entry.path === path);
     return file ? { ...file, body: Buffer.from(file.body) } : null;
+  }
+
+  async removeRace(raceId: string): Promise<void> {
+    for (const key of this.replays.keys()) {
+      if (key.startsWith(`${raceId}/`)) this.replays.delete(key);
+    }
   }
 }

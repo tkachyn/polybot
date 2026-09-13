@@ -103,6 +103,8 @@ export type SabotageSummary = {
   firedAt: number | null;
   /** Tier of the armed race-wide plan. Null until armed or when not revealed. */
   tier: SabotageTier | null;
+  /** Number of ordered sabotage steps in the armed plan, even while hidden. */
+  stepCount: number;
   /** Ordered master-selected steps, each triggered independently per racer. */
   steps: SabotageStepSummary[];
 };

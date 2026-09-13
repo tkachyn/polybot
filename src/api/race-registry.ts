@@ -85,6 +85,8 @@ export type ArchivedFight = {
 };
 
 const ARCHIVE_LIMIT = 5_000;
+/** Finished fights remain browseable, including their replays, for ten minutes. */
+export const RESOLVED_RETENTION_MS = 10 * 60_000;
 
 function invalid(message: string): never {
   throw new DomainError("invalid", message);
@@ -182,6 +184,7 @@ export class RaceRegistry {
   private readonly listeners = new Set<CoordinatorChangeListener>();
   private readonly archive = new Map<string, ArchivedFight>();
   private nextFightNumber: number;
+  private pruneInFlight?: Promise<void>;
 
   constructor(
     private readonly factory: CoordinatorFactory,
@@ -338,6 +341,53 @@ export class RaceRegistry {
       if (oldest === undefined) break;
       this.archive.delete(oldest);
     }
+  }
+
+  /**
+   * Removes resolved fights after the retention window, including their
+   * application-owned replays. Evaluations and datasets intentionally remain
+   * available through their stores after the live fight is removed.
+   */
+  async pruneResolved(
+    now = Date.now(),
+    retentionMs = RESOLVED_RETENTION_MS,
+  ): Promise<void> {
+    if (this.pruneInFlight) return this.pruneInFlight;
+    const safeRetention = Number.isFinite(retentionMs) ? Math.max(0, retentionMs) : RESOLVED_RETENTION_MS;
+    const cutoff = now - safeRetention;
+    const task = (async () => {
+      const expired = this.list()
+        .filter((race) =>
+          fightStatusOf(race.engine.race.status) === "resolved" &&
+          resolvedAt(race) <= cutoff,
+        )
+        .sort((left, right) => resolvedAt(left) - resolvedAt(right));
+      for (const race of expired) {
+        if (!this.races.has(race.raceId)) continue;
+        const fight = race.fight;
+        this.archive.set(race.raceId, {
+          number: fight.number,
+          title: fight.title,
+          agents: fight.agents,
+          leaderboard: leaderboardRecord(race),
+        });
+        this.remove(race.raceId);
+        await Promise.all([
+          race.shutdown().catch(() => undefined),
+          this.replays.removeRace?.(race.raceId) ?? Promise.resolve(),
+        ]);
+      }
+      while (this.archive.size > ARCHIVE_LIMIT) {
+        const oldest = this.archive.keys().next().value;
+        if (oldest === undefined) break;
+        this.archive.delete(oldest);
+      }
+    })();
+    const inFlight = task.finally(() => {
+      if (this.pruneInFlight === inFlight) this.pruneInFlight = undefined;
+    });
+    this.pruneInFlight = inFlight;
+    return inFlight;
   }
 
   async shutdown(): Promise<void> {

@@ -7,7 +7,7 @@
  * again at the new amount.
  */
 import { useEffect, useState } from "react";
-import type { MarketStatusDTO, Position } from "@contract";
+import type { MarketStatusDTO, OrderResponse, Position } from "@contract";
 import { slippageLimit } from "@pricing";
 import { describeError, isApiFailure, placeOrder } from "../../api/client";
 import { Button } from "../../components";
@@ -32,9 +32,10 @@ const CLOSED_REASON: Readonly<Record<Exclude<MarketStatusDTO, "open">, string>> 
 export type SellControlProps = {
   position: Position;
   onSold: (message: string) => void;
+  onExecuted?: (response: OrderResponse) => void;
 };
 
-export function SellControl({ position, onSold }: SellControlProps) {
+export function SellControl({ position, onSold, onExecuted }: SellControlProps) {
   const { userId, applyAccount, refresh } = useSession();
   const [phase, setPhase] = useState<Phase>({ kind: "idle" });
   const [error, setError] = useState<string | null>(null);
@@ -77,6 +78,7 @@ export function SellControl({ position, onSold }: SellControlProps) {
         clientOrderId,
       });
       applyAccount(res.account, res.serverTime);
+      onExecuted?.(res);
       const { receipt } = res;
       onSold(
         `Sold ${formatShares(receipt.quantity)} ${receipt.side === "yes" ? "YES" : "NO"} · ${position.agent.name} at ${formatCents(receipt.price)} — ${formatMoney(receipt.total)}`,
