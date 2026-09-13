@@ -22,8 +22,17 @@ export class SseStream {
     request: FastifyRequest,
     pingMs: number,
   ) {
+    // Hijacking stops Fastify sending the reply, which also means it never
+    // flushes the headers its hooks staged — CORS among them. Writing the raw
+    // head would drop them and a cross-origin EventSource would fail with no
+    // Access-Control-Allow-Origin on a 200. Carry them over first; the stream's
+    // own headers below still win.
+    const staged = reply.getHeaders();
     reply.hijack();
     const raw = reply.raw;
+    for (const [name, value] of Object.entries(staged)) {
+      if (value !== undefined) raw.setHeader(name, value as number | string | string[]);
+    }
     raw.writeHead(200, {
       "Content-Type": "text/event-stream; charset=utf-8",
       "Cache-Control": "no-cache, no-transform",

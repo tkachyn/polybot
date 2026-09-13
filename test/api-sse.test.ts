@@ -38,10 +38,11 @@ class SseClient {
     });
   }
 
-  static connect(url: string): Promise<SseClient> {
+  static connect(url: string, options: { origin?: string } = {}): Promise<SseClient> {
+    const headers: Record<string, string> = { accept: "text/event-stream" };
+    if (options.origin) headers.origin = options.origin;
     return new Promise((resolve, reject) => {
-      get(url, { headers: { accept: "text/event-stream" } }, (response) =>
-        resolve(new SseClient(response))).on("error", reject);
+      get(url, { headers }, (response) => resolve(new SseClient(response))).on("error", reject);
     });
   }
 
@@ -97,13 +98,38 @@ class SseClient {
   }
 }
 
-async function listen(options: { ssePingMs?: number } = {}) {
+async function listen(options: { ssePingMs?: number; corsOrigins?: string[] } = {}) {
   const { factory } = createFactory();
   const app = buildApi({ coordinatorFactory: factory, enableTicker: false, ...options });
   await app.listen({ port: 0, host: "127.0.0.1" });
   const { port } = app.server.address() as AddressInfo;
   return { app, base: `http://127.0.0.1:${port}` };
 }
+
+/**
+ * Regression: the stream hijacks the reply, so Fastify never flushes the
+ * headers its hooks staged. Writing the raw head without carrying them over
+ * drops Access-Control-Allow-Origin, and a cross-origin EventSource fails on
+ * an otherwise healthy 200.
+ */
+test("a hijacked stream keeps the CORS headers the reply staged", async () => {
+  const origin = "https://polybot.example";
+  const { app, base } = await listen({ corsOrigins: [origin] });
+  try {
+    const allowed = await SseClient.connect(`${base}/api/fights/stream`, { origin });
+    assert.equal(allowed.response.headers["access-control-allow-origin"], origin);
+    assert.match(String(allowed.response.headers["content-type"]), /^text\/event-stream/);
+    allowed.close();
+
+    const stranger = await SseClient.connect(`${base}/api/fights/stream`, {
+      origin: "https://not-allowed.example",
+    });
+    assert.equal(stranger.response.headers["access-control-allow-origin"], undefined);
+    stranger.close();
+  } finally {
+    await app.close();
+  }
+});
 
 test("streams send a ping event on connect and at every interval", async () => {
   const { app, base } = await listen({ ssePingMs: 40 });
