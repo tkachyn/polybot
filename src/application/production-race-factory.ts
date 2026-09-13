@@ -54,8 +54,8 @@ export type ProductionRaceContext = {
 export const OPENROUTER_PROVIDER = "openrouter";
 export const COMPETITOR_ROSTER_SIZE = 4;
 export const AMAZON_SABOTAGE_PRESET_IDS = [
+  "shift-primary-action",
   "cover-with-modal",
-  "plant-decoy-control",
 ] as const satisfies readonly SabotagePresetId[];
 
 /** Amazon demo fights use the rehearsed sequence; other courses keep model selection. */

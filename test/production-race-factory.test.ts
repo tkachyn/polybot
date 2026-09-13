@@ -19,7 +19,7 @@ import {
 test("pins Amazon fights to the rehearsed two-sabotage sequence", () => {
   assert.deepEqual(
     fixedSabotagePresetIds({ courseId: "amazon-checkout", startUrl: "https://www.amazon.com/s?k=wireless+computer+mouse" }),
-    ["cover-with-modal", "plant-decoy-control"],
+    ["shift-primary-action", "cover-with-modal"],
   );
   assert.equal(
     fixedSabotagePresetIds({ courseId: "arena-shop", startUrl: "https://course.example.test" }),
