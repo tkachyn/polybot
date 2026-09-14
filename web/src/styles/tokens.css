@@ -60,14 +60,14 @@
   --tint-edge-border: rgba(236, 231, 223, 0.22);
   --tint-hover: rgba(244, 242, 239, 0.04); /* a wash, not a depth */
 
-  /* --- Type: Fraunces for statements, Sora for everything else -----------
+  /* --- Type: Sora throughout; headings take a heavier weight ------------
    * Labels 9-10.5px uppercase with 0.1em tracking; body 11-13px; prices
    * 16-17px. Sora runs a little wide, so body sizes carry tighter tracking.
    */
   --font-sans: "Sora", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial,
     sans-serif;
   /* Statement face: titles, page headings, hero figures. */
-  --font-display: "Fraunces", "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, "Times New Roman", serif;
+  --font-display: var(--font-sans);
   --font-mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
 
   --fs-label-sm: 9px;

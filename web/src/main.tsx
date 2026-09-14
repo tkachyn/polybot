@@ -1,8 +1,6 @@
 import "@fontsource/sora/400.css";
 import "@fontsource/sora/500.css";
 import "@fontsource/sora/600.css";
-import "@fontsource/fraunces/400.css";
-import "@fontsource/fraunces/600.css";
 import "./styles/tokens.css";
 import "./styles/global.css";
 
