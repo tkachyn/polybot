@@ -416,9 +416,11 @@ function sabotageSummaryFromEvaluation(evaluation: FightEvaluation): SabotageSum
     : steps.every((step) => step.state !== "fired")
     ? "expired"
     : "fired";
+  // The summary is capped at 70 characters: name every step when they fit, else the first.
+  const labels = planSteps.map((step) => step.label).join(" · ");
   return {
     revealed: true,
-    summary: null,
+    summary: labels.length <= 70 ? labels : first.label,
     checkpoint: first.checkpoint,
     checkpointLabel: first.checkpointLabel,
     state,

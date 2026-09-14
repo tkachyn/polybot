@@ -287,6 +287,7 @@ test("a fight summary rebuilt from its stored evaluation carries agents, sabotag
   const sabotage = summary.sabotage;
   assert.ok(sabotage);
   assert.equal(sabotage.revealed, true);
+  assert.equal(sabotage.summary, "Plant a decoy control");
   assert.equal(sabotage.checkpoint, 1);
   assert.equal(sabotage.tier, "basic");
   assert.equal(sabotage.stepCount, 1);
