@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { FightAgentSummary, FightStatus, FightSummary } from "@contract";
-import { FEATURED_INTRO_WINDOW_MS, FEATURED_RESULT_HOLD_MS, bestFeaturedCandidate, nextIntroWindowAt, pickFeatured } from "./featured";
+import { FEATURED_RESULT_HOLD_MS, bestFeaturedCandidate, pickFeatured } from "./featured";
 
 const NOW = 1_800_000_000_000;
 
@@ -27,8 +27,7 @@ function fight(number: number, status: FightStatus, overrides: Partial<FightSumm
     title: `Task ${number}`,
     sabotage: null,
     createdAt: NOW - 600_000 + number,
-    // A minute out: an ordinary upcoming fight, not yet inside its intro window.
-    startsAt: status === "upcoming" ? NOW + 60_000 + number * 1000 : null,
+    startsAt: status === "upcoming" ? NOW + number * 1000 : null,
     startedAt: status === "live" ? NOW - 60_000 : status === "resolved" ? NOW - 400_000 : null,
     freezesAt: null,
     closesAt: null,
@@ -126,7 +125,7 @@ describe("pickFeatured", () => {
 
   it("lets an upcoming fallback give way to a live fight, and keeps it otherwise", () => {
     const next = fight(20, "upcoming");
-    expect(pickFeatured([fight(21, "upcoming", { startsAt: NOW + 30_000 }), next], next.raceId, NOW)?.number).toBe(20);
+    expect(pickFeatured([fight(21, "upcoming", { startsAt: NOW - 1 }), next], next.raceId, NOW)?.number).toBe(20);
     expect(pickFeatured([fight(19, "live"), next], next.raceId, NOW)?.number).toBe(19);
     // The fallback itself going live keeps it.
     expect(pickFeatured([fight(20, "live"), fight(19, "live", { volume: 9_000 })], next.raceId, NOW)?.number).toBe(20);
@@ -136,30 +135,5 @@ describe("pickFeatured", () => {
     const old = fight(3, "resolved", { finishedAt: NOW - 600_000 });
     expect(pickFeatured([fight(4, "upcoming"), old], old.raceId, NOW)?.number).toBe(4);
     expect(pickFeatured([fight(5, "resolved", { finishedAt: NOW - 1_000_000 }), old], old.raceId, NOW)?.number).toBe(3);
-  });
-});
-
-describe("the intro window", () => {
-  it("hands the card to a fight about to start, unless a live fight holds it", () => {
-    const starting = fight(9, "upcoming", { startsAt: NOW + 8_000 });
-    const later = fight(3, "upcoming");
-    const justResolved = fight(4, "resolved", { finishedAt: NOW - 1_000 });
-    // Over a result still on hold, a later upcoming fallback, and a live fight no one is featuring yet.
-    expect(pickFeatured([justResolved, starting, later], justResolved.raceId, NOW)?.number).toBe(9);
-    expect(pickFeatured([later, starting], later.raceId, NOW)?.number).toBe(9);
-    expect(pickFeatured([fight(5, "live"), starting], null, NOW)?.number).toBe(9);
-    // Never over the live fight on the card.
-    expect(pickFeatured([fight(5, "live"), starting], "race-5", NOW)?.number).toBe(5);
-    // Kept through the moment between its start time and going live.
-    expect(pickFeatured([fight(5, "live"), { ...starting, startsAt: NOW - 500 }], starting.raceId, NOW)?.number).toBe(9);
-    // Outside the window it is an ordinary upcoming fight.
-    expect(pickFeatured([fight(5, "live"), { ...starting, startsAt: NOW + FEATURED_INTRO_WINDOW_MS + 1 }], null, NOW)?.number).toBe(5);
-  });
-
-  it("wakes when the next fight comes inside its window", () => {
-    expect(nextIntroWindowAt([fight(3, "upcoming"), fight(2, "resolved")], NOW)).toBe(NOW + 63_000 - FEATURED_INTRO_WINDOW_MS);
-    // Already inside, or no start time yet: nothing to wait for.
-    expect(nextIntroWindowAt([fight(3, "upcoming", { startsAt: NOW + 5_000 })], NOW)).toBeNull();
-    expect(nextIntroWindowAt([fight(3, "upcoming", { startsAt: null })], NOW)).toBeNull();
   });
 });

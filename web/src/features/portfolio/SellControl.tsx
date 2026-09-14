@@ -24,7 +24,6 @@ type Phase =
   | { kind: "pending"; clientOrderId: string };
 
 const CLOSED_REASON: Readonly<Record<Exclude<MarketStatusDTO, "open">, string>> = {
-  pending: "Trading opens when the fight starts.",
   frozen: "Trading is frozen until the fight settles.",
   resolved: "This market has settled.",
   unresolved: "This market was voided.",

@@ -37,8 +37,7 @@ export type RacerPhase =
   | "failed"
   | "timed_out";
 
-/** pending: a fight that starts now (after its intro) trades only from its start. */
-export type MarketStatusDTO = "pending" | "open" | "frozen" | "resolved" | "unresolved";
+export type MarketStatusDTO = "open" | "frozen" | "resolved" | "unresolved";
 
 /** run = ON TASK, warn = LOOPING, recovering = ACTIVE SABOTAGE, bad = BLOCKED. */
 export type RunStatus = "run" | "warn" | "recovering" | "bad";

@@ -7,12 +7,10 @@ describe("slip price label", () => {
     expect(slipPriceLabel("frozen")).toBe("Frozen");
     expect(slipPriceLabel("resolved")).toBe("Closed");
     expect(slipPriceLabel("unresolved")).toBe("Closed");
-    expect(slipPriceLabel("pending")).toBe("Closed");
   });
 
   it("agrees with the reason trading is blocked", () => {
     expect(tradingBlockedReason("open")).toBeNull();
     expect(tradingBlockedReason("frozen")).toBe("Trading frozen");
-    expect(tradingBlockedReason("pending")).toBe("Opens when the fight starts");
   });
 });

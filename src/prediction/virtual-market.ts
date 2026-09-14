@@ -16,8 +16,7 @@ import {
   type TradeQuote,
 } from "./lmsr.js";
 
-/** pending: held closed until its fight starts (see hold()); nothing trades. */
-export type MarketStatus = "pending" | "open" | "frozen" | "resolved" | "unresolved";
+export type MarketStatus = "open" | "frozen" | "resolved" | "unresolved";
 
 export type PredictionPosition = {
   userId: string;
@@ -434,20 +433,6 @@ export class VirtualPredictionMarket {
     return this.settlement.map((line) => ({ ...line }));
   }
 
-  /** Closes a market that has not traded yet until open(): trading waits for the start. */
-  hold(): void {
-    if (this.status === "open" && this.tradeCount === 0) {
-      this.status = "pending";
-    }
-  }
-
-  /** Opens a held market. */
-  open(): void {
-    if (this.status === "pending") {
-      this.status = "open";
-    }
-  }
-
   freeze(): void {
     if (this.status === "open") {
       this.status = "frozen";
@@ -648,9 +633,6 @@ export class VirtualPredictionMarket {
   }
 
   private assertTradable(): void {
-    if (this.status === "pending") {
-      throw new DomainError("market_closed", "trading opens when the fight starts");
-    }
     if (this.status !== "open") {
       throw new DomainError("market_closed", `market is ${this.status}`);
     }

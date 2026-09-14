@@ -46,8 +46,6 @@ export type ApiServerOptions = {
   startingBalance?: number;
   /** First fight number. Default 1. */
   fightNumberStart?: number;
-  /** A fight created to start now waits this long after its browsers are ready (see RaceRegistryOptions). */
-  startHoldMs?: number;
   /** Built SPA directory. Served with an SPA fallback when it exists. */
   webDist?: string;
   /**
@@ -169,8 +167,6 @@ export function buildApi(options: ApiServerOptions): FastifyInstance {
   const registry = new RaceRegistry(options.coordinatorFactory, {
     fightNumberStart: options.fightNumberStart,
     startingBalance: options.startingBalance,
-    startHoldMs: options.startHoldMs,
-    clock: options.now,
     evaluationStore: options.evaluationStore ?? defaultEvaluationStore(mode),
     datasetStore: options.datasetStore ?? defaultDatasetStore(mode),
     replayStore: options.replayStore ?? defaultReplayStore(mode),

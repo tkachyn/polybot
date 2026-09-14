@@ -63,7 +63,6 @@ const body = {
 
 console.log(`Creating ${raceId} on ${apiUrl} with seed ${seed}.`);
 console.log("The API opens four Steel sessions before it answers, which can take up to a minute.");
-console.log(`Fight:        http://localhost:5173/fights/${encodeURIComponent(raceId)} (open it now: the intro plays once the browsers are ready)`);
 
 let response: Response;
 try {
@@ -98,3 +97,4 @@ if (answer) {
   console.log(`Answer key:   ${answer.name}, ${formatPrice(answer.priceCents)} (${answer.id})`);
 }
 console.log(`Status:       ${apiUrl}/races/${encodeURIComponent(raceId)}`);
+console.log(`Fight:        http://localhost:5173/fights/${encodeURIComponent(raceId)}`);

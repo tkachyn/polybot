@@ -31,7 +31,7 @@ export function envApiOptions(
   mode: ServerMode,
 ): Pick<
   ApiServerOptions,
-  "mode" | "demoMode" | "showSabotageUpfront" | "startingBalance" | "fightNumberStart" | "startHoldMs" | "webDist" | "corsOrigins"
+  "mode" | "demoMode" | "showSabotageUpfront" | "startingBalance" | "fightNumberStart" | "webDist" | "corsOrigins"
 > {
   return {
     mode,
@@ -40,9 +40,6 @@ export function envApiOptions(
     showSabotageUpfront: envBoolean("SHOW_SABOTAGE_UPFRONT", true),
     startingBalance: envNumber("STARTING_BALANCE", 1_000),
     fightNumberStart: envNumber("FIGHT_NUMBER_START", mode === "simulated" ? 401 : 1),
-    // The web app's intro runs 9.4 s and ends 0.5 s before the start. Simulated fights
-    // are scheduled ahead, so the intro already fits before them.
-    startHoldMs: envNumber("FIGHT_INTRO_HOLD_MS", mode === "live" ? 10_000 : 0),
     webDist: resolve(process.env.WEB_DIST ?? "web/dist"),
   };
 }

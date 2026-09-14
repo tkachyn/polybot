@@ -6,8 +6,6 @@
  */
 
 .card {
-  /* Positioned for the intro layer (./FeaturedIntro), which covers the whole card. */
-  position: relative;
   container-type: inline-size;
   display: flex;
   flex-direction: column;

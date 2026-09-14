@@ -296,7 +296,6 @@ export class RaceCoordinator {
   private readonly sabotageDefaulted: boolean;
   private sabotageBrief: SabotageBrief | null;
   private sabotageArming?: Promise<DisruptionCommand | null>;
-  private preparation?: Promise<RacerSessionHandle[]>;
   private sabotageSettled = false;
   private sabotageArmedAt: number | null = null;
   private sabotageFiredAt: number | null = null;
@@ -415,47 +414,27 @@ export class RaceCoordinator {
     return this.sabotageArming;
   }
 
-  /**
-   * Arms sabotage, opens every racer's browser session and prepares its
-   * agent, once. Nothing runs until prepareAndStart. A failure aborts the
-   * race, as a failed start does.
-   */
-  async prepare(now = Date.now()): Promise<void> {
-    await this.prepared(now);
-  }
-
-  /**
-   * Publishes when a prepared fight will start (RaceRegistry's start hold),
-   * so spectators count down to it and the fight intro ends as it starts.
-   */
-  scheduleStart(startsAt: number): void {
-    this.fightMeta.startsAt = startsAt;
-    const changes = createChanges();
-    changes.fight = true;
-    this.flush(changes);
-  }
-
-  /**
-   * Keeps trading closed until the start (RaceRegistry's intro hold): the
-   * market then opens with the agents, as the intro ends. Before any trade only.
-   */
-  holdMarket(): void {
-    if (this.engine.race.status !== "starting") return;
-    this.market.hold();
-    const changes = createChanges();
-    changes.fight = true;
-    this.flush(changes);
-  }
-
-  /** Prepares the racers unless prepare() already did, then starts every agent (and a held market) at `now`. */
   async prepareAndStart(now = Date.now()): Promise<RaceSnapshot> {
-    const sessions = await this.prepared(now);
     try {
+      await this.arm(now);
+      const sessions = await Promise.all(
+        [...this.engine.racers.keys()].map((racerId) =>
+          this.dependencies.sessionManager.create(racerId),
+        ),
+      );
+      for (const session of sessions) {
+        this.sessions.set(session.racerId, session);
+      }
+
+      await Promise.all(
+        sessions.map((session) =>
+          this.dependencies.agentRunner.prepare(this.baseContext(session)),
+        ),
+      );
       for (const session of sessions) {
         this.engine.markReady(session.racerId, now);
       }
       this.engine.start(now);
-      this.market.open();
       await this.afterEngineMutation(now);
 
       for (const session of sessions) {
@@ -491,32 +470,6 @@ export class RaceCoordinator {
       await this.abortStart(now);
       throw error;
     }
-  }
-
-  private prepared(now: number): Promise<RacerSessionHandle[]> {
-    this.preparation ??= this.prepareRacers(now).catch(async (error: unknown) => {
-      await this.abortStart(now);
-      throw error;
-    });
-    return this.preparation;
-  }
-
-  private async prepareRacers(now: number): Promise<RacerSessionHandle[]> {
-    await this.arm(now);
-    const sessions = await Promise.all(
-      [...this.engine.racers.keys()].map((racerId) =>
-        this.dependencies.sessionManager.create(racerId),
-      ),
-    );
-    for (const session of sessions) {
-      this.sessions.set(session.racerId, session);
-    }
-    await Promise.all(
-      sessions.map((session) =>
-        this.dependencies.agentRunner.prepare(this.baseContext(session)),
-      ),
-    );
-    return sessions;
   }
 
   async recordCheckpoint(
