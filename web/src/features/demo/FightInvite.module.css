@@ -41,7 +41,6 @@
 
 .warning {
   padding: var(--space-2) var(--space-3);
-  border: 1px solid var(--tint-negative-border);
   border-radius: var(--radius-md);
   background: var(--tint-negative);
   color: var(--color-text);

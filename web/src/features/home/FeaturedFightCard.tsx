@@ -20,7 +20,7 @@ import type { FightAgentSummary, FightSummary, RunStatus, Side } from "@contract
 import { AgentMonogram, ButtonLink, ChangeCents, EmptyState, Skeleton, StatusPill, Tag, fightPillStatus } from "../../components";
 import { agentStyle, rosterVisuals, type AgentVisual } from "../../lib/agents";
 import { cx } from "../../lib/cx";
-import { formatCents, formatChance, formatCompactMoney, formatFightNumber, formatMoney, formatNumber } from "../../lib/format";
+import { formatCents, formatChance, formatCompactMoney, formatMoney, formatNumber } from "../../lib/format";
 import { RUN_STATUS_LABEL } from "../../lib/labels";
 import { useFightStream } from "../fight/useFightStream";
 import { ProbabilityChart } from "../market/ProbabilityChart";
@@ -187,7 +187,6 @@ export function FeaturedFightCard({ fight }: { fight: FightSummary }) {
   const frozen = shown.status === "live" && shown.marketStatus === "frozen";
   const settled = shown.status === "resolved" && (shown.voided || shown.winnerRacerId !== null);
   const visuals = rosterVisuals(shown.agents.map((a) => a.agent));
-  const number = formatFightNumber(shown.number);
   const pick = (racerId: string, side: Side) => {
     navigate(`${href}?${SLIP_PARAM}=${encodeURIComponent(formatSlipParam(racerId, side))}`);
   };
@@ -197,9 +196,6 @@ export function FeaturedFightCard({ fight }: { fight: FightSummary }) {
       <header className={styles.header}>
         <div className={styles.eyebrow}>
           <span className={cx("label", styles.featured)}>Featured</span>
-          <span className={cx("label", styles.number)}>
-            Fight <span className="num">{number}</span>
-          </span>
           <StatusPill status={fightPillStatus(shown)} size="sm" />
           {frozen && (
             <Tag tone="neutral" title={closedReasonFor(shown)}>
@@ -279,7 +275,7 @@ export function FeaturedFightCard({ fight }: { fight: FightSummary }) {
           </span>
           <Resolution fight={shown} />
         </div>
-        <ButtonLink to={href} variant="action" size="md" className={styles.view} aria-label={`View fight ${number}`}>
+        <ButtonLink to={href} variant="action" size="md" className={styles.view} aria-label={`View fight: ${shown.title}`}>
           View fight
         </ButtonLink>
       </footer>

@@ -47,13 +47,14 @@
   --color-agent-gemini: #8aa6d4; /* blue   Gemini */
   --color-agent-grok: #a596cc; /* violet Grok */
 
-  /* --- Tints (extension): semantic colour at the tile ratios, 12% fill and
-   *     33% border, the same ratios the handoff gives agent monograms. ----- */
-  --tint-positive: rgba(107, 191, 148, 0.1);
+  /* --- Tints (extension): semantic colour as a 16% fill under full-strength
+   *     text. Chips and strips carry no border; the -border values are for
+   *     frames, glows and input states. ----------------------------------- */
+  --tint-positive: rgba(107, 191, 148, 0.16);
   --tint-positive-border: rgba(107, 191, 148, 0.28);
-  --tint-negative: rgba(201, 118, 108, 0.1);
+  --tint-negative: rgba(201, 118, 108, 0.16);
   --tint-negative-border: rgba(201, 118, 108, 0.28);
-  --tint-sabotage: rgba(201, 118, 108, 0.1);
+  --tint-sabotage: rgba(201, 118, 108, 0.16);
   --tint-sabotage-border: rgba(201, 118, 108, 0.28);
   --tint-edge: rgba(236, 231, 223, 0.08);
   --tint-edge-border: rgba(236, 231, 223, 0.22);

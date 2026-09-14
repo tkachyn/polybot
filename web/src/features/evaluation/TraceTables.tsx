@@ -62,7 +62,7 @@ export function FullTrace({ agent, startedAt }: FullTraceProps) {
           {totals.errors > 0 && <span className="num"> · {plural(totals.errors, "error", "errors")}</span>}
           {totals.decoys > 0 && <span className={cx("num", styles.summaryAlert)}> · {plural(totals.decoys, "decoy click", "decoy clicks")}</span>}
           {totals.cleared > 0 && (
-            <span className={cx("num", styles.summaryPositive)}> · {plural(totals.cleared, "sabotage cleared", "sabotages cleared")}</span>
+            <span className="num"> · {plural(totals.cleared, "sabotage cleared", "sabotages cleared")}</span>
           )}
         </>
       }

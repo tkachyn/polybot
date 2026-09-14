@@ -8,7 +8,7 @@ export type TagTone = "sabotage" | "positive" | "edge" | "neutral";
 export type TagProps = {
   tone?: TagTone;
   children: ReactNode;
-  /** Solid fill instead of the 12% tint (use sparingly: e.g. FIRED). */
+  /** Solid fill instead of the tint (use sparingly: e.g. WINNER). */
   solid?: boolean;
   className?: string;
   title?: string;
@@ -23,11 +23,7 @@ export function Tag({ tone = "neutral", solid = false, children, className, titl
   );
 }
 
-/** The terracotta SABOTAGE tag used on cards and headers. */
+/** The red "SABOTAGE:" lead-in on cards, headers and trace rows. */
 export function SabotageTag({ children = "Sabotage", className }: { children?: ReactNode; className?: string }) {
-  return (
-    <Tag tone="sabotage" className={className}>
-      {children}
-    </Tag>
-  );
+  return <span className={cx(styles.sabotageLabel, className)}>{children}:</span>;
 }

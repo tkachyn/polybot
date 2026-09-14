@@ -130,8 +130,6 @@
 .hitRow td {
   padding-top: var(--space-2);
   padding-bottom: var(--space-2);
-  border-top: 1px solid var(--tint-sabotage-border);
-  border-bottom: 1px solid var(--tint-sabotage-border);
   background-color: var(--tint-sabotage);
 }
 
@@ -209,8 +207,4 @@
   display: flex;
   flex-wrap: wrap;
   gap: var(--space-1);
-}
-
-.summaryPositive {
-  color: var(--color-positive);
 }

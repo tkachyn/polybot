@@ -145,7 +145,6 @@ function SabotageStateView({ sabotage, fight, roster }: { sabotage: SabotageDeta
     );
   }
 
-  const fired = sabotage.steps.filter((step) => step.firedAt !== null).length;
   const hit = sabotage.hitRacerIds
     .map((id) => fight.agents.find((a) => a.racerId === id))
     .filter((a): a is NonNullable<typeof a> => a !== undefined);
@@ -153,9 +152,6 @@ function SabotageStateView({ sabotage, fight, roster }: { sabotage: SabotageDeta
 
   return (
     <span className={styles.sabState}>
-      <Tag tone="sabotage" solid title={`${fired} of ${sabotage.stepCount} sabotage steps fired`}>
-        Fired{sabotage.stepCount > 1 && <span className="num"> {fired}/{sabotage.stepCount}</span>}
-      </Tag>
       {hit.length > 0 && (
         <span className={styles.hits} title={`Hit: ${hitNames}`}>
           <span className="label label-sm">Hit</span>

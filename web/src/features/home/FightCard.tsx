@@ -106,11 +106,6 @@ export function SabotageLine({ sabotage }: { sabotage: SabotageSummary | null })
       <span className={cx("clamp-1", styles.sabotageText)} title={`${sabotage.summary ?? "Sabotage armed"} · fires at ${sabotage.checkpointLabel}`}>
         {sabotage.summary ?? "Sabotage armed"}
       </span>
-      {sabotage.state === "fired" && (
-        <Tag tone="sabotage" solid>
-          Fired
-        </Tag>
-      )}
     </p>
   );
 }
@@ -301,9 +296,6 @@ export function FightCard({ fight, className, preview = false }: FightCardProps)
     <article className={cx(styles.container, className)} aria-labelledby={titleId}>
       <div className={cx(styles.card, preview && styles.cardPreview)}>
         <div className={styles.head}>
-          <span className={cx("label", styles.number)}>
-            Fight <span className="num">{number}</span>
-          </span>
           <StatusPill status={fightPillStatus(fight)} size="sm" />
           {fight.status === "live" && fight.marketStatus === "frozen" && (
             <Tag tone="neutral" title="Trading is frozen for the rest of this fight">

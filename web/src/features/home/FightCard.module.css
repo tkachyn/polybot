@@ -54,10 +54,6 @@
   margin-left: auto;
 }
 
-.number {
-  white-space: nowrap;
-}
-
 .clock {
   display: inline-flex;
   align-items: baseline;

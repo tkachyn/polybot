@@ -24,7 +24,6 @@
   justify-content: center;
   width: 20px;
   height: 20px;
-  border: 1px solid var(--tint-sabotage-border);
   border-radius: 50%;
   background-color: var(--tint-sabotage);
   color: var(--color-sabotage);

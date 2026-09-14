@@ -22,7 +22,6 @@
   flex-shrink: 0;
   height: 18px;
   padding: 0 var(--space-1-5);
-  border: 1px solid transparent;
   border-radius: var(--radius-sm);
 }
 
@@ -56,19 +55,10 @@
   background-color: var(--tint-positive);
 }
 
-.tag.run {
-  border-color: var(--tint-positive-border);
-}
-
 /* LOOPING: no warning hue in the palette, so secondary text + glyph on inset. */
 .warn {
   color: var(--color-text-secondary);
   background-color: var(--color-inset);
-}
-
-.tag.warn {
-  border-color: var(--color-divider);
-  border-style: dashed;
 }
 
 /* BLOCKED */
@@ -77,19 +67,10 @@
   background-color: var(--tint-sabotage);
 }
 
-.tag.bad {
-  border-color: var(--tint-sabotage-border);
-}
-
 /* ACTIVE SABOTAGE RECOVERY */
 .recovering {
   color: var(--color-sabotage);
   background-color: var(--tint-sabotage);
-}
-
-.tag.recovering {
-  border-color: var(--tint-sabotage-border);
-  border-style: dashed;
 }
 
 /* Not started */

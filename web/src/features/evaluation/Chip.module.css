@@ -5,7 +5,6 @@
   flex-shrink: 0;
   height: 18px;
   padding: 0 var(--space-1-5);
-  border: 1px solid transparent;
   border-radius: var(--radius-sm);
   font-size: var(--fs-label-sm);
   font-weight: var(--fw-semibold);
@@ -28,38 +27,31 @@
 .positive {
   color: var(--color-positive);
   background-color: var(--tint-positive);
-  border-color: var(--tint-positive-border);
 }
 
 .edge {
   color: var(--color-edge);
   background-color: var(--tint-edge);
-  border-color: var(--tint-edge-border);
 }
 
 .negative {
   color: var(--color-negative);
   background-color: var(--tint-negative);
-  border-color: var(--tint-negative-border);
 }
 
 /* No warning hue in the palette: the fight screen's LOOPING treatment
- * (secondary text and an alert glyph on inset, dashed divider border). */
+ * (secondary text and an alert glyph on inset). */
 .warn {
   color: var(--color-text-secondary);
   background-color: var(--color-inset);
-  border-color: var(--color-divider);
-  border-style: dashed;
 }
 
 .neutral {
   color: var(--color-text-secondary);
   background-color: var(--color-inset);
-  border-color: var(--color-divider);
 }
 
 .muted {
   color: var(--color-text-muted);
   background-color: transparent;
-  border-color: var(--color-divider);
 }

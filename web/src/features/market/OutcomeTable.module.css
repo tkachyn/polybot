@@ -95,46 +95,41 @@
   gap: var(--space-1);
   height: 28px;
   padding: 0 var(--space-1);
-  border: 1px solid transparent;
+  border: 0;
   border-radius: var(--radius-md);
   font-size: var(--fs-body-sm);
   font-weight: var(--fw-semibold);
   white-space: nowrap;
   transition:
     background-color var(--duration-fast) var(--ease-standard),
-    border-color var(--duration-fast) var(--ease-standard),
     color var(--duration-fast) var(--ease-standard);
 }
 
 .yes {
   background-color: var(--tint-positive);
-  border-color: var(--tint-positive-border);
   color: var(--color-positive);
 }
 
 .yes:hover:not(:disabled) {
-  border-color: var(--color-positive);
+  background-color: color-mix(in srgb, var(--color-positive) 26%, transparent);
 }
 
 .yes.selected {
   background-color: var(--color-positive);
-  border-color: var(--color-positive);
   color: var(--color-ground);
 }
 
 .no {
   background-color: var(--tint-negative);
-  border-color: var(--tint-negative-border);
   color: var(--color-negative);
 }
 
 .no:hover:not(:disabled) {
-  border-color: var(--color-negative);
+  background-color: color-mix(in srgb, var(--color-negative) 26%, transparent);
 }
 
 .no.selected {
   background-color: var(--color-negative);
-  border-color: var(--color-negative);
   color: var(--color-ground);
 }
 
