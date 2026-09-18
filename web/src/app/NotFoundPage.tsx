@@ -9,7 +9,7 @@ export function NotFoundPage() {
         title="Page not found"
         description="That address doesn’t match any screen."
         action={
-          <ButtonLink to="/" variant="ghost">
+          <ButtonLink to="/fights" variant="ghost">
             Back to fights
           </ButtonLink>
         }

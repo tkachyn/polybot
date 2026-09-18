@@ -45,7 +45,7 @@ export function FightRoute() {
           title="Fight not found"
           description="This fight doesn’t exist, and no report was kept for it."
           action={
-            <ButtonLink to="/" variant="ghost" icon={<IconArrowLeft size={14} />}>
+            <ButtonLink to="/fights" variant="ghost" icon={<IconArrowLeft size={14} />}>
               Back to fights
             </ButtonLink>
           }

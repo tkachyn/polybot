@@ -7,7 +7,7 @@ import { matchPath } from "react-router-dom";
 
 /** Route patterns per tab, keyed by the tab's `to`. */
 export const NAV_ROUTE_PATTERNS: Readonly<Record<string, readonly string[]>> = {
-  "/": ["/", "/fights/:raceId", "/fights/:raceId/standings"],
+  "/fights": ["/fights", "/fights/:raceId", "/fights/:raceId/standings"],
   "/portfolio": ["/portfolio"],
   "/evaluations": ["/evaluations"],
   "/resolved": ["/resolved"],

@@ -6,7 +6,7 @@ const activeTabs = (pathname: string) => TABS.filter((to) => isNavTabActive(to, 
 
 describe("isNavTabActive", () => {
   it("lights each tab on its own route", () => {
-    expect(activeTabs("/")).toEqual(["/"]);
+    expect(activeTabs("/fights")).toEqual(["/fights"]);
     expect(activeTabs("/portfolio")).toEqual(["/portfolio"]);
     expect(activeTabs("/evaluations")).toEqual(["/evaluations"]);
     expect(activeTabs("/resolved")).toEqual(["/resolved"]);
@@ -14,8 +14,8 @@ describe("isNavTabActive", () => {
   });
 
   it("keeps Fights lit on a fight and its standings", () => {
-    expect(activeTabs("/fights/sim-00v-99a63e")).toEqual(["/"]);
-    expect(activeTabs("/fights/sim-00v-99a63e/standings")).toEqual(["/"]);
+    expect(activeTabs("/fights/sim-00v-99a63e")).toEqual(["/fights"]);
+    expect(activeTabs("/fights/sim-00v-99a63e/standings")).toEqual(["/fights"]);
   });
 
   it("tolerates a trailing slash", () => {
@@ -23,7 +23,7 @@ describe("isNavTabActive", () => {
   });
 
   it("lights nothing on an address that isn't a real route", () => {
-    for (const path of ["/portfolio/extra/segments", "/wallet/x", "/resolved/2", "/fights", "/fights/a/b", "/leaderboard", "/nope"]) {
+    for (const path of ["/", "/portfolio/extra/segments", "/wallet/x", "/resolved/2", "/fights/a/b", "/leaderboard", "/nope"]) {
       expect(activeTabs(path)).toEqual([]);
     }
   });

@@ -58,7 +58,7 @@ function IconEvaluations({ size = 16, title, ...rest }: IconProps) {
 }
 
 export const NAV_ITEMS: readonly NavItem[] = [
-  { to: "/", label: "Fights", Icon: IconFights },
+  { to: "/fights", label: "Fights", Icon: IconFights },
   { to: "/portfolio", label: "Portfolio", Icon: IconPortfolio },
   { to: "/evaluations", label: "Evaluations", Icon: IconEvaluations },
   { to: "/resolved", label: "Resolved", Icon: IconResolved },

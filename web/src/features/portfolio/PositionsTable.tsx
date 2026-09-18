@@ -30,7 +30,7 @@ export function PositionsTable({ positions, onSold }: PositionsTableProps) {
           title="No open positions"
           description="Buy YES or NO on an agent in a live fight and it shows up here, marked to the live price."
           action={
-            <ButtonLink to="/" variant="ghost" size="sm">
+            <ButtonLink to="/fights" variant="ghost" size="sm">
               Browse fights
             </ButtonLink>
           }

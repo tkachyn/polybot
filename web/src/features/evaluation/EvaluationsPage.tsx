@@ -181,7 +181,7 @@ export function EvaluationsPage() {
                 </>
               }
               action={
-                <ButtonLink to="/" variant="ghost" size="sm">
+                <ButtonLink to="/fights" variant="ghost" size="sm">
                   Browse fights
                 </ButtonLink>
               }
