@@ -47,6 +47,8 @@ import type {
 import type { UserRecord } from "./users.js";
 
 const PRECISION = 1_000_000;
+/** Resolved fights the lobby backfills from stored evaluations, newest first. */
+export const LOBBY_ARCHIVE_LIMIT = 60;
 export const HISTORY_LIMIT = 200;
 export const LEADERBOARD_WINDOW_DAYS = 30;
 const DAY_MS = 86_400_000;
@@ -474,11 +476,15 @@ export function presentFightList(
   archivedEvaluations: readonly FightEvaluation[] = [],
 ): FightListResponse {
   const liveIds = new Set(coordinators.map((coordinator) => coordinator.raceId));
+  // Newest first, capped: a server that runs fights around the clock would
+  // otherwise return every fight it has ever stored, on every poll and every
+  // stream tick. Older ones stay reachable through their stored reports.
+  const backfilled = archivedEvaluations
+    .filter((evaluation) => !liveIds.has(evaluation.raceId))
+    .slice(-LOBBY_ARCHIVE_LIMIT);
   const fights = [
     ...coordinators.map((coordinator) => presentFightSummary(coordinator, options)),
-    ...archivedEvaluations
-      .filter((evaluation) => !liveIds.has(evaluation.raceId))
-      .map(presentFightSummaryFromEvaluation),
+    ...backfilled.map(presentFightSummaryFromEvaluation),
   ]
     .filter((fight) => options.status === undefined || fight.status === options.status)
     .sort(compareFights);

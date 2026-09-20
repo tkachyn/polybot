@@ -6,7 +6,7 @@ import type { FightDatasetRecord, StoredDatasetFile } from "../src/dataset/types
 import { InMemoryDatasetStore } from "../src/dataset/store.js";
 import { ReplayLibrary, isReplayable } from "../src/replay/library.js";
 import { ReplayCompetitorRunner, timelineFor } from "../src/replay/runner.js";
-import { replayCourseId, sourceRaceIdOf, isReplayInput } from "../src/replay/factory.js";
+import { replayCourseId, sourceRaceIdOf, isReplayInput } from "../src/replay/course-id.js";
 import { goldenFiles, goldenRecord } from "./dataset-fixtures.js";
 
 function recordWith(overrides: Partial<FightDatasetRecord>): FightDatasetRecord {

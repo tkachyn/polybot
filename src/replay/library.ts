@@ -10,6 +10,7 @@
  */
 import type { DatasetStore } from "../dataset/store.js";
 import type { FightDatasetRecord } from "../dataset/types.js";
+import { REPLAY_COURSE_PREFIX } from "./course-id.js";
 
 /** A record that can be replayed: it has a winner and steps to replay. */
 export type ReplayRecording = FightDatasetRecord & {
@@ -35,6 +36,9 @@ export function isReplayable(record: FightDatasetRecord, minSteps: number): reco
   const { evaluation } = record;
   if (!evaluation || evaluation.voided || !evaluation.winnerRacerId) return false;
   if (record.agents.length === 0) return false;
+  // Never replay a replay: a stored replay would otherwise become a source
+  // recording and the library would drift away from the real fights.
+  if (record.task.courseId.startsWith(REPLAY_COURSE_PREFIX)) return false;
   const steps = record.agents.reduce((total, agent) => total + agent.steps.length, 0);
   return steps >= minSteps;
 }

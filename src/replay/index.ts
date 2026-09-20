@@ -11,12 +11,11 @@ export {
 } from "./autopilot.js";
 export {
   REPLAY_COURSE_PREFIX,
-  createReplayCoordinatorFactory,
   isReplayInput,
   replayCourseId,
   sourceRaceIdOf,
-  type ReplayFactoryOptions,
-} from "./factory.js";
+} from "./course-id.js";
+export { createReplayCoordinatorFactory, type ReplayFactoryOptions } from "./factory.js";
 export {
   ReplayLibrary,
   isReplayable,

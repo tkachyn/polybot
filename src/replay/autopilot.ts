@@ -11,7 +11,7 @@
  */
 import type { ApiCreateRaceInput, RaceRegistry } from "../api/race-registry.js";
 import type { DatasetStore } from "../dataset/store.js";
-import { replayCourseId } from "./factory.js";
+import { replayCourseId } from "./course-id.js";
 import { ReplayLibrary, type ReplayLibraryOptions, type ReplayRecording } from "./library.js";
 
 /** Resolved replays kept in the lobby; older ones stay in their stored reports. */
