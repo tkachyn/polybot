@@ -11,6 +11,14 @@ import { createContext } from "react";
 /** How long an iframe outlives its last host, so a quick remount (StrictMode, a layout toggle) reuses it. */
 export const VIEWER_RELEASE_GRACE_MS = 10_000;
 
+/**
+ * Steel drops viewer connections opened in the same instant: an arena's four
+ * iframes would race, one would connect and the rest would sit on "Browser
+ * disconnected" until Steel's own retry. Each iframe's first load waits this
+ * much longer than the one before it.
+ */
+export const VIEWER_CONNECT_STAGGER_MS = 350;
+
 export type HostSlot = { concealed: boolean; order: number };
 
 /** The host to lay a viewer over: the newest one that is not concealed. */
@@ -42,6 +50,8 @@ type Viewer = {
   url: string;
   hosts: Set<Host>;
   removal: ReturnType<typeof setTimeout> | null;
+  /** Pending first load, while this iframe waits its turn to connect. */
+  connect: ReturnType<typeof setTimeout> | null;
 };
 
 export class ViewerLayer {
@@ -50,6 +60,8 @@ export class ViewerLayer {
   private nextOrder = 0;
   private frame = 0;
   private destroyed = false;
+  /** When the next iframe may start loading, so first connections queue up. */
+  private nextConnectAt = 0;
 
   /** `root` is an absolutely positioned element over the stage; the iframes are its only children. */
   constructor(private readonly root: HTMLElement) {
@@ -95,6 +107,7 @@ export class ViewerLayer {
     document.removeEventListener("scroll", this.schedule, { capture: true });
     for (const viewer of this.viewers.values()) {
       if (viewer.removal) clearTimeout(viewer.removal);
+      if (viewer.connect) clearTimeout(viewer.connect);
       viewer.iframe.remove();
     }
     this.viewers.clear();
@@ -113,13 +126,13 @@ export class ViewerLayer {
     iframe.tabIndex = -1;
     iframe.setAttribute("aria-hidden", "true");
     iframe.style.visibility = "hidden";
-    const viewer: Viewer = { iframe, url: "", hosts: new Set(), removal: null };
+    const viewer: Viewer = { iframe, url: "", hosts: new Set(), removal: null, connect: null };
     iframe.addEventListener("error", () => {
       for (const host of viewer.hosts) host.onError();
     });
-    this.apply(viewer, options);
     this.root.appendChild(iframe);
     this.viewers.set(key, viewer);
+    this.scheduleConnect(viewer, options);
     return viewer;
   }
 
@@ -127,10 +140,24 @@ export class ViewerLayer {
   private apply(viewer: Viewer, { url, title }: ViewerOptions): void {
     const { iframe } = viewer;
     if (iframe.title !== title) iframe.title = title;
-    if (viewer.url !== url) {
-      viewer.url = url;
-      iframe.src = url;
-    }
+    if (viewer.url === url) return;
+    viewer.url = url;
+    // A queued first load reads the latest URL when its turn comes.
+    if (viewer.connect === null) iframe.src = url;
+  }
+
+  /** Queues this iframe's first load behind the ones already waiting. */
+  private scheduleConnect(viewer: Viewer, options: ViewerOptions): void {
+    viewer.url = options.url;
+    viewer.iframe.title = options.title;
+    const now = Date.now();
+    const at = Math.max(now, this.nextConnectAt);
+    this.nextConnectAt = at + VIEWER_CONNECT_STAGGER_MS;
+    viewer.connect = setTimeout(() => {
+      viewer.connect = null;
+      if (this.destroyed) return;
+      viewer.iframe.src = viewer.url;
+    }, at - now);
   }
 
   private scheduleRemoval(key: string, viewer: Viewer): void {
@@ -138,6 +165,7 @@ export class ViewerLayer {
     viewer.removal = setTimeout(() => {
       viewer.removal = null;
       if (viewer.hosts.size > 0 || this.viewers.get(key) !== viewer) return;
+      if (viewer.connect) clearTimeout(viewer.connect);
       viewer.iframe.remove();
       this.viewers.delete(key);
     }, VIEWER_RELEASE_GRACE_MS);
